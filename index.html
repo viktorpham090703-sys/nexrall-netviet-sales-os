@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#18181B">
+<title>NetViet Sales OS</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+  <div id="app">
+    <div class="boot"><div class="spinner"></div><p>Đang tải NetViet Sales OS…</p></div>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root"></div>
+  <div id="guard-overlay" class="guard-overlay" hidden>
+    <div class="guard-box">
+      <div class="guard-icon">🔒</div>
+      <h3>Nội dung được bảo vệ</h3>
+      <p>Màn hình này chứa dữ liệu nhạy cảm của NetViet. Thao tác chụp/quay màn hình đã được ghi log.</p>
+      <small>Quay lại ứng dụng để tiếp tục xem.</small>
+    </div>
+  </div>
+  <script type="module" src="/src/app.js"></script>
+</body>
+</html>
