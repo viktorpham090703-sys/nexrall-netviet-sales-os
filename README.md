@@ -3,14 +3,24 @@
 App quản lý hoạt động & kết quả kinh doanh hàng ngày của đội Sales NetViet (TVC/Video AI · Booking Gameshow · Xây kênh triệu view).
 
 ## Chạy app
-App chạy trên Cloudflare Worker của Nexrall — không cần cài đặt: mở link app là dùng ngay. Dữ liệu mẫu (seed) được nạp tự động ở lần chạy đầu.
+App chạy trên Cloudflare Worker của Nexrall — không cần cài đặt: mở link app là dùng ngay.
 
-## Tài khoản demo (chọn ở màn đăng nhập)
-| Vai trò | Tài khoản |
+Hành vi lần chạy đầu (CSDL rỗng) phụ thuộc secret **`APP_MODE`**:
+
+| `APP_MODE` | Lần chạy đầu |
 |---|---|
-| Admin/BGĐ | Nguyễn Quốc Bảo |
-| Trưởng phòng | Trần Thu Hà |
-| Sales | Lê Minh Tuấn · Phạm Ngọc Anh · Võ Hoàng Nam |
+| `demo` | Tự nạp 5 tài khoản demo + dữ liệu mẫu (khách hàng, deal, hoa hồng, báo cáo…) |
+| `production` (hoặc không đặt — mặc định an toàn) | KHÔNG nạp dữ liệu giả. Chỉ khởi tạo đúng 1 tài khoản admin từ secret `BOOTSTRAP_ADMIN_EMAIL` + `BOOTSTRAP_ADMIN_PASSWORD` (thiếu 1 trong 2 thì không tạo gì, màn đăng nhập báo "Hệ thống chưa được khởi tạo"). Tài khoản admin này bị buộc đổi mật khẩu ngay lần đăng nhập đầu tiên. |
+
+**Bản dùng thật để chấm KPI/hoa hồng luôn phải đặt `APP_MODE=production`** — dữ liệu demo không
+được phép lẫn vào doanh thu, leaderboard hay báo cáo thật. Xem thêm [LOCAL_DEV.md](LOCAL_DEV.md#deploy-thật-nexrall).
+
+## Tài khoản demo (chỉ có ở bản `APP_MODE=demo`, chọn ở màn đăng nhập)
+| Vai trò | Tài khoản (nhân vật hư cấu) |
+|---|---|
+| Admin/BGĐ | Nguyễn Văn A |
+| Trưởng phòng | Trần Thị B |
+| Sales | Lê Văn C · Phạm Thị D · Hoàng Văn E |
 
 Sales → shell mobile (điều hướng dưới). TP/Admin → dashboard web (điều hướng bên).
 
