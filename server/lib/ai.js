@@ -237,13 +237,49 @@ export async function testProvider(env, provider) {
 
 /* ---------------------- Nội dung mẫu (offline) ---------------------- */
 
+/** Bỏ dấu tiếng Việt + hạ chữ thường + tách từ — để so khớp được cả câu hỏi có dấu lẫn không dấu. */
+function tokenize(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/đ/g, 'd')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Tìm gói dịch vụ khớp câu hỏi bằng cách CHẤM ĐIỂM trùng từ khoá (số từ trong tên gói xuất hiện
+ * trong câu hỏi), không so khớp chuỗi con theo chiều ngược (bug cũ: cắt 12 ký tự đầu câu hỏi rồi
+ * tìm trong tên gói — gần như không bao giờ khớp, luôn rơi về gói đầu tiên trong danh sách).
+ * Không có gói nào đạt điểm tối thiểu → trả về null (không đoán bừa), kèm vài gói gần đúng nhất.
+ */
+function matchProduct(query, products) {
+  const qTokens = new Set(tokenize(query));
+  if (!qTokens.size || !products.length) return { product: null, candidates: products.slice(0, 5) };
+  const scored = products
+    .map((pr) => ({ pr, score: tokenize(pr.name).filter((t, i, arr) => arr.indexOf(t) === i).filter((t) => qTokens.has(t)).length }))
+    .sort((a, b) => b.score - a.score);
+  if (!scored[0] || scored[0].score < 1) return { product: null, candidates: products.slice(0, 5) };
+  return { product: scored[0].pr, candidates: scored.slice(0, 3).map((s) => s.pr) };
+}
+
 function mockAnswer(k, p, ctx) {
   const products = ctx.products || [];
-  const find = (q) => products.find((x) => x.name.toLowerCase().includes((q || '').toLowerCase().slice(0, 12))) || products[0];
 
   if (k === 'pricing') {
-    const pr = find(p);
-    if (!pr) return { kind: k, mock: true, text: 'Chưa có gói dịch vụ nào trong bảng giá. Vào Sales Kit để bổ sung.' };
+    if (!products.length) return { kind: k, mock: true, text: 'Chưa có gói dịch vụ nào trong bảng giá. Vào Sales Kit để bổ sung.' };
+    const { product: pr, candidates } = matchProduct(p, products);
+    if (!pr) {
+      // Đặc tả M5: không bịa số liệu, không đoán bừa gói — liệt kê gợi ý để người dùng tự chọn đúng.
+      return {
+        kind: k, mock: true,
+        text: [
+          `Chưa xác định được chính xác gói dịch vụ bạn hỏi ("${p || ''}").`,
+          'Vui lòng chọn đúng 1 trong các gói sau (hoặc hỏi lại rõ tên gói hơn):',
+          ...(candidates.length ? candidates : products).map((x) => `• ${x.name}`),
+        ].join('\n'),
+      };
+    }
     const disc = 10;
     return {
       kind: k, mock: true,
@@ -337,7 +373,17 @@ function mockAnswer(k, p, ctx) {
 /** Chấm điểm lead (heuristic — chạy được cả khi chưa có API key) */
 export function scoreLead({ channel, need, company }) {
   let s = 40;
-  const ch = { 'Giới thiệu': 25, 'Inbound Website': 20, 'Đấu thầu': 18, 'Sự kiện/Hội chợ': 14, LinkedIn: 12, 'Facebook Ads': 8, 'Cold call': 5 };
+  // Trọng số theo 7 kênh nguồn khách của NetViet (FR-M2-1) + nguồn đấu thầu
+  const ch = {
+    'MGM': 25,            // khách cũ giới thiệu — tỉ lệ chốt cao nhất
+    'Liên minh': 22,
+    'CTV/KOL': 18,
+    'Đấu thầu': 18,
+    'Review': 15,
+    'Tài trợ': 12,
+    'Kênh cá nhân': 10,
+    'Game Viral': 6,
+  };
   s += ch[channel] || 6;
   if (/tvc|video|gameshow|kênh|tiktok|youtube/i.test(need || '')) s += 15;
   if (/tập đoàn|group|corp|tổng công ty/i.test(company || '')) s += 12;
