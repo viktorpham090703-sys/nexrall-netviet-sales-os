@@ -3,9 +3,13 @@ export const esc = (s) => String(s == null ? '' : s)
 
 export const vnd = (n) => new Intl.NumberFormat('vi-VN').format(Math.round(Number(n) || 0)) + ' đ';
 export function money(n) {
-  n = Number(n) || 0;
-  if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(n % 1e9 === 0 ? 0 : 2) + ' tỷ';
-  if (Math.abs(n) >= 1e6) return Math.round(n / 1e6) + ' tr';
+  n = Number(n);
+  if (!Number.isFinite(n)) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e15) return (n / 1e12).toFixed(0) + ' nghìn tỷ';
+  if (a >= 1e12) return (n / 1e12).toFixed(n % 1e12 === 0 ? 0 : 1) + ' nghìn tỷ';
+  if (a >= 1e9) return (n / 1e9).toFixed(n % 1e9 === 0 ? 0 : 2) + ' tỷ';
+  if (a >= 1e6) return Math.round(n / 1e6) + ' tr';
   return new Intl.NumberFormat('vi-VN').format(Math.round(n));
 }
 export const pct = (a, b) => b ? Math.min(999, Math.round(a / b * 100)) : 0;
