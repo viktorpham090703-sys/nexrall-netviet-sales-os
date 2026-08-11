@@ -1,16 +1,26 @@
 import { now, DAY, monthKey } from './util.js';
 
 const DEFAULTS = {
-  quota_daily_contacts: 8, quota_calls: 25, quota_meetings: 2,
+  quota_daily_contacts: 8, quota_calls: 25, quota_meetings: 2, quota_followups: 10,
   target_revenue: 400000000, target_deals: 3, target_pipeline: 1200000000,
-  discount_threshold: 15, report_deadline_hour: 18, task_accept_sla_min: 120,
+  discount_threshold: 15, discount_hard_cap: 30, report_deadline_hour: 17.5, task_accept_sla_min: 120,
+  ramp_days: 30, pip_quota_ratio: 0.7, pip_window_days: 14,
   sla_days: { lead_moi: 2, tiep_can: 3, nhu_cau: 5, bao_gia: 4, dam_phan: 5, chot: 3, trien_khai: 14 },
 };
 
-/** Cấu hình hiệu lực = mặc định < global < theo từng user */
-export async function getConfig(env, userId) {
+/**
+ * Cấu hình hiệu lực = mặc định < global < theo từng user.
+ * `asOf` (giây) cho phép lấy cấu hình ĐANG HIỆU LỰC tại một thời điểm trong quá khứ —
+ * để KPI kỳ cũ không bị tính lại theo ngưỡng mới (versioning).
+ */
+export async function getConfig(env, userId, asOf) {
+  const at = asOf || now();
   const { results } = await env.DB.prepare(
-    'SELECT user_id,ckey,value FROM nv_kpi_config WHERE user_id IS NULL OR user_id = ?').bind(userId || '__none__').all();
+    `SELECT user_id,ckey,value FROM nv_kpi_config
+     WHERE (user_id IS NULL OR user_id = ?)
+       AND (valid_from IS NULL OR valid_from <= ?)
+       AND (valid_to IS NULL OR valid_to > ?)
+     ORDER BY valid_from`).bind(userId || '__none__', at, at).all();
   const out = { ...DEFAULTS };
   const apply = (rows) => rows.forEach(r => {
     let v = r.value;
@@ -24,8 +34,15 @@ export async function getConfig(env, userId) {
 }
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x || 0));
-export const grade = (t) => t >= 90 ? 'A+' : t >= 80 ? 'A' : t >= 70 ? 'B' : t >= 60 ? 'C' : 'D';
-export const gradeNote = (t) => t >= 90 ? 'Xuất sắc' : t >= 80 ? 'Tốt' : t >= 70 ? 'Đạt' : t >= 60 ? 'Cần cải thiện' : 'Nguy cơ – xem xét PIP';
+/** Thang xếp loại theo đặc tả M7: Xuất sắc · Tốt · Đạt · Dưới chuẩn · Kém */
+export const grade = (t) => t >= 90 ? 'Xuất sắc' : t >= 80 ? 'Tốt' : t >= 70 ? 'Đạt' : t >= 60 ? 'Dưới chuẩn' : 'Kém';
+/** Mã ngắn dùng cho chip/nhãn hẹp trên UI */
+export const gradeCode = (t) => t >= 90 ? 'XS' : t >= 80 ? 'T' : t >= 70 ? 'Đ' : t >= 60 ? 'DC' : 'K';
+export const gradeNote = (t) => t >= 90 ? 'Vượt chuẩn – đề xuất khen thưởng'
+  : t >= 80 ? 'Hoàn thành tốt mục tiêu'
+  : t >= 70 ? 'Đạt yêu cầu'
+  : t >= 60 ? 'Dưới chuẩn – cần kèm cặp'
+  : 'Kém – xem xét đưa vào PIP';
 
 function workdaysSoFar(period) {
   const [y, m] = period.split('-').map(Number);
@@ -41,11 +58,21 @@ function workdaysSoFar(period) {
 }
 
 export async function computeKpi(env, user, period = monthKey()) {
-  const cfg = await getConfig(env, user.id);
   const from = Math.floor(Date.UTC(+period.slice(0, 4), +period.slice(5, 7) - 1, 1) / 1000);
   const to = Math.floor(Date.UTC(+period.slice(0, 4), +period.slice(5, 7), 1) / 1000);
+  // Kỳ đã kết thúc → dùng cấu hình đang hiệu lực ở CUỐI kỳ đó, không dùng ngưỡng hôm nay
+  const cfg = await getConfig(env, user.id, Math.min(now(), to - 1));
   const wd = workdaysSoFar(period);
   const D = env.DB;
+
+  /* --- Giai đoạn ramp: nhân sự mới được giảm chỉ tiêu theo tỉ lệ thời gian đã làm --- */
+  const joinedAt = Number(user.created_at) || (await D.prepare('SELECT created_at FROM nv_users WHERE id=?').bind(user.id).first('created_at')) || 0;
+  const rampDays = Number(cfg.ramp_days ?? 30);
+  const daysOnJob = joinedAt ? Math.floor((now() - joinedAt) / DAY) : 9999;
+  const inRamp = daysOnJob < rampDays;
+  // Hệ số 0.2 → 1.0 theo số ngày đã làm; nhân sự cũ luôn = 1
+  const rampFactor = inRamp ? Math.max(0.2, Math.min(1, (daysOnJob + 1) / rampDays)) : 1;
+  const T = (x) => Math.max(1, (x || 1) * rampFactor); // chỉ tiêu sau khi áp ramp
 
   const won = await D.prepare("SELECT COUNT(*) n, COALESCE(SUM(value),0) v FROM nv_deals WHERE owner_id=? AND status='won' AND won_at>=? AND won_at<?").bind(user.id, from, to).first();
   const pipe = await D.prepare("SELECT COALESCE(SUM(value*probability/100.0),0) v, COUNT(*) n FROM nv_deals WHERE owner_id=? AND status='open'").bind(user.id).first();
@@ -66,16 +93,20 @@ export async function computeKpi(env, user, period = monthKey()) {
   const activeDays = Number(acts.d) || 0, actN = Number(acts.n) || 0;
   const trnAll = Number(trn.n) || 0, trnDone = Number(trn.c) || 0;
 
-  // Tầng 1 – Hiệu suất (55đ)
-  const p1 = 25 * clamp01(revenue / (cfg.target_revenue || 1));
-  const p2 = 15 * clamp01(wonN / (cfg.target_deals || 1));
-  const p3 = 15 * clamp01(pipeline / (cfg.target_pipeline || 1));
+  // Tầng 1 – Hiệu suất (55đ) — chỉ tiêu đã áp hệ số ramp cho nhân sự mới
+  const p1 = 25 * clamp01(revenue / T(cfg.target_revenue));
+  const p2 = 15 * clamp01(wonN / T(cfg.target_deals));
+  const p3 = 15 * clamp01(pipeline / T(cfg.target_pipeline));
   // Tầng 2 – Kỷ luật (30đ)
   const d1 = 12 * clamp01((reports - lateR) / wd);
-  const d2 = 10 * (openN ? 1 - overdue / openN : 1);
+  // Tuân thủ SLA: KHÔNG cho điểm tuyệt đối khi không có deal nào (chống "0 deal = 10/10").
+  // Không có pipeline và cũng không chốt được deal nào ⇒ chưa có gì để tuân thủ ⇒ 0 điểm.
+  const d2 = openN > 0
+    ? 10 * (1 - overdue / openN)
+    : (wonN > 0 ? 10 : 0);
   const d3 = 8 * clamp01(activeDays / wd);
   // Tầng 2 – Chủ động (15đ)
-  const c1 = 8 * clamp01(newContacts / ((cfg.quota_daily_contacts || 8) * wd));
+  const c1 = 8 * clamp01(newContacts / (T(cfg.quota_daily_contacts || 8) * wd));
   const c2 = 4 * (trnAll ? trnDone / trnAll : 0);
   const c3 = 3 * clamp01((Number(aiN.n) || 0) / 20);
 
@@ -86,11 +117,12 @@ export async function computeKpi(env, user, period = monthKey()) {
 
   return {
     userId: user.id, name: user.name, period, performance, discipline, proactive, total,
-    grade: grade(total), gradeNote: gradeNote(total),
+    grade: grade(total), gradeCode: gradeCode(total), gradeNote: gradeNote(total),
+    ramp: { inRamp, daysOnJob, rampDays, factor: +rampFactor.toFixed(2) },
     metrics: {
-      revenue, target_revenue: cfg.target_revenue, wonN, target_deals: cfg.target_deals,
-      pipeline, target_pipeline: cfg.target_pipeline, newContacts,
-      quota_contacts_month: (cfg.quota_daily_contacts || 8) * wd, quota_daily_contacts: cfg.quota_daily_contacts,
+      revenue, target_revenue: Math.round(T(cfg.target_revenue)), wonN, target_deals: Math.round(T(cfg.target_deals)),
+      pipeline, target_pipeline: Math.round(T(cfg.target_pipeline)), newContacts,
+      quota_contacts_month: Math.round(T(cfg.quota_daily_contacts || 8) * wd), quota_daily_contacts: cfg.quota_daily_contacts,
       reports, lateReports: lateR, workdays: wd, activeDays, activities: actN,
       overdueDeals: overdue, openDeals: openN, trainingDone: trnDone, trainingAll: trnAll, aiUses: Number(aiN.n) || 0,
     },
@@ -115,6 +147,6 @@ export async function saveKpi(env, k, managerNote) {
   const id = 'kpi_' + k.userId + '_' + k.period;
   await env.DB.prepare(`INSERT INTO nv_kpi_scores (id,user_id,period,performance,discipline,proactive,total,grade,manager_note,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET performance=excluded.performance,discipline=excluded.discipline,
-    proactive=excluded.proactive,total=excluded.total,grade=excluded.grade,manager_note=COALESCE(excluded.manager_note,kpi_scores.manager_note),updated_at=excluded.updated_at`)
+    proactive=excluded.proactive,total=excluded.total,grade=excluded.grade,manager_note=COALESCE(excluded.manager_note,nv_kpi_scores.manager_note),updated_at=excluded.updated_at`)
     .bind(id, k.userId, k.period, k.performance, k.discipline, k.proactive, k.total, k.grade, managerNote || null, now()).run();
 }
