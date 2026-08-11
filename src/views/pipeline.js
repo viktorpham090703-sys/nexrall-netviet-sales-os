@@ -23,7 +23,10 @@ export async function render(el) {
     const breach = d.items.filter(x => x.slaBreach);
     return `<div class="page-head">
       <div class="grow"><h2>Pipeline & Deal</h2><p>7 giai đoạn · giá trị kỳ vọng tự tính · cờ SLA chống lead nguội</p></div>
-      <button class="btn primary sm" data-add>+ Deal</button>
+      <div class="right">
+        <button class="btn primary sm" data-add>+ Deal</button>
+        <div class="mt"><button class="btn amber sm" data-quickcontact>+ Liên hệ mới hôm nay</button></div>
+      </div>
     </div>
 
     <div class="grid g3 mb">
@@ -44,6 +47,9 @@ export async function render(el) {
 
   const bind = (d) => {
     el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { view = b.dataset.view; render(el); });
+    // FR-M3-4: ghi nhanh liên hệ mới trong ngày ngay trên màn Pipeline
+    const qc = el.querySelector('[data-quickcontact]');
+    if (qc) qc.onclick = () => quickContact(() => render(el));
     const ob = el.querySelector('[data-owner]');
     if (ob) ob.onclick = () => modal({
       title: 'Lọc theo nhân sự',
