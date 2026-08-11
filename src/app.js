@@ -1,10 +1,11 @@
 import { boot, state, isLead, isAdmin, logout } from './state.js';
-import { get, post, actorId } from './api.js';
+import { get, post, sessionToken } from './api.js';
 import { esc, initials, toast, modal, rel, empty } from './ui.js';
 import { initGuard, setView } from './guard.js';
 import { ROLE_NAME } from './const.js';
 
 import * as VLogin from './views/login.js';
+import * as VSetPassword from './views/setPassword.js';
 import * as VCockpit from './views/cockpit.js';
 import * as VCrm from './views/crm.js';
 import * as VPipeline from './views/pipeline.js';
@@ -27,8 +28,8 @@ const VIEWS = {
 };
 
 const SALES_NAV = [
-  ['cockpit', '🏠', 'Cockpit'], ['pipeline', '📊', 'Pipeline'], ['crm', '🗂️', 'Khách hàng'],
-  ['ai', '🤖', 'AI'], ['more', '⋯', 'Thêm'],
+  ['cockpit', '🏠', 'Cockpit'], ['pipeline', '📊', 'Pipeline'], ['prospect', '🔎', 'Tìm khách'],
+  ['tasks', '📥', 'Việc'], ['more', '⋯', 'Thêm'],
 ];
 const LEAD_NAV = [
   { sec: 'Điều hành', items: [['console', '🎛️', 'Console đội'], ['cockpit', '🏠', 'Cockpit cá nhân'], ['tasks', '📥', 'Giao việc & SLA']] },
@@ -94,6 +95,14 @@ async function render() {
   const app = document.getElementById('app');
   let { view, id } = parseHash();
 
+  // Đặt mật khẩu qua liên kết dùng 1 lần: route công khai, không cần đăng nhập
+  // (khớp với việc /api/setup-token/:token ở backend cũng không yêu cầu session).
+  if (view === 'dat-mat-khau') {
+    currentShellRole = null;
+    setView('');
+    return VSetPassword.render(app, { id });
+  }
+
   if (!state.me) {
     if (view !== 'login') { location.hash = '#/login'; }
     currentShellRole = null;
@@ -101,31 +110,56 @@ async function render() {
     return VLogin.render(app);
   }
 
-  if (!view || view === 'login') { view = isLead() ? 'console' : 'cockpit'; location.replace('#/' + view); }
-  if (!VIEWS[view]) view = isLead() ? 'console' : 'cockpit';
-  if (view === 'console' && !isLead()) view = 'cockpit';
-  if (view === 'admin' && !isLead()) view = 'cockpit';
+  // Buộc đổi mật khẩu ở lần đăng nhập đầu (vd: admin do production tự khởi tạo từ secret) —
+  // chặn mọi màn khác cho tới khi đặt xong mật khẩu mới.
+  if (state.me.must_change_password && view !== 'dat-mat-khau') {
+    location.hash = '#/dat-mat-khau';
+    currentShellRole = null;
+    setView('');
+    return VSetPassword.render(app, {});
+  }
 
-  const key = state.me.role + ':' + view;
+  if (!view || view === 'login') { view = isLead() ? 'console' : 'cockpit'; location.replace('#/' + view); }
+  // Điều hướng minh bạch: không âm thầm rơi về Cockpit nữa
+  let block = null;
+  if (!VIEWS[view]) block = { icon: '🧭', title: 'Không tìm thấy trang', desc: `Đường dẫn "#/${view}" không tồn tại trong ứng dụng.` };
+  else if ((view === 'console' || view === 'admin') && !isLead()) {
+    block = { icon: '🔒', title: 'Bạn không có quyền truy cập', desc: 'Màn hình này dành cho Trưởng phòng / Ban Giám đốc. Nếu cần quyền, vui lòng liên hệ quản trị viên.' };
+  }
+
+  const shellView = block ? (isLead() ? 'console' : 'cockpit') : view;
   if (currentShellRole !== state.me.role || !document.getElementById('main')) {
-    app.innerHTML = shell(view);
+    app.innerHTML = shell(shellView);
     currentShellRole = state.me.role;
     bindShell();
   } else {
     // cập nhật trạng thái active của nav
     app.querySelectorAll('.sidebar a, .bottom-nav a').forEach(a => {
-      a.classList.toggle('active', a.getAttribute('href') === '#/' + view);
+      a.classList.toggle('active', a.getAttribute('href') === '#/' + shellView);
     });
     const badge = app.querySelector('[data-noti]');
     if (badge) badge.innerHTML = '🔔' + (state.unread ? `<span class="dot">${state.unread}</span>` : '');
   }
 
-  setView(view);
+  setView(block ? '' : view);
   const main = document.getElementById('main');
   main.scrollTop = 0;
   window.scrollTo(0, 0);
   const sb = document.getElementById('sidebar');
   if (sb) sb.classList.remove('open');
+
+  if (block) {
+    main.innerHTML = `<div class="page-head"><div class="grow"><h2>${block.icon} ${esc(block.title)}</h2>
+      <p>${esc(block.desc)}</p></div></div>
+      <div class="card" style="text-align:center;padding:28px">
+        <div style="font-size:40px;margin-bottom:8px">${block.icon}</div>
+        <div class="b">${esc(block.title)}</div>
+        <div class="sm mut mt">${esc(block.desc)}</div>
+        <div class="mt"><a class="btn primary sm" href="#/${isLead() ? 'console' : 'cockpit'}">Về trang chính</a></div>
+      </div>`;
+    return;
+  }
+
   try {
     await VIEWS[view].render(main, { id });
   } catch (e) {
@@ -143,7 +177,7 @@ function bindShell() {
   const menu = app.querySelector('[data-menu]');
   if (menu) menu.onclick = () => document.getElementById('sidebar').classList.toggle('open');
   const lo = app.querySelector('[data-logout]');
-  if (lo) lo.onclick = (e) => { e.preventDefault(); logout(); location.hash = '#/login'; render(); };
+  if (lo) lo.onclick = async (e) => { e.preventDefault(); await logout(); location.hash = '#/login'; render(); };
 }
 
 window.addEventListener('hashchange', render);
@@ -157,7 +191,7 @@ window.addEventListener('error', (e) => console.error('Runtime error:', e.messag
     document.getElementById('app').innerHTML = `<div class="boot"><div class="err-box">Không kết nối được máy chủ: ${esc(e.message)}</div></div>`;
     return;
   }
-  if (!state.me && actorId()) { /* tài khoản cũ không còn hợp lệ */ }
+  if (!state.me && sessionToken()) { /* phiên cũ đã hết hạn — sẽ về màn đăng nhập */ }
   if (!location.hash) location.hash = state.me ? '#/cockpit' : '#/login';
   await render();
   if (window.Nexrall && typeof window.Nexrall.ready === 'function') window.Nexrall.ready();
