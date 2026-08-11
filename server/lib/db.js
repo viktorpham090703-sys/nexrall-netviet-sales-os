@@ -1,4 +1,5 @@
 import { now, uid, DAY } from './util.js';
+import { hashPassword } from './auth.js';
 
 let _migrated = false;
 
@@ -24,7 +25,51 @@ const MIGRATIONS = [
   `CREATE TABLE IF NOT EXISTS nv_notifications (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT, title TEXT NOT NULL, body TEXT, link TEXT, level TEXT DEFAULT 'info', read INTEGER DEFAULT 0, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS nv_ai_interactions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT, prompt TEXT, response TEXT, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS nv_audit_logs (id TEXT PRIMARY KEY, user_id TEXT, action TEXT NOT NULL, entity TEXT, entity_id TEXT, meta TEXT, created_at INTEGER NOT NULL)`,
+  /* --- Từ đây là migration BỔ SUNG: chỉ được THÊM VÀO CUỐI, không sửa/chèn giữa --- */
+  // 21: phiên đăng nhập — thay cho việc tin vào header X-Actor-Id
+  `CREATE TABLE IF NOT EXISTS nv_sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, ua TEXT)`,
+  // 22: mỗi deal chỉ có đúng 1 bản ghi hoa hồng (chống nhân bản ở tầng CSDL)
+  `CREATE UNIQUE INDEX IF NOT EXISTS ux_commission_deal ON nv_commissions(deal_id)`,
+  // 23: chặn trùng email tài khoản ở tầng CSDL
+  `CREATE UNIQUE INDEX IF NOT EXISTS ux_user_email ON nv_users(email) WHERE email IS NOT NULL AND email <> ''`,
+  // 24: cấu hình có phiên bản — giữ lịch sử hiệu lực để KPI kỳ cũ không bị tính lại sai
+  `ALTER TABLE nv_kpi_config ADD COLUMN valid_from INTEGER`,
+  `ALTER TABLE nv_kpi_config ADD COLUMN valid_to INTEGER`,
+  // 25: tăng tốc tra cứu phiên & audit
+  `CREATE INDEX IF NOT EXISTS ix_sessions_user ON nv_sessions(user_id)`,
+  // 26: đăng nhập bằng mật khẩu — thêm cột lưu mã băm (PBKDF2), không lưu mật khẩu gốc
+  `ALTER TABLE nv_users ADD COLUMN password_hash TEXT`,
+  // 27: đánh dấu tài khoản demo (seed) để tách khỏi nhân sự thật thêm qua Quản trị —
+  // tránh lộ tên/chức danh nhân sự thật ra màn đăng nhập công khai kèm mật khẩu demo dùng chung.
+  `ALTER TABLE nv_users ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0`,
+  // 28: liên kết thiết lập mật khẩu dùng 1 lần (cấp tài khoản lần đầu / quên mật khẩu) —
+  // app chưa có hạ tầng gửi email nên Admin tự gửi link qua kênh nội bộ. Chỉ lưu HASH của
+  // token, không lưu token gốc, để lộ CSDL không đồng nghĩa lộ được link còn hiệu lực.
+  `CREATE TABLE IF NOT EXISTS nv_password_setup_tokens (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, purpose TEXT NOT NULL, created_by TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER, created_at INTEGER NOT NULL)`,
+  // 29: buộc đổi mật khẩu ở lần đăng nhập đầu — dùng cho tài khoản admin khởi tạo tự động
+  // ở chế độ production (mật khẩu ban đầu do người vận hành đặt qua secret, không nên dùng lâu dài).
+  `ALTER TABLE nv_users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
+  // 30: chống dò mật khẩu — đếm số lần đăng nhập sai theo (định danh+IP) trong 1 cửa sổ thời gian.
+  // Dùng bảng D1 thay vì SHARED_KV vì cần đọc-rồi-tăng chính xác trong 1 request; KV không có
+  // atomic increment nên dễ đếm thiếu khi có request đua nhau. Không cần cột TTL vì cửa sổ được
+  // tự tính từ window_start, hàng cũ tự nguội (không chặn) khi quá cửa sổ dù chưa bị dọn.
+  `CREATE TABLE IF NOT EXISTS nv_login_attempts (rl_key TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0, window_start INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  // 31: sửa dữ liệu — 6 tài khoản nhân sự chính thức (HAUNV, HUONGNT, DUCHT, DUCNH, HUONGLT,
+  // PHUONGVH) được tạo thẳng trong CSDL với is_demo=1, khiến họ bị liệt kê nhầm vào "Tài khoản
+  // demo" công khai ở màn đăng nhập (is_demo=1 vốn chỉ dành cho 5 tài khoản demo do seed() tạo).
+  // Đây là UPDATE dữ liệu 1 lần theo đúng danh sách mã nhân viên đã xác nhận, không đụng schema,
+  // không đụng mật khẩu/role/quyền, không ảnh hưởng tài khoản demo hay tài khoản khác.
+  `UPDATE nv_users SET is_demo=0 WHERE id IN ('HAUNV','HUONGNT','DUCHT','DUCNH','HUONGLT','PHUONGVH')`,
 ];
+
+/** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
+ * theo nguyên tắc fail-safe — quên cấu hình thì KHÔNG được tự nạp dữ liệu giả vào CSDL thật. */
+export function appMode(env) {
+  return env?.APP_MODE === 'demo' ? 'demo' : 'production';
+}
+
+/** Mật khẩu demo dùng chung — chỉ có ý nghĩa ở chế độ demo, không tồn tại trong mã nguồn phía client. */
+export const DEMO_PASSWORD = 'Netviet@123';
 
 export async function migrate(env) {
   if (_migrated) return;
@@ -44,7 +89,33 @@ export async function migrate(env) {
         .bind('schema_version', String(MIGRATIONS.length)).run();
     } catch (e) { console.error('meta', e.message); }
   }
-  await seed(env);
+  // Migration LUÔN chạy ở cả 2 chế độ (production cần đủ bảng); chỉ việc NẠP DỮ LIỆU là tách theo môi trường —
+  // demo nạp đầy đủ dữ liệu mẫu, production chỉ khởi tạo đúng 1 tài khoản admin từ secret, không có gì khác.
+  if (appMode(env) === 'demo') await seed(env);
+  else await bootstrapProductionAdmin(env);
+}
+
+/** Production, lần chạy đầu (nv_users rỗng): khởi tạo ĐÚNG 1 tài khoản admin từ secret, không sinh
+ * thêm bất kỳ dữ liệu nghiệp vụ giả nào. Thiếu secret thì KHÔNG tạo gì cả — an toàn hơn là đoán bừa. */
+async function bootstrapProductionAdmin(env) {
+  const c = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_users').first('n')) || 0;
+  if (c > 0) return;
+  const email = env?.BOOTSTRAP_ADMIN_EMAIL;
+  const password = env?.BOOTSTRAP_ADMIN_PASSWORD;
+  if (!email || !password) {
+    console.error(
+      '[bootstrap] Chưa có tài khoản admin nào trong CSDL và thiếu secret BOOTSTRAP_ADMIN_EMAIL / ' +
+      'BOOTSTRAP_ADMIN_PASSWORD nên KHÔNG tự tạo tài khoản. Hãy đặt 2 secret này (Secrets của app) ' +
+      'rồi khởi động lại để hệ thống tự khởi tạo tài khoản quản trị đầu tiên.'
+    );
+    return;
+  }
+  const t = now();
+  const hash = await hashPassword(password);
+  await env.DB.prepare(
+    'INSERT INTO nv_users (id,name,email,role,title,phone,active,created_at,password_hash,is_demo,must_change_password) VALUES (?,?,?,?,?,?,1,?,?,0,1)')
+    .bind(uid('u'), 'Quản trị viên', String(email).trim(), 'admin', 'Quản trị hệ thống', null, t, hash).run();
+  console.log('[bootstrap] Đã khởi tạo tài khoản admin đầu tiên: ' + email + ' (buộc đổi mật khẩu ở lần đăng nhập đầu).');
 }
 
 const pick = (arr, i) => arr[i % arr.length];
@@ -57,21 +128,25 @@ async function seed(env) {
   const P = (sql, ...b) => S.push(env.DB.prepare(sql).bind(...b));
 
   /* ---------- Users ---------- */
+  // Nhân vật HƯ CẤU rõ ràng (bản demo có thể gửi cho khách hàng ngoài xem) — không dùng tên/email
+  // trông như nhân sự thật của NetViet. Giữ nguyên id vì dữ liệu mẫu bên dưới tham chiếu tới chúng.
   const users = [
-    ['u_admin', 'Nguyễn Quốc Bảo', 'admin@netviet.vn', 'admin', 'Giám đốc điều hành', '0901000001'],
-    ['u_tp', 'Trần Thu Hà', 'tpkd@netviet.vn', 'manager', 'Trưởng phòng Kinh doanh', '0901000002'],
-    ['u_s1', 'Lê Minh Tuấn', 'tuan.le@netviet.vn', 'sales', 'Chuyên viên Kinh doanh', '0901000003'],
-    ['u_s2', 'Phạm Ngọc Anh', 'anh.pham@netviet.vn', 'sales', 'Chuyên viên Kinh doanh', '0901000004'],
-    ['u_s3', 'Võ Hoàng Nam', 'nam.vo@netviet.vn', 'sales', 'Chuyên viên Kinh doanh', '0901000005'],
+    ['u_admin', 'Nguyễn Văn A', 'demo-admin@example.com', 'admin', 'Giám đốc điều hành', '0901000001'],
+    ['u_tp', 'Trần Thị B', 'demo-manager@example.com', 'manager', 'Trưởng phòng Kinh doanh', '0901000002'],
+    ['u_s1', 'Lê Văn C', 'demo-sales1@example.com', 'sales', 'Chuyên viên Kinh doanh', '0901000003'],
+    ['u_s2', 'Phạm Thị D', 'demo-sales2@example.com', 'sales', 'Chuyên viên Kinh doanh', '0901000004'],
+    ['u_s3', 'Hoàng Văn E', 'demo-sales3@example.com', 'sales', 'Chuyên viên Kinh doanh', '0901000005'],
   ];
-  users.forEach(u => P('INSERT INTO nv_users (id,name,email,role,title,phone,active,created_at) VALUES (?,?,?,?,?,?,1,?)', ...u, T - 200 * DAY));
+  // is_demo=1 để tách khỏi nhân sự thật (thêm sau qua Quản trị), không lộ lên màn đăng nhập công khai.
+  const demoHash = await hashPassword(DEMO_PASSWORD);
+  users.forEach(u => P('INSERT INTO nv_users (id,name,email,role,title,phone,active,created_at,password_hash,is_demo) VALUES (?,?,?,?,?,?,1,?,?,1)', ...u, T - 200 * DAY, demoHash));
   const SALES = ['u_s1', 'u_s2', 'u_s3'];
 
   /* ---------- Cấu hình KPI / định mức ---------- */
   const cfg = [
     ['quota_daily_contacts', '8'], ['quota_calls', '25'], ['quota_meetings', '2'],
     ['target_revenue', '400000000'], ['target_deals', '3'], ['target_pipeline', '1200000000'],
-    ['discount_threshold', '15'], ['report_deadline_hour', '18'],
+    ['discount_threshold', '15'], ['report_deadline_hour', '17.5'],
     ['sla_days', '{"lead_moi":2,"tiep_can":3,"nhu_cau":5,"bao_gia":4,"dam_phan":5,"chot":3,"trien_khai":14}'],
     ['task_accept_sla_min', '120'],
   ];
@@ -100,14 +175,14 @@ async function seed(env) {
     ['cs_01', 'u_s1', 'Công ty CP Sữa Việt Xanh', 'FMCG', 'hot', 'Website'],
     ['cs_02', 'u_s1', 'Tập đoàn BĐS An Phát', 'Bất động sản', 'hot', 'Giới thiệu'],
     ['cs_03', 'u_s1', 'Ngân hàng TMCP Đông Đô', 'Ngân hàng', 'warm', 'Sự kiện'],
-    ['cs_04', 'u_s1', 'Chuỗi cà phê Nâu Việt', 'Bán lẻ', 'warm', 'Cold call'],
-    ['cs_05', 'u_s2', 'Dược phẩm Minh Long', 'Dược phẩm', 'hot', 'LinkedIn'],
-    ['cs_06', 'u_s2', 'Hệ thống Anh ngữ SmartKid', 'Giáo dục', 'warm', 'Facebook Ads'],
+    ['cs_04', 'u_s1', 'Chuỗi cà phê Nâu Việt', 'Bán lẻ', 'warm', 'Review'],
+    ['cs_05', 'u_s2', 'Dược phẩm Minh Long', 'Dược phẩm', 'hot', 'MGM'],
+    ['cs_06', 'u_s2', 'Hệ thống Anh ngữ SmartKid', 'Giáo dục', 'warm', 'CTV/KOL'],
     ['cs_07', 'u_s2', 'Ô tô Trường Phát', 'Ô tô', 'cold', 'Hội chợ'],
     ['cs_08', 'u_s2', 'Siêu thị GreenMart', 'Bán lẻ', 'warm', 'Đối tác'],
     ['cs_09', 'u_s3', 'Công nghệ VinaSoft', 'Công nghệ', 'warm', 'Website'],
     ['cs_10', 'u_s3', 'Mỹ phẩm Hạ Vy', 'FMCG', 'hot', 'TikTok'],
-    ['cs_11', 'u_s3', 'Nội thất Nhà Mới', 'Bán lẻ', 'cold', 'Cold call'],
+    ['cs_11', 'u_s3', 'Nội thất Nhà Mới', 'Bán lẻ', 'cold', 'Game Viral'],
     ['cs_12', 'u_s3', 'Tập đoàn Nông nghiệp Đại Lộc', 'FMCG', 'warm', 'Giới thiệu'],
   ];
   customers.forEach((c, i) => {
@@ -149,7 +224,7 @@ async function seed(env) {
     const won = (stage === 'chot' || stage === 'trien_khai');
     P('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,won_at,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       id, owner, cus, title, service, value, stage, prob[stage], won ? 'won' : 'open',
-      pick(['Inbound', 'Cold call', 'Giới thiệu', 'Đấu thầu'], i),
+      pick(['Review', 'MGM', 'Liên minh', 'CTV/KOL'], i),
       T + (10 + i * 2) * DAY, T - idleDays * DAY, T - idleDays * DAY, won ? T - idleDays * DAY : null,
       'Deal demo phục vụ trình diễn pipeline.', T - (40 - i) * DAY, T - idleDays * DAY);
     if (won) {
@@ -188,7 +263,7 @@ async function seed(env) {
       for (let k = 0; k < cnt; k++) {
         P('INSERT INTO nv_daily_contacts (id,user_id,name,company,channel,phone,customer_id,note,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
           uid('dc'), u, 'Liên hệ mới ' + (d * 10 + k + 1), pick(inds, d + k) + ' Corp',
-          pick(['Cold call', 'LinkedIn', 'Facebook', 'Zalo OA', 'Giới thiệu', 'Sự kiện', 'Website'], d + k),
+          pick(['Review', 'MGM', 'Liên minh', 'Tài trợ', 'CTV/KOL', 'Kênh cá nhân', 'Game Viral'], d + k),
           '09' + (70000000 + d * 1000 + k), null, 'Tiếp cận lần đầu', T - d * DAY - k * 1800);
       }
     }
@@ -242,7 +317,7 @@ async function seed(env) {
     T - (i % 5) * DAY));
 
   /* ---------- Lead theo 7 kênh ---------- */
-  const channels = ['Cold call', 'LinkedIn', 'Facebook Ads', 'Giới thiệu', 'Sự kiện/Hội chợ', 'Inbound Website', 'Đấu thầu'];
+  const channels = ['Review', 'MGM', 'Liên minh', 'Tài trợ', 'CTV/KOL', 'Kênh cá nhân', 'Game Viral'];
   for (let i = 0; i < 12; i++) {
     P('INSERT INTO nv_leads (id,owner_id,name,company,channel,phone,email,need,score,status,note,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       uid('ld'), SALES[i % 3], pick(['Anh Trung', 'Chị Hồng', 'Anh Phúc', 'Chị Yến', 'Anh Sơn'], i),
