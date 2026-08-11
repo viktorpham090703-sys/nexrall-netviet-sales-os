@@ -63,7 +63,10 @@ export async function render(el) {
       <div class="grow"><div class="t">${esc(u.name)}</div>
         <div class="d">${esc(ROLE_NAME[u.role] || u.role)} · ${esc(u.email || '')}</div></div>
       <div class="right">${chip(u.active ? 'Hoạt động' : 'Khoá', u.active ? 'green' : 'red')}
-        ${isAdmin() ? `<div class="mt"><button class="btn sm" data-edituser="${esc(u.id)}">Sửa</button></div>` : ''}</div>
+        ${isAdmin() ? `<div class="mt row" style="gap:6px">
+          <button class="btn sm" data-edituser="${esc(u.id)}">Sửa</button>
+          <button class="btn sm" data-resetlink="${esc(u.id)}" data-name="${esc(u.name)}">Tạo liên kết đặt lại mật khẩu</button>
+        </div>` : ''}</div>
     </div>`).join('')}</div>` : ''}
 
   ${tab === 'config' ? `<button class="btn block mb" data-addcfg>+ Đặt ngưỡng (global hoặc theo sales)</button>
@@ -111,8 +114,20 @@ export async function render(el) {
       title: 'Thêm người dùng',
       fields: [{ name: 'name', label: 'Họ tên', required: true }, { name: 'email', label: 'Email' },
       { name: 'role', label: 'Vai trò', type: 'select', options: [{ v: 'sales', n: 'Sales' }, { v: 'manager', n: 'Trưởng phòng' }, { v: 'admin', n: 'Admin/BGĐ' }] },
-      { name: 'title', label: 'Chức danh' }],
-      onSubmit: async (v) => { await post('/users', v); toast('Đã thêm người dùng', 'ok'); render(el); },
+      { name: 'title', label: 'Chức danh' },
+      { name: 'password', label: 'Mật khẩu đăng nhập', type: 'password', hint: 'Bỏ trống để tạo liên kết thiết lập mật khẩu — nhân sự tự đặt mật khẩu, bạn sẽ không biết mật khẩu của họ (khuyến nghị).' }],
+      onSubmit: async (v) => {
+        const noPassword = !v.password;
+        if (noPassword) delete v.password;
+        const r = await post('/users', v);
+        toast('Đã thêm người dùng', 'ok');
+        render(el);
+        if (!noPassword) return;
+        // Modal lồng: giữ modal-root khỏi bị đóng đè bằng cách trả về false, rồi mới mở
+        // modal hiển thị liên kết thiết lập mật khẩu vào đúng chỗ modal vừa đóng.
+        await createSetupLink(r.id, 'invite', v.name);
+        return false;
+      },
     });
     el.querySelectorAll('[data-edituser]').forEach(b => b.onclick = () => {
       const u = d.users.find(x => x.id === b.dataset.edituser);
@@ -120,16 +135,39 @@ export async function render(el) {
         title: 'Sửa người dùng',
         fields: [{ name: 'name', label: 'Họ tên', value: u.name }, { name: 'email', label: 'Email', value: u.email || '' },
         { name: 'role', label: 'Vai trò', type: 'select', value: u.role, options: [{ v: 'sales', n: 'Sales' }, { v: 'manager', n: 'Trưởng phòng' }, { v: 'admin', n: 'Admin/BGĐ' }] },
-        { name: 'active', label: 'Trạng thái', type: 'select', value: String(u.active), options: [{ v: '1', n: 'Hoạt động' }, { v: '', n: 'Khoá' }] }],
-        onSubmit: async (v) => { await patch('/users/' + u.id, { ...v, active: !!v.active }); toast('Đã cập nhật', 'ok'); render(el); },
+        { name: 'active', label: 'Trạng thái', type: 'select', value: String(u.active), options: [{ v: '1', n: 'Hoạt động' }, { v: '', n: 'Khoá' }] },
+        { name: 'password', label: 'Đặt lại mật khẩu', type: 'password', hint: 'Bỏ trống để giữ nguyên mật khẩu hiện tại.' }],
+        onSubmit: async (v) => { if (!v.password) delete v.password; await patch('/users/' + u.id, { ...v, active: !!v.active }); toast('Đã cập nhật', 'ok'); render(el); },
       });
     });
+    el.querySelectorAll('[data-resetlink]').forEach(b => b.onclick = () => createSetupLink(b.dataset.resetlink, 'reset', b.dataset.name));
     const ac = el.querySelector('[data-addcfg]');
     if (ac) ac.onclick = () => cfgModal('', '', '', () => render(el));
     el.querySelectorAll('[data-editcfg]').forEach(b => b.onclick = () => cfgModal(b.dataset.editcfg, b.dataset.user, b.dataset.val, () => render(el)));
   };
 
   await mount(el, load, draw, bind);
+}
+
+/** Sinh liên kết thiết lập mật khẩu (mời tài khoản mới / đặt lại mật khẩu) và hiển thị để Admin
+ * tự gửi qua Zalo/Slack — app chưa có hạ tầng gửi email, đây là cách Admin không cần biết mật khẩu thật. */
+async function createSetupLink(userId, purpose, name) {
+  try {
+    const r = await post('/users/' + userId + '/setup-link', { purpose });
+    const link = `${location.origin}/#/dat-mat-khau/${r.token}`;
+    const { root } = modal({
+      title: purpose === 'reset' ? 'Liên kết đặt lại mật khẩu' : 'Liên kết thiết lập mật khẩu',
+      html: `<p class="sm mut">Gửi liên kết dưới đây cho <b>${esc(name || '')}</b> qua Zalo/Slack. Liên kết chỉ dùng được 1 lần và hết hạn sau 48 giờ.</p>
+        <label class="f"><span>LIÊN KẾT</span><input data-setup-link type="text" readonly value="${esc(link)}"></label>
+        <button type="button" class="btn block mt" data-copy-link>📋 Copy link</button>`,
+      submitText: 'Đóng',
+      onSubmit: () => {},
+    });
+    root.querySelector('[data-copy-link]').onclick = async () => {
+      try { await navigator.clipboard.writeText(link); toast('Đã sao chép', 'ok'); }
+      catch (e) { toast('Không sao chép được', 'err'); }
+    };
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 function cfgModal(key, userId, value, after) {
