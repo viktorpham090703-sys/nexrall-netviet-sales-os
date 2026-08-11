@@ -23,7 +23,22 @@ export const actName = (k) => (ACT_TYPES.find(a => a.k === k) || {}).n || k;
 export const actIcon = (k) => (ACT_TYPES.find(a => a.k === k) || {}).ic || '📌';
 
 export const SERVICES = ['TVC/Video', 'Gameshow', 'Xây kênh'];
-export const CHANNELS = ['Cold call', 'LinkedIn', 'Facebook Ads', 'Giới thiệu', 'Sự kiện/Hội chợ', 'Inbound Website', 'Đấu thầu'];
+/* 7 kênh nguồn khách theo Kế hoạch tái cấu trúc PKD NetViet 2026 (FR-M2-1).
+   'Đấu thầu' KHÔNG nằm trong 7 kênh — cơ hội thầu là nguồn riêng (TenderLead). */
+export const CHANNELS = [
+  'Review', 'MGM', 'Liên minh', 'Tài trợ', 'CTV/KOL', 'Kênh cá nhân', 'Game Viral',
+];
+export const CHANNEL_DESC = {
+  'Review': 'Khách đến từ bài review / đánh giá dịch vụ',
+  'MGM': 'Member Get Member — khách cũ giới thiệu khách mới',
+  'Liên minh': 'Đối tác liên minh cùng bán chéo tệp khách',
+  'Tài trợ': 'Cơ hội từ hoạt động tài trợ chương trình/sự kiện',
+  'CTV/KOL': 'Cộng tác viên & người có ảnh hưởng giới thiệu',
+  'Kênh cá nhân': 'Quan hệ cá nhân, mạng lưới riêng của sales',
+  'Game Viral': 'Khách đến từ minigame / nội dung lan truyền',
+};
+/* Nguồn ngoài 7 kênh — dùng cho lead sinh từ đấu thầu */
+export const SOURCE_TENDER = 'Đấu thầu';
 
 export const ROLE_NAME = { sales: 'Nhân viên Sales', manager: 'Trưởng phòng KD', admin: 'Admin / BGĐ' };
 
