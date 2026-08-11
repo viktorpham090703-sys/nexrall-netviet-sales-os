@@ -48,7 +48,7 @@ main{flex:1;padding:14px 14px calc(var(--nav-h) + 26px);max-width:1240px;width:1
 .bottom-nav a.active{color:var(--orange)}
 
 /* ---------- sidebar (TP/Admin) ---------- */
-.with-side{display:flex}
+.with-side{display:flex;flex-direction:row}
 .sidebar{width:216px;flex:none;background:#1b1b20;border-right:1px solid var(--line);padding:12px 10px;
   position:sticky;top:0;height:100vh;overflow:auto}
 .sidebar .sec{color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;margin:14px 8px 6px}
@@ -184,13 +184,32 @@ textarea{min-height:74px;resize:vertical}
 .guard-box small{color:#71717a}
 
 /* ---------- login ---------- */
-.login-wrap{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:26px 18px;
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:26px 18px;
   background:radial-gradient(1000px 500px at 10% -10%,rgba(185,28,28,.35),transparent),radial-gradient(800px 400px at 110% 10%,rgba(245,158,11,.22),transparent),var(--bg)}
 .login-wrap .hero h1{font-size:26px;line-height:1.15}
 .login-wrap .hero p{color:var(--mut);font-size:13.5px;margin-top:6px}
+.login-card{width:100%;max-width:380px;background:var(--bg2);border:1px solid var(--line);border-radius:22px;
+  padding:30px 26px 26px;text-align:center;box-shadow:0 20px 60px #0007}
+.login-logo{width:66px;height:66px;margin:0 auto 16px;border-radius:18px;background:linear-gradient(135deg,var(--red),var(--orange));
+  display:grid;place-items:center;font-size:22px;font-weight:900;color:#fff}
+.login-card h1{font-size:21px}
+.login-card h1 .accent{color:var(--orange)}
+.login-card .login-sub{color:var(--mut);font-size:12.5px;margin-top:6px;line-height:1.4}
+.login-card form{text-align:left}
+.login-card label.f>span{text-align:left}
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:38px}
+.pw-toggle{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;border:0;background:transparent;
+  color:var(--mut);cursor:pointer;font-size:15px;display:grid;place-items:center;border-radius:8px}
+.pw-toggle:hover{background:var(--bg3)}
+.login-submit{padding:11px 13px;font-size:14px}
+.login-hint{margin-top:14px}
 .acct{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:var(--bg2);border:1px solid var(--line);
   border-radius:14px;padding:11px 12px;margin-top:9px;cursor:pointer;color:var(--txt)}
 .acct:hover{border-color:var(--orange)}
+.acct.sm{padding:8px 10px;margin-top:7px;border-radius:12px;background:#1a1a1f}
+.acct.sm .avatar{width:28px;height:28px;font-size:11px}
+.acct.sm .b{font-size:13px}
 .empty{text-align:center;color:var(--mut);padding:26px 10px;font-size:13px}
 .empty .e{font-size:30px;display:block;margin-bottom:6px}
 .err-box{background:rgba(220,38,38,.12);border:1px solid #7f1d1d;border-radius:12px;padding:11px;font-size:13px}
