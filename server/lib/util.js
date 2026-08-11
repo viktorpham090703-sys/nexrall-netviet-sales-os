@@ -35,14 +35,52 @@ export function need(ctx, roles) {
   return ctx.me;
 }
 
-/** Data scope: sales chỉ thấy dữ liệu của mình. */
+/**
+ * "Workspace" (demo/chính thức) của actor: 1 = demo, 0 = chính thức. Nguồn sự thật DUY NHẤT
+ * cho quy tắc bucket này — mọi nơi cần lọc theo workspace phải gọi qua đây (hoặc wsScope/
+ * sameWorkspaceUser/inSameWorkspace bên dưới), không tự viết `me.is_demo ? 1 : 0` lại lần nữa,
+ * vì mỗi bản sao thủ công là một chỗ có thể bị bỏ sót khi thêm route mới.
+ */
+export const wsBucket = (me) => (me?.is_demo ? 1 : 0);
+
+/** Điều kiện SQL giới hạn cột `col` (chứa user id) vào đúng workspace của actor — dùng cho các
+ * truy vấn liệt kê không đi qua scope() (audit log, danh sách nhân sự, cấu hình, leaderboard…). */
+export function wsScope(ctx, col) {
+  return { sql: ` AND ${col} IN (SELECT id FROM nv_users WHERE is_demo=?)`, args: [wsBucket(ctx.me)] };
+}
+
+/**
+ * Data scope: sales chỉ thấy dữ liệu của mình; TP/Admin thấy dữ liệu của CẢ WORKSPACE
+ * (đội của họ) — nhưng bị giới hạn trong đúng workspace demo/chính thức của chính họ
+ * (theo cột is_demo trên nv_users), để dữ liệu mẫu demo không lẫn vào dữ liệu thật và
+ * ngược lại. "Workspace" ở đây tái dùng is_demo có sẵn thay vì thêm organization_id mới.
+ */
 export function scope(ctx, col = 'owner_id') {
   if (isLead(ctx.me)) {
+    const ws = wsScope(ctx, col);
     const u = ctx.url.searchParams.get('userId');
-    if (u && u !== 'all') return { sql: ` AND ${col} = ?`, args: [u] };
-    return { sql: '', args: [] };
+    if (u && u !== 'all') return { sql: ` AND ${col} = ?` + ws.sql, args: [u, ...ws.args] };
+    return ws;
   }
   return { sql: ` AND ${col} = ?`, args: [ctx.me.id] };
+}
+
+/** Bản ghi có user_id=`userId` có cùng workspace với actor không — dùng để chặn thao tác lên
+ * bản ghi đã tồn tại (KPI, hoa hồng, PIP…) do 1 user khác sở hữu, không tin `col` phía SQL. */
+export async function inSameWorkspace(env, ctx, userId) {
+  if (!userId) return false;
+  const row = await env.DB.prepare('SELECT is_demo FROM nv_users WHERE id=?').bind(String(userId)).first();
+  return !!row && wsBucket(row) === wsBucket(ctx.me);
+}
+
+/** Tra 1 user ACTIVE cùng workspace với actor — dùng khi client gửi thẳng 1 id để GÁN việc/khách
+ * hàng/deal/PIP (ownerId/userId/assignTo…). Trả về hàng {id,name,role,created_at,is_demo} nếu hợp
+ * lệ, null nếu không tồn tại / đã khoá / khác workspace (fail-safe: không tin id client gửi lên). */
+export async function sameWorkspaceUser(env, ctx, userId) {
+  if (!userId) return null;
+  const row = await env.DB.prepare('SELECT id,name,role,created_at,is_demo FROM nv_users WHERE id=? AND active=1').bind(String(userId)).first();
+  if (!row || wsBucket(row) !== wsBucket(ctx.me)) return null;
+  return row;
 }
 
 export function todayKey(offset = 0) {
