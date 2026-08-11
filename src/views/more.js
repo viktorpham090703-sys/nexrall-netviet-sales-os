@@ -3,14 +3,13 @@ import { esc, initials } from '../ui.js';
 import { ROLE_NAME } from '../const.js';
 
 const LINKS = [
+  ['#/crm', '🗂️', 'CRM 360° Khách hàng', 'Hồ sơ, lịch sử tương tác, cross-sell'],
+  ['#/ai', '🤖', 'AI Trợ lý', 'Soạn email, xử lý từ chối, tra giá'],
   ['#/activities', '🗓️', 'Lịch & Hoạt động', 'Ghi log, call log, nhắc việc'],
-  ['#/tasks', '📥', 'Việc & Giao việc', 'Việc được giao, SLA nhận việc'],
   ['#/reports', '📝', 'Báo cáo EOD & Tuần', 'Nộp 1 chạm, tự tổng hợp'],
   ['#/kpi', '🏆', 'KPI & Hoa hồng', 'Thẻ điểm 100đ, leaderboard, PIP'],
-  ['#/prospect', '🔎', 'Tìm khách & Thầu', '7 kênh nguồn, AI chấm lead'],
   ['#/saleskit', '📄', 'Sales Kit & Báo giá', 'Bảng giá, tính hoa hồng'],
   ['#/training', '🎓', 'Đào tạo', 'Lộ trình học theo vai trò'],
-  ['#/ai', '🤖', 'AI Trợ lý', 'Soạn email, xử lý từ chối'],
 ];
 
 export async function render(el) {
@@ -29,8 +28,8 @@ export async function render(el) {
       <span class="mut">›</span></a>`).join('')}</div>
   <div class="xs mut mt">NetViet Sales OS · bản demo dữ liệu mẫu · AI hỗ trợ <b>Google Gemini</b> & <b>Anthropic Claude</b> (nhập API key trong Secrets là chạy ngay, chưa có key thì dùng AI mẫu offline) · các tích hợp còn lại (quét thầu, tổng đài, Zalo/email, e-sign, kế toán) đang ở chế độ mock.</div>`;
 
-  el.querySelector('[data-logout]').onclick = () => {
-    logout();
+  el.querySelector('[data-logout]').onclick = async () => {
+    await logout();
     location.hash = '#/login';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   };
