@@ -5,19 +5,10 @@ import { crmRoutes } from './server/routes/crm.js';
 import { dealRoutes } from './server/routes/deals.js';
 import { workRoutes } from './server/routes/work.js';
 import { miscRoutes } from './server/routes/misc.js';
+import { resolveActor } from './server/lib/auth.js';
 
 const ROUTERS = [coreRoutes, crmRoutes, dealRoutes, workRoutes, miscRoutes];
 export const SCHEMA_NS = 'nv_'; // bảng của app dùng tiền tố nv_ (tách khỏi schema cũ)
-
-/** Xác định người dùng đang thao tác (demo: chọn tài khoản, gửi qua header X-Actor-Id). */
-async function resolveActor(request, env) {
-  const id = request.headers.get('x-actor-id');
-  if (id) {
-    const u = await env.DB.prepare('SELECT id,name,email,role,title FROM nv_users WHERE id=? AND active=1').bind(id).first();
-    if (u) return u;
-  }
-  return null;
-}
 
 export async function handle(request, env) {
   await migrate(env);
