@@ -15,7 +15,20 @@ Hành vi lần chạy đầu (CSDL rỗng) phụ thuộc secret **`APP_MODE`**:
 **Bản dùng thật để chấm KPI/hoa hồng luôn phải đặt `APP_MODE=production`** — dữ liệu demo không
 được phép lẫn vào doanh thu, leaderboard hay báo cáo thật. Xem thêm [LOCAL_DEV.md](LOCAL_DEV.md#deploy-thật-nexrall).
 
-## Tài khoản demo (chỉ có ở bản `APP_MODE=demo`, chọn ở màn đăng nhập)
+## Tài khoản trên bản đang chạy tại Nexrall
+CSDL của bản deploy này đã có sẵn 5 tài khoản (nhân sự + dữ liệu nghiệp vụ mẫu đầy đủ). Mật khẩu
+tạm cho cả 5: **`NetViet@2026`** — app **buộc đổi mật khẩu ngay lần đăng nhập đầu tiên**.
+
+| Vai trò | Đăng nhập bằng email |
+|---|---|
+| Admin/BGĐ | `admin@netviet.vn` |
+| Trưởng phòng | `tpkd@netviet.vn` |
+| Sales | `tuan.le@netviet.vn` · `anh.pham@netviet.vn` · `nam.vo@netviet.vn` |
+
+Cấp/đặt lại mật khẩu cho người khác: Admin vào **Quản trị → Người dùng → Tạo liên kết đặt mật khẩu**
+(link dùng 1 lần, hết hạn theo `SETUP_TOKEN_TTL`), gửi qua kênh nội bộ.
+
+## Tài khoản demo (chỉ sinh ra ở CSDL RỖNG với `APP_MODE=demo`)
 | Vai trò | Tài khoản (nhân vật hư cấu) |
 |---|---|
 | Admin/BGĐ | Nguyễn Văn A |

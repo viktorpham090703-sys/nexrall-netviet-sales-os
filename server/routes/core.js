@@ -187,7 +187,8 @@ export async function coreRoutes(ctx) {
    * Cron: quét & GHI THẬT thông báo (M10). Nexrall/Wrangler gọi định kỳ.
    * Chống spam: mỗi loại sự kiện chỉ nhắc 1 lần trong 12 giờ (dựa trên nv_notifications).
    */
-  if ((p = match(ctx, 'GET', '/api/__cron'))) {
+  // Nền tảng có thể gọi bằng POST (scheduler) hoặc GET (kiểm thử thủ công) → chấp nhận cả hai.
+  if ((p = match(ctx, 'GET', '/api/__cron') || match(ctx, 'POST', '/api/__cron'))) {
     const t = now();
     const since = t - 12 * 3600;
     const out = { sla: 0, escalation: 0, tasks: 0, reports: 0, tenders: 0, pip: 0 };
@@ -274,7 +275,9 @@ export async function coreRoutes(ctx) {
     }
 
     await audit(env, null, 'cron_run', 'system', null, out);
-    return json({ ok: true, sent: out, at: t });
+    // notify/email rỗng: thông báo đã được ghi thẳng vào nv_notifications ở trên (in-app),
+    // không nhờ nền tảng gửi push/email hộ.
+    return json({ ok: true, sent: out, at: t, notify: [], email: [] });
   }
 
   return null;
