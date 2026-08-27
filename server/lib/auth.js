@@ -111,4 +111,3 @@ export async function resolveActor(request, env) {
     is_demo: !!row.is_demo, must_change_password: !!row.must_change_password, can_manage_accounts: !!row.can_manage_accounts, _token: token,
   };
 }
-
