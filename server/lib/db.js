@@ -186,6 +186,12 @@ const MIGRATIONS = [
   `ALTER TABLE nv_deals ADD COLUMN process_type TEXT NOT NULL DEFAULT 'thong_thuong'`,
   `ALTER TABLE nv_deals ADD COLUMN tender_id TEXT`,
   `ALTER TABLE nv_deals ADD COLUMN negotiation_round INTEGER NOT NULL DEFAULT 0`,
+  // 44: tài khoản HCNS chính thức mới (THUYDT) — theo yêu cầu trực tiếp của người vận hành, có
+  // email riêng (khác 6 tài khoản migration 31/33 vốn không có email, đăng nhập bằng mã nhân
+  // viên). can_manage_accounts phải set rõ =0 (cột có DEFAULT 1 ở migration 32) — HCNS không được
+  // quản lý tài khoản nhân sự khác. Mật khẩu gán riêng ở assignThuydtPassword() bên dưới vì cần
+  // hash (không làm được bằng SQL thuần trong mảng MIGRATIONS này).
+  `INSERT INTO nv_users (id,name,email,role,active,created_at,is_demo,can_manage_accounts) VALUES ('THUYDT','THUYDT','hr@netviet.com','hr',1,CAST(strftime('%s','now') AS INTEGER),0,0) ON CONFLICT(id) DO UPDATE SET role='hr', email='hr@netviet.com', can_manage_accounts=0`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
@@ -204,6 +210,10 @@ const OFFICIAL_ACCOUNT_IDS = ['HAUNV', 'HUONGNT', 'DUCHT', 'DUCNH', 'PHUONGVH', 
  * của người vận hành hệ thống (không phải lựa chọn mặc định của app). Trùng giá trị với
  * DEMO_PASSWORD là chủ ý của người vận hành, không phải nhầm lẫn. */
 const OFFICIAL_ACCOUNT_INITIAL_PASSWORD = 'Netviet@123';
+
+/** Mật khẩu khởi tạo riêng cho tài khoản HCNS mới THUYDT (email hr@netviet.com) — theo yêu cầu
+ * trực tiếp của người vận hành để demo & test vị trí HCNS, khác mật khẩu tạm dùng chung ở trên. */
+const THUYDT_INITIAL_PASSWORD = 'Netviet@2026';
 
 export async function migrate(env) {
   if (_migrated) return;
@@ -226,6 +236,7 @@ export async function migrate(env) {
   // Gán mật khẩu khởi tạo cho 6 tài khoản nhân sự chính thức — chạy ở CẢ 2 chế độ (các tài khoản
   // này là is_demo=0, độc lập với demo/production), TRƯỚC nhánh seed/bootstrap bên dưới.
   await assignOfficialAccountInitialPasswords(env);
+  await assignThuydtPassword(env);
   // Migration LUÔN chạy ở cả 2 chế độ (production cần đủ bảng); chỉ việc NẠP DỮ LIỆU là tách theo môi trường —
   // demo nạp đầy đủ dữ liệu mẫu, production chỉ khởi tạo đúng 1 tài khoản admin từ secret, không có gì khác.
   if (appMode(env) === 'demo') {
@@ -253,6 +264,17 @@ async function assignOfficialAccountInitialPasswords(env) {
     await env.DB.prepare('UPDATE nv_users SET password_hash=?, must_change_password=1 WHERE id=?').bind(hash, row.id).run();
   }
   console.log('[migrate] Đã gán mật khẩu khởi tạo dùng chung cho ' + results.length + ' tài khoản nhân sự chính thức: ' + results.map(r => r.id).join(', '));
+}
+
+/** Gán THUYDT_INITIAL_PASSWORD riêng cho tài khoản HCNS mới THUYDT — cùng nguyên tắc idempotent
+ * với assignOfficialAccountInitialPasswords() ở trên (chỉ gán khi chưa có mật khẩu, không ghi đè),
+ * nhưng tách hàm riêng vì mật khẩu khác 6 tài khoản kia. */
+async function assignThuydtPassword(env) {
+  const row = await env.DB.prepare("SELECT id FROM nv_users WHERE id='THUYDT' AND (password_hash IS NULL OR password_hash = '')").first();
+  if (!row) return;
+  const hash = await hashPassword(THUYDT_INITIAL_PASSWORD);
+  await env.DB.prepare('UPDATE nv_users SET password_hash=?, must_change_password=1 WHERE id=?').bind(hash, 'THUYDT').run();
+  console.log('[migrate] Đã gán mật khẩu khởi tạo cho tài khoản HCNS mới: THUYDT.');
 }
 
 /** Bổ sung tài khoản demo mới (HCNS) cho CSDL demo đã seed từ trước — seed() ở dưới tự thoát sớm
