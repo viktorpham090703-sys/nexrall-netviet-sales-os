@@ -18,6 +18,22 @@ export const PROB = {
  * ký" trở đi (đã ký hợp đồng, đang sản xuất, bàn giao, hoàn tất) coi như đã chốt được doanh thu. */
 const TERMINAL = ['hop_dong_da_ky', 'dang_san_xuat', 'ban_giao', 'hoan_tat'];
 
+/* Quy trình đấu thầu (áp dụng khách hàng tập đoàn lớn) — chạy song song với STAGES thường qua
+ * cột nv_deals.process_type. Bước 1-6 riêng của đấu thầu; từ "Trúng thầu" hội tụ thẳng vào
+ * TERMINAL ở trên (ký hợp đồng → sản xuất → bàn giao → nghiệm thu chạy đúng quy trình thường,
+ * không định nghĩa lại). Khớp thứ tự với src/const.js TENDER_STAGES (client). */
+export const TENDER_STAGES = [
+  'tiep_can_truoc', 'nhan_thu_moi', 'chuan_bi_ho_so', 'cho_duyet_ho_so',
+  'da_nop_ho_so', 'thuong_thao', 'mou', 'trung_thau',
+];
+export const TENDER_PROB = {
+  tiep_can_truoc: 10, nhan_thu_moi: 20, chuan_bi_ho_so: 30, cho_duyet_ho_so: 40,
+  da_nop_ho_so: 50, thuong_thao: 65, mou: 80, trung_thau: 95,
+};
+const PROB_ALL = { ...PROB, ...TENDER_PROB };
+/** Tập giai đoạn hợp lệ của 1 deal theo loại quy trình — TERMINAL luôn hội tụ chung cho cả 2 loại. */
+const validStages = (processType) => processType === 'dau_thau' ? [...TENDER_STAGES, ...TERMINAL] : STAGES;
+
 /** Trạng thái deal sau khi cập nhật — thứ tự ưu tiên: huỷ tường minh > vào giai đoạn đã ký hợp
  * đồng trở đi > mở lại tường minh > vẫn đang "thất bại" trước đó > mặc định "đang mở". */
 function computeDealStatus(d, b, stage) {
@@ -112,7 +128,9 @@ export async function dealRoutes(ctx) {
     const b = await readBody(ctx.request);
     const title = vText(b.title, 'Tên cơ hội', { max: 160, required: true, min: 2 });
     const value = vMoney(b.value, 'Giá trị hợp đồng');
-    const stage = STAGES.includes(b.stage) ? b.stage : 'lead_moi';
+    const processType = b.processType === 'dau_thau' ? 'dau_thau' : 'thong_thuong';
+    const stageSet = validStages(processType);
+    const stage = stageSet.includes(b.stage) ? b.stage : stageSet[0];
     const t = now(), id = uid('dl');
     const owner = await resolveAssignableOwner(env, ctx, b.ownerId);
     // Phương án hợp tác gắn ở cấp deal (không phải cấp partner/khách hàng) — xem chú thích ở
@@ -120,9 +138,9 @@ export async function dealRoutes(ctx) {
     // công sức Sale/Partner phục vụ tính hoa hồng SAU NÀY, không có logic tính toán ở đợt này.
     const pa = vEnum(b.phuongAnHopTac, ['PA1', 'PA2'], 'Phương án hợp tác', null);
     const execSource = vEnum(b.nguonThucHien, ['sale', 'partner'], 'Nguồn thực hiện', null);
-    await env.DB.prepare('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,note,phuong_an_hop_tac,nguon_thuc_hien,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    await env.DB.prepare('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,note,phuong_an_hop_tac,nguon_thuc_hien,process_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .bind(id, owner ? owner.id : ctx.me.id, str(b.customerId, 40), title, str(b.service, 40),
-        value, stage, PROB[stage], 'open', str(b.source, 60), vFutureTs(b.expectedCloseAt, t + 30 * DAY, 'Ngày dự kiến chốt'), t, t, str(b.note, 800), pa, execSource, t, t).run();
+        value, stage, PROB_ALL[stage], 'open', str(b.source, 60), vFutureTs(b.expectedCloseAt, t + 30 * DAY, 'Ngày dự kiến chốt'), t, t, str(b.note, 800), pa, execSource, processType, t, t).run();
     await audit(env, ctx.me.id, 'create', 'deal', id, { title: b.title });
     return json({ id });
   }
@@ -134,7 +152,8 @@ export async function dealRoutes(ctx) {
     if (!d) return json({ error: 'Không tìm thấy cơ hội' }, 404);
     const b = await readBody(ctx.request);
     const t = now();
-    const stage = STAGES.includes(b.stage) ? b.stage : d.stage;
+    const stageSet = validStages(d.process_type);
+    const stage = stageSet.includes(b.stage) ? b.stage : d.stage;
     // State machine: deal đã chốt/triển khai chỉ được chuyển sang "thất bại" (huỷ hợp đồng),
     // không cho kéo ngược về các giai đoạn trước — tránh doanh thu & hoa hồng nhảy loạn.
     if (TERMINAL.includes(d.stage) && stage !== d.stage && !TERMINAL.includes(stage) && b.status !== 'lost') {
@@ -142,15 +161,17 @@ export async function dealRoutes(ctx) {
     }
     const status = computeDealStatus(d, b, stage);
     const value = b.value != null ? vMoney(b.value, 'Giá trị hợp đồng') : d.value;
-    const prob = b.probability != null ? num(b.probability, PROB[stage]) : (stage !== d.stage ? PROB[stage] : d.probability);
+    const prob = b.probability != null ? num(b.probability, PROB_ALL[stage]) : (stage !== d.stage ? PROB_ALL[stage] : d.probability);
     const wonAt = status === 'won' ? (d.won_at || t) : null;
     const pa = b.phuongAnHopTac !== undefined ? vEnum(b.phuongAnHopTac, ['PA1', 'PA2'], 'Phương án hợp tác', null) : d.phuong_an_hop_tac;
     const execSource = b.nguonThucHien !== undefined ? vEnum(b.nguonThucHien, ['sale', 'partner'], 'Nguồn thực hiện', null) : d.nguon_thuc_hien;
-    await env.DB.prepare('UPDATE nv_deals SET title=?,service=?,value=?,stage=?,probability=?,status=?,lost_reason=?,note=?,expected_close_at=?,last_activity_at=?,stage_changed_at=?,won_at=?,phuong_an_hop_tac=?,nguon_thuc_hien=?,updated_at=? WHERE id=?')
+    // Vòng thương thảo — chỉ tăng/giảm qua giá trị FE gửi lên (nút "+ Vòng thương thảo"), không tự suy luận.
+    const negotiationRound = b.negotiationRound != null ? num(b.negotiationRound, d.negotiation_round) : d.negotiation_round;
+    await env.DB.prepare('UPDATE nv_deals SET title=?,service=?,value=?,stage=?,probability=?,status=?,lost_reason=?,note=?,expected_close_at=?,last_activity_at=?,stage_changed_at=?,won_at=?,phuong_an_hop_tac=?,nguon_thuc_hien=?,negotiation_round=?,updated_at=? WHERE id=?')
       .bind(b.title != null ? str(b.title, 160) : d.title, b.service != null ? str(b.service, 40) : d.service, value, stage, prob, status,
         b.lostReason != null ? str(b.lostReason, 200) : d.lost_reason, b.note != null ? str(b.note, 800) : d.note,
         b.expectedCloseAt != null ? num(b.expectedCloseAt, d.expected_close_at) : d.expected_close_at,
-        t, stage !== d.stage ? t : d.stage_changed_at, wonAt, pa, execSource, t, p.id).run();
+        t, stage !== d.stage ? t : d.stage_changed_at, wonAt, pa, execSource, negotiationRound, t, p.id).run();
 
     if (stage !== d.stage) {
       await env.DB.prepare('INSERT INTO nv_activities (id,user_id,customer_id,deal_id,type,subject,note,outcome,duration,happened_at,created_at) VALUES (?,?,?,?,?,?,?,?,0,?,?)')
@@ -444,6 +465,21 @@ export async function dealRoutes(ctx) {
     return json({ items: results || [] });
   }
 
+  /* Ghi nhận thủ công 1 cơ hội thầu đến từ quan hệ trực tiếp (Bước 1-2 quy trình đấu thầu: GĐ/BLĐ
+   * tiếp cận trước, khách chủ động gửi mời thầu) — khác luồng vào với /tenders/scan (cổng công
+   * khai, mock). Giới hạn LEAD_ROLES vì đây là bước do GĐ/Ban lãnh đạo chủ trì theo tài liệu. */
+  if ((p = match(ctx, 'POST', '/api/tenders'))) {
+    need(ctx, LEAD_ROLES);
+    const b = await readBody(ctx.request);
+    const title = vText(b.title, 'Tên gói thầu', { max: 200, required: true, min: 2 });
+    const t = now(), id = uid('td');
+    await env.DB.prepare('INSERT INTO nv_tender_leads (id,title,org,source,url,value,service_tag,deadline_at,score,status,summary,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, title, str(b.org, 160), 'Quan hệ trực tiếp', str(b.url, 300) || null, b.value != null ? vMoney(b.value, 'Giá trị ước tính') : 0,
+        str(b.serviceTag, 40), b.deadlineAt != null ? vFutureTs(b.deadlineAt, t + 14 * DAY, 'Hạn nộp') : t + 14 * DAY, 50, 'new', str(b.summary, 500), t).run();
+    await audit(env, ctx.me.id, 'create', 'tender', id, { title });
+    return json({ id });
+  }
+
   if ((p = match(ctx, 'POST', '/api/tenders/scan'))) {
     need(ctx);
     // TODO: cắm API quét thầu thật (muasamcong.mpi.gov.vn / crawler nội bộ) qua env.TENDER_API_KEY
@@ -475,11 +511,14 @@ export async function dealRoutes(ctx) {
     const ownerRow = await resolveAssignableOwner(env, ctx, b.ownerId);
     const owner = ownerRow ? ownerRow.id : ctx.me.id;
     const cusId = uid('cs'), dealId = uid('dl');
+    // scale='Tập đoàn' mặc định — mọi khách hàng sinh từ cơ hội thầu (dù nguồn quét công khai hay
+    // quan hệ trực tiếp) đều thuộc diện đấu thầu, đúng đối tượng tài liệu quy trình đấu thầu nhắm tới.
+    const firstStage = TENDER_STAGES[0];
     await env.DB.batch([
-      env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,temp,source,note,services,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-        .bind(cusId, owner, td.org || td.title, 'Khối nhà nước / Tập đoàn', 'warm', 'Đấu thầu', td.summary, JSON.stringify([td.service_tag]), t, t, t),
-      env.DB.prepare('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-        .bind(dealId, owner, cusId, td.title, td.service_tag, td.value, 'tiep_can', 20, 'open', 'Đấu thầu', td.deadline_at, t, t, 'Nguồn: ' + (td.source || '') + ' – ' + (td.url || ''), t, t),
+      env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,scale,temp,source,note,services,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(cusId, owner, td.org || td.title, 'Khối nhà nước / Tập đoàn', 'Tập đoàn', 'warm', 'Đấu thầu', td.summary, JSON.stringify([td.service_tag]), t, t, t),
+      env.DB.prepare('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,note,process_type,tender_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(dealId, owner, cusId, td.title, td.service_tag, td.value, firstStage, TENDER_PROB[firstStage], 'open', 'Đấu thầu', td.deadline_at, t, t, 'Nguồn: ' + (td.source || '') + ' – ' + (td.url || ''), 'dau_thau', td.id, t, t),
       env.DB.prepare("UPDATE nv_tender_leads SET status='converted', assigned_to=? WHERE id=?").bind(owner, p.id),
       env.DB.prepare('INSERT INTO nv_daily_contacts (id,user_id,name,company,channel,phone,customer_id,note,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .bind(uid('dc'), owner, td.org || td.title, td.org, 'Đấu thầu', null, cusId, 'Tiếp cận gói thầu', t),

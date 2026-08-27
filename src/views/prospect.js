@@ -1,13 +1,46 @@
 import { get, post, patch } from '../api.js';
-import { isLead } from '../state.js';
+import { state, isLead, isAdmin } from '../state.js';
 import { esc, money, mount, chip, empty, fmtDate, toast, modal, stat, bindTabs } from '../ui.js';
-import { CHANNELS } from '../const.js';
+import { CHANNELS, SERVICES, APPROVAL_TONE } from '../const.js';
 import { aiModal } from '../aiPref.js';
 import { icon } from '../icons.js';
 
 let tab = 'tenders';
+const isHR = () => state.me?.role === 'hr';
+
+/* HCNS chỉ xét duyệt hồ sơ thầu — không có nhiệm vụ tìm khách/quét thầu/quản lý lead của phòng
+ * kinh doanh, nên trang "Duyệt Thầu" của HCNS chỉ còn đúng 1 danh sách chờ duyệt. */
+async function renderHR(el) {
+  const load = async () => {
+    const d = await get('/deals');
+    return { pending: (d.items || []).filter(x => x.process_type === 'dau_thau' && x.stage === 'cho_duyet_ho_so') };
+  };
+  const draw = (d) => {
+    const t = APPROVAL_TONE.tender;
+    return `<div class="page-head">
+      <div class="grow"><h2>Duyệt Thầu</h2><p>Hồ sơ dự thầu chờ duyệt trước khi nộp</p></div>
+    </div>
+    <div class="grid g4 mb">${stat('Hồ sơ chờ duyệt', d.pending.length, 'Giám đốc duyệt trước khi nộp', t.chip)}</div>
+    <div>${d.pending.length ? `<div class="card">${d.pending.map(x => `<div class="item">
+        <div class="dot-i" style="background:transparent;color:${t.color};border:1.5px solid ${t.color}">${icon('trophy')}</div>
+        <div class="grow"><div class="t">${esc(x.title)}</div>
+          <div class="d">${esc(x.customer_name || '')} · ${esc(x.owner_name || '')}</div>
+          <div class="d xs">Giá trị ${money(x.value)}</div></div>
+        <div class="right">${isAdmin() ? `<button class="btn sm amber" data-ok-tender="${esc(x.id)}">Duyệt hồ sơ</button>` : `<span class="xs" style="color:${t.color}">Chờ Giám đốc duyệt</span>`}</div>
+      </div>`).join('')}</div>` : empty('circleCheck', 'Không có hồ sơ thầu chờ duyệt.')}</div>`;
+  };
+  const bind = () => {
+    el.querySelectorAll('[data-ok-tender]').forEach(b => b.onclick = async () => {
+      try { await patch('/deals/' + b.dataset.okTender, { stage: 'da_nop_ho_so' }); toast('Đã duyệt hồ sơ dự thầu', 'ok'); render(el); }
+      catch (e) { toast(e.message, 'err'); }
+    });
+  };
+  await mount(el, load, draw, bind);
+}
 
 export async function render(el) {
+  if (isHR()) return renderHR(el);
+
   const load = async () => {
     const [t, l] = await Promise.all([get('/tenders'), get('/leads')]);
     return { tenders: t.items || [], leads: l.items || [] };
@@ -18,7 +51,10 @@ export async function render(el) {
     const soon = d.tenders.filter(x => x.status === 'new' && x.deadline_at < Date.now() / 1000 + 7 * 86400);
     return `<div class="page-head">
       <div class="grow"><h2>Tìm khách & Research thầu</h2><p>7 kênh nguồn khách · AI chấm điểm lead · quét cơ hội đấu thầu (mock)</p></div>
-      <button class="btn primary sm" data-scan>${icon('search', 14)} Quét thầu</button>
+      <div class="row" style="gap:8px">
+        <button class="btn primary sm" data-scan>${icon('search', 14)} Quét thầu</button>
+        ${isLead() ? `<button class="btn amber sm" data-add-tender>${icon('userPlus', 14)} Thêm thầu</button>` : ''}
+      </div>
     </div>
 
     <div class="grid g3 mb">
@@ -40,6 +76,7 @@ export async function render(el) {
           <div class="d xs">Hạn nộp ${fmtDate(t.deadline_at)} · nguồn ${esc(t.source || '')}</div>
           <div class="d xs">${esc(t.summary || '')}</div>
           <div class="row wrap mt" style="gap:6px">${chip('AI score ' + t.score, t.score >= 75 ? 'green' : t.score >= 60 ? 'amber' : 'grey')}
+          ${t.source === 'Quan hệ trực tiếp' ? chip('Quan hệ trực tiếp', 'amber') : chip('Quét tự động', 'grey')}
           ${t.status === 'converted' ? chip('Đã chuyển thành deal', 'blue') : t.status === 'ignored' ? chip('Bỏ qua', 'grey') : ''}</div>
         </div>
         <div class="right">
@@ -92,6 +129,8 @@ export async function render(el) {
       try { await post('/tenders/scan', {}); toast('Đã quét & bổ sung cơ hội thầu mới (mock)', 'ok'); tab = 'tenders'; render(el); }
       catch (err) { toast(err.message, 'err'); e.target.disabled = false; }
     };
+    const addT = el.querySelector('[data-add-tender]');
+    if (addT) addT.onclick = () => addTender(() => { tab = 'tenders'; render(el); });
     el.querySelectorAll('[data-conv]').forEach(b => b.onclick = async () => {
       b.disabled = true;
       try { await post('/tenders/' + b.dataset.conv + '/convert', {}); toast('Đã tạo khách hàng + deal từ gói thầu', 'ok'); render(el); }
@@ -111,6 +150,28 @@ export async function render(el) {
   };
 
   await mount(el, load, draw, bind);
+}
+
+/* Ghi nhận thủ công cơ hội thầu đến từ quan hệ trực tiếp (GĐ/BLĐ tiếp cận trước, khách chủ động
+ * gửi mời thầu) — khác luồng vào với "Quét thầu" (cổng công khai, mock). Xem quy-trinh-dau-thau-
+ * tap-doan-lon.md bước 1-2. */
+function addTender(after) {
+  modal({
+    title: 'Thêm cơ hội thầu (quan hệ trực tiếp)',
+    fields: [
+      { name: 'title', label: 'Tên gói thầu', required: true, placeholder: 'VD: Gói thầu sản xuất TVC quý 4' },
+      { name: 'org', label: 'Chủ đầu tư / Tập đoàn' },
+      { name: 'serviceTag', label: 'Dịch vụ', type: 'select', options: SERVICES },
+      { name: 'value', label: 'Giá trị ước tính (đ)', type: 'number', value: 500000000 },
+      { name: 'deadlineAt', label: 'Hạn nộp hồ sơ', type: 'date' },
+      { name: 'summary', label: 'Ghi chú', type: 'textarea', rows: 2, placeholder: 'Bối cảnh tiếp cận, yêu cầu hồ sơ...' },
+    ],
+    submitText: 'Thêm cơ hội thầu',
+    onSubmit: async (v) => {
+      await post('/tenders', { ...v, deadlineAt: v.deadlineAt ? new Date(v.deadlineAt).getTime() / 1000 : undefined });
+      toast('Đã thêm cơ hội thầu', 'ok'); after();
+    },
+  });
 }
 
 function newLead(channel, after) {

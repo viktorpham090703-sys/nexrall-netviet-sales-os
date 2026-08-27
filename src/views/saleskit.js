@@ -1,7 +1,7 @@
 import { get, post, patch } from '../api.js';
 import { state, isLead } from '../state.js';
 import { esc, money, vnd, mount, chip, empty, fmtDate, toast, modal, stat, bindTabs } from '../ui.js';
-import { QUOTE_STATUS, CONTRACT_STATUS } from '../const.js';
+import { QUOTE_STATUS, CONTRACT_STATUS, APPROVAL_TONE } from '../const.js';
 import { aiModal } from '../aiPref.js';
 import { icon } from '../icons.js';
 
@@ -20,7 +20,37 @@ const needsResubmit = (q) => q.owner_id === state.me.id
   && ((q.status === 'pending_v1' && q.v1_decision === 'revise') || (q.status === 'pending_v2' && q.v2_decision === 'revise'));
 const needsResubmitContract = needsResubmit; // cùng logic, khác tên cho rõ ngữ cảnh khi đọc code
 
+const isHR = () => state.me?.role === 'hr';
+
+/* HCNS chỉ xét duyệt báo giá — không có nhiệm vụ bảng gói dịch vụ/tạo báo giá/AI proposal của
+ * phòng kinh doanh, nên trang "Duyệt Báo giá" của HCNS chỉ còn đúng 1 danh sách chờ duyệt. */
+async function renderHR(el) {
+  const load = async () => {
+    const q = await get('/quotes');
+    return { pending: (q.items || []).filter(x => ['pending_v1', 'pending_v2'].includes(x.status)) };
+  };
+  const draw = (d) => {
+    const t = APPROVAL_TONE.quote;
+    return `<div class="page-head">
+      <div class="grow"><h2>Duyệt Báo giá</h2><p>Báo giá chờ duyệt 2 vòng</p></div>
+    </div>
+    <div class="grid g4 mb">${stat('Báo giá chờ duyệt', d.pending.length, 'Cần TPKD/Admin xử lý các vòng khác', t.chip)}</div>
+    <div>${d.pending.length ? `<div class="card">${d.pending.map(q => `<div class="item">
+        <div class="dot-i" style="background:transparent;color:${t.color};border:1.5px solid ${t.color}">${icon('banknote')}</div>
+        <div class="grow"><div class="t">${esc(q.title)}</div>
+          <div class="d">${esc(q.customer_name || '')} · ${esc(q.owner_name || '')} · CK ${q.discount_pct}%</div>
+          <div class="d xs">Gốc ${money(q.subtotal)} → ${money(q.total)} · ${esc(QUOTE_STATUS[q.status]?.n || q.status)}</div></div>
+        <div class="right">${canDecide(q) ? `<button class="btn sm amber" data-ok="${esc(q.id)}">Duyệt</button>
+          <div class="mt"><button class="btn sm" data-revise="${esc(q.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs" style="color:${t.color}">Chờ ${q.status === 'pending_v1' ? 'TPKD' : 'Giám đốc'} duyệt</span>`}</div>
+      </div>`).join('')}</div>` : empty('circleCheck', 'Không có báo giá chờ duyệt.')}</div>`;
+  };
+  const bind = () => bindApprovalActions(el, 'quotes', () => render(el));
+  await mount(el, load, draw, bind);
+}
+
 export async function render(el) {
+  if (isHR()) return renderHR(el);
+
   const load = async () => {
     const [p, q, c, cus, d] = await Promise.all([get('/products'), get('/quotes'), get('/contracts'), get('/customers'), get('/deals')]);
     return { products: p.items || [], threshold: p.discountThreshold, quotes: q.items || [], contracts: c.items || [], customers: cus.items || [], deals: d.items || [] };

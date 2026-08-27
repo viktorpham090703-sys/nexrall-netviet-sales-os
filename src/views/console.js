@@ -1,38 +1,52 @@
 import { get, post, patch } from '../api.js';
-import { salesUsers } from '../state.js';
+import { state, salesUsers, isAdmin } from '../state.js';
 import { esc, money, mount, chip, bar, empty, stat, toast, modal, fmtDate, bindTabs } from '../ui.js';
-import { stageName, STAGES, TERMINAL_STAGES, QUOTE_STATUS, CONTRACT_STATUS, roleLabel, PIP_STATUS, gradeTone } from '../const.js';
+import { stageName, STAGES, TERMINAL_STAGES, QUOTE_STATUS, CONTRACT_STATUS, roleLabel, PIP_STATUS, gradeTone, APPROVAL_TONE } from '../const.js';
 import { icon } from '../icons.js';
 import { canDecide, canDecideContract, bindApprovalActions } from './saleskit.js';
 
 let tab = 'overview';
+/* HCNS chỉ xét duyệt báo giá/hợp đồng/hồ sơ thầu — không có nhiệm vụ quản lý đội sales
+ * (KPI, PIP, phễu, cảnh báo SLA...), nên Console của HCNS gộp cả 3 loại vào đúng 1 danh sách
+ * "Hồ sơ cần duyệt" thay vì tách tab — không cần chuyển qua lại giữa 3 chỗ để rà soát. */
+const isHR = () => state.me?.role === 'hr';
 
 export async function render(el) {
   const load = async () => {
-    const [t, p] = await Promise.all([get('/team'), get('/pip')]);
-    return { ...t, pips: p.items || [] };
+    const [t, p, deals] = await Promise.all([get('/team'), get('/pip'), isHR() ? get('/deals') : Promise.resolve({ items: [] })]);
+    const pendingTenders = (deals.items || []).filter(x => x.process_type === 'dau_thau' && x.stage === 'cho_duyet_ho_so');
+    return { ...t, pips: p.items || [], pendingTenders };
   };
 
   const draw = (d) => `<div class="page-head">
-    <div class="grow"><h2>Console Trưởng phòng</h2><p>Giám sát đội · hoạt động vs định mức · phễu · cảnh báo · duyệt giá · KPI & PIP</p></div>
+    <div class="grow"><h2>${isHR() ? 'Console HCNS' : 'Console Trưởng phòng'}</h2>
+      <p>${isHR() ? 'Xét duyệt báo giá · hợp đồng · hồ sơ dự thầu' : 'Giám sát đội · hoạt động vs định mức · phễu · cảnh báo · duyệt giá · KPI & PIP'}</p></div>
   </div>
 
   <div class="grid g3 mb">
-    ${stat('Pipeline kỳ vọng', money(d.totals.pipeline), d.totals.openCount + ' deal đang mở', 'red')}
-    ${stat('Doanh thu đã ký', money(d.totals.won), 'Luỹ kế toàn đội', 'blue')}
-    ${stat('Cảnh báo', d.alerts.length, d.alerts.filter(a => a.level === 'danger').length + ' nghiêm trọng', d.alerts.length ? 'amber' : '')}
+    ${isHR() ? `
+      ${stat('Báo giá chờ duyệt', d.pendingQuotes.length, 'Cần TPKD/Admin xử lý các vòng khác', 'amber')}
+      ${stat('Hợp đồng chờ duyệt', d.pendingContracts.length, 'Vòng 2 do HCNS phụ trách', 'blue')}
+      ${stat('Hồ sơ thầu chờ duyệt', d.pendingTenders.length, 'Giám đốc duyệt trước khi nộp', 'red')}
+    ` : `
+      ${stat('Pipeline kỳ vọng', money(d.totals.pipeline), d.totals.openCount + ' deal đang mở', 'red')}
+      ${stat('Doanh thu đã ký', money(d.totals.won), 'Luỹ kế toàn đội', 'blue')}
+      ${stat('Cảnh báo', d.alerts.length, d.alerts.filter(a => a.level === 'danger').length + ' nghiêm trọng', d.alerts.length ? 'amber' : '')}
+    `}
   </div>
 
-  <div class="seg mb">
+  ${isHR() ? '' : `<div class="seg mb">
     <button data-tab="overview" class="${tab === 'overview' ? 'on' : ''}">Tổng quan đội</button>
     <button data-tab="funnel" class="${tab === 'funnel' ? 'on' : ''}">Phễu</button>
     <button data-tab="alerts" class="${tab === 'alerts' ? 'on' : ''}">Cảnh báo (${d.alerts.length})</button>
     <button data-tab="approve" class="${tab === 'approve' ? 'on' : ''}">Duyệt giá (${d.pendingQuotes.length})</button>
     <button data-tab="approveContracts" class="${tab === 'approveContracts' ? 'on' : ''}">Duyệt hợp đồng (${d.pendingContracts.length})</button>
     <button data-tab="pip" class="${tab === 'pip' ? 'on' : ''}">KPI & PIP</button>
-  </div>
+  </div>`}
 
-  ${tab === 'overview' ? `<div class="card">${d.members.map(m => m.role === 'sales' ? `<div class="item">
+  ${isHR() ? `<div class="sec-title">Hồ sơ cần duyệt</div>${mergedApproval(d)}` : ''}
+
+  ${!isHR() && tab === 'overview' ? `<div class="card">${d.members.map(m => m.role === 'sales' ? `<div class="item">
       <div class="dot-i">${icon(m.kpi.total >= 80 ? 'star' : m.kpi.total >= 60 ? 'smile' : 'triangleAlert')}</div>
       <div class="grow"><div class="t">${esc(m.name)} ${chip(m.kpi.grade, gradeTone(m.kpi.total))}</div>
         <div class="d xs mut">${esc(m.title || roleLabel(m))}</div>
@@ -49,17 +63,17 @@ export async function render(el) {
         <div class="d">Hoạt động ${m.metrics.activities} lượt · ${m.metrics.activeDays}/${m.metrics.workdays} ngày có mặt · báo cáo ${m.metrics.reports} (${m.metrics.lateReports} trễ)</div></div>
     </div>`).join('')}</div>` : ''}
 
-  ${tab === 'funnel' ? `<div class="card">${d.funnel.map(f => `<div class="mb">
+  ${!isHR() && tab === 'funnel' ? `<div class="card">${d.funnel.map(f => `<div class="mb">
       <div class="badge-line"><span class="sm">${esc(stageName(f.stage))}</span><span class="sm b">${f.count} deal · ${money(f.value)}</span></div>
       ${bar(f.count, Math.max(...d.funnel.map(x => x.count)) || 1)}</div>`).join('')}
       <div class="xs mut">Tỷ lệ chuyển đổi Lead → Chốt: ${convRate(d.funnel)}%</div></div>` : ''}
 
-  ${tab === 'alerts' ? (d.alerts.length ? `<div class="card">${d.alerts.map(a => `<div class="item">
+  ${!isHR() && tab === 'alerts' ? (d.alerts.length ? `<div class="card">${d.alerts.map(a => `<div class="item">
       <div class="dot-i">${icon(a.level === 'danger' ? 'siren' : 'triangleAlert')}</div>
       <div class="grow"><div class="t">${esc(a.text)}</div><div class="d xs">${esc(a.type)}</div></div>
       <a class="btn sm" href="${esc(a.link)}">Xem</a></div>`).join('')}</div>` : empty('circleCheck', 'Không có cảnh báo nào.')) : ''}
 
-  ${tab === 'approve' ? (d.pendingQuotes.length ? `<div class="card">${d.pendingQuotes.map(q => `<div class="item">
+  ${!isHR() && tab === 'approve' ? (d.pendingQuotes.length ? `<div class="card">${d.pendingQuotes.map(q => `<div class="item">
       <div class="dot-i">${icon('banknote')}</div>
       <div class="grow"><div class="t">${esc(q.title)}</div>
         <div class="d">${esc(q.customer_name || '')} · ${esc(q.owner_name || '')} · CK ${q.discount_pct}%</div>
@@ -68,7 +82,7 @@ export async function render(el) {
         <div class="mt"><button class="btn sm" data-revise="${esc(q.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs mut">Chờ ${q.status === 'pending_v1' ? 'TPKD' : 'Giám đốc'} duyệt</span>`}</div>
     </div>`).join('')}</div>` : empty('circleCheck', 'Không có báo giá chờ duyệt.')) : ''}
 
-  ${tab === 'approveContracts' ? (d.pendingContracts.length ? `<div class="card">${d.pendingContracts.map(c => `<div class="item">
+  ${!isHR() && tab === 'approveContracts' ? (d.pendingContracts.length ? `<div class="card">${d.pendingContracts.map(c => `<div class="item">
       <div class="dot-i">${icon('penLine')}</div>
       <div class="grow"><div class="t">${esc(c.title)}</div>
         <div class="d">${esc(c.owner_name || '')}</div>
@@ -77,7 +91,7 @@ export async function render(el) {
         <div class="mt"><button class="btn sm" data-revise-contract="${esc(c.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs mut">Chờ ${c.status === 'pending_v1' ? 'TPKD' : 'HCNS'} duyệt</span>`}</div>
     </div>`).join('')}</div>` : empty('circleCheck', 'Không có hợp đồng chờ duyệt.')) : ''}
 
-  ${tab === 'pip' ? `<button class="btn block mb" data-newpip>+ Mở PIP 30-60-90 ngày</button>
+  ${!isHR() && tab === 'pip' ? `<button class="btn block mb" data-newpip>+ Mở PIP 30-60-90 ngày</button>
     ${d.pips.length ? `<div class="card">${d.pips.map(p => `<div class="item">
       <div class="dot-i">${icon('clipboardList')}</div>
       <div class="grow"><div class="t">${esc(p.user_name || '')} · PIP ${esc(p.phase)} ngày</div>
@@ -106,10 +120,47 @@ export async function render(el) {
     }));
     bindApprovalActions(el, 'quotes', () => render(el));
     bindApprovalActions(el, 'contracts', () => render(el));
+    el.querySelectorAll('[data-ok-tender]').forEach(b => b.onclick = async () => {
+      try { await patch('/deals/' + b.dataset.okTender, { stage: 'da_nop_ho_so' }); toast('Đã duyệt hồ sơ dự thầu', 'ok'); render(el); }
+      catch (e) { toast(e.message, 'err'); }
+    });
   };
 
   await mount(el, load, draw, bind);
 }
+
+/* Gộp báo giá + hợp đồng + hồ sơ thầu vào 1 danh sách duy nhất cho HCNS — mỗi dòng gắn nhãn loại
+ * hồ sơ, tái dùng đúng điều kiện canDecide/canDecideContract/isAdmin và các data-attribute đã có
+ * (data-ok/-revise/-ok-contract/-revise-contract/-ok-tender) để không phải viết lại bind(). */
+const mergedApproval = (d) => {
+  const t = APPROVAL_TONE;
+  const rows = [
+    ...d.pendingQuotes.map(q => `<div class="item">
+      <div class="dot-i" style="background:transparent;color:${t.quote.color};border:1.5px solid ${t.quote.color}">${icon('banknote')}</div>
+      <div class="grow"><div class="t">${chip('Báo giá', t.quote.chip)} ${esc(q.title)}</div>
+        <div class="d">${esc(q.customer_name || '')} · ${esc(q.owner_name || '')} · CK ${q.discount_pct}%</div>
+        <div class="d xs">Gốc ${money(q.subtotal)} → ${money(q.total)} · ${esc(QUOTE_STATUS[q.status]?.n || q.status)}</div></div>
+      <div class="right">${canDecide(q) ? `<button class="btn sm amber" data-ok="${esc(q.id)}">Duyệt</button>
+        <div class="mt"><button class="btn sm" data-revise="${esc(q.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs" style="color:${t.quote.color}">Chờ ${q.status === 'pending_v1' ? 'TPKD' : 'Giám đốc'} duyệt</span>`}</div>
+    </div>`),
+    ...d.pendingContracts.map(c => `<div class="item">
+      <div class="dot-i" style="background:transparent;color:${t.contract.color};border:1.5px solid ${t.contract.color}">${icon('penLine')}</div>
+      <div class="grow"><div class="t">${chip('Hợp đồng', t.contract.chip)} ${esc(c.title)}</div>
+        <div class="d">${esc(c.owner_name || '')}</div>
+        <div class="d xs">Giá trị ${money(c.value)} · ${esc(CONTRACT_STATUS[c.status]?.n || c.status)}</div></div>
+      <div class="right">${canDecideContract(c) ? `<button class="btn sm amber" data-ok-contract="${esc(c.id)}">Duyệt</button>
+        <div class="mt"><button class="btn sm" data-revise-contract="${esc(c.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs" style="color:${t.contract.color}">Chờ ${c.status === 'pending_v1' ? 'TPKD' : 'HCNS'} duyệt</span>`}</div>
+    </div>`),
+    ...d.pendingTenders.map(x => `<div class="item">
+      <div class="dot-i" style="background:transparent;color:${t.tender.color};border:1.5px solid ${t.tender.color}">${icon('trophy')}</div>
+      <div class="grow"><div class="t">${chip('Hồ sơ thầu', t.tender.chip)} ${esc(x.title)}</div>
+        <div class="d">${esc(x.customer_name || '')} · ${esc(x.owner_name || '')}</div>
+        <div class="d xs">Giá trị ${money(x.value)} · ${esc(stageName(x.stage))}</div></div>
+      <div class="right">${isAdmin() ? `<button class="btn sm amber" data-ok-tender="${esc(x.id)}">Duyệt hồ sơ</button>` : `<span class="xs" style="color:${t.tender.color}">Chờ Giám đốc duyệt</span>`}</div>
+    </div>`),
+  ];
+  return rows.length ? `<div class="card">${rows.join('')}</div>` : empty('circleCheck', 'Không có hồ sơ nào chờ duyệt.');
+};
 
 const convRate = (f) => {
   const won = TERMINAL_STAGES.reduce((s, k) => s + (f.find(x => x.stage === k)?.count || 0), 0);

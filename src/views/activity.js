@@ -1,14 +1,44 @@
 import { get, post } from '../api.js';
-import { isLead } from '../state.js';
-import { esc, mount, chip, empty, fmtDT, toast, stat, bindTabs } from '../ui.js';
-import { actIcon, actName } from '../const.js';
+import { state, isLead } from '../state.js';
+import { esc, money, mount, chip, empty, fmtDT, toast, stat, bindTabs } from '../ui.js';
+import { actIcon, actName, CONTRACT_STATUS, APPROVAL_TONE } from '../const.js';
 import { logActivity } from './crm.js';
 import { quickContact } from './cockpit.js';
 import { icon } from '../icons.js';
+import { canDecideContract, bindApprovalActions } from './saleskit.js';
 
 let tab = 'activities';
+const isHR = () => state.me?.role === 'hr';
+
+/* HCNS chỉ xét duyệt hợp đồng — không có nhiệm vụ nhật ký hoạt động/liên hệ mới/lịch nhắc của
+ * phòng kinh doanh, nên trang "Duyệt Hợp đồng" của HCNS chỉ còn đúng 1 danh sách chờ duyệt. */
+async function renderHR(el) {
+  const load = async () => {
+    const c = await get('/contracts');
+    return { pending: (c.items || []).filter(x => ['pending_v1', 'pending_v2'].includes(x.status)) };
+  };
+  const draw = (d) => {
+    const t = APPROVAL_TONE.contract;
+    return `<div class="page-head">
+      <div class="grow"><h2>Duyệt Hợp đồng</h2><p>Hợp đồng chờ duyệt 2 vòng</p></div>
+    </div>
+    <div class="grid g4 mb">${stat('Hợp đồng chờ duyệt', d.pending.length, 'Vòng 2 do HCNS phụ trách', t.chip)}</div>
+    <div>${d.pending.length ? `<div class="card">${d.pending.map(c => `<div class="item">
+        <div class="dot-i" style="background:transparent;color:${t.color};border:1.5px solid ${t.color}">${icon('penLine')}</div>
+        <div class="grow"><div class="t">${esc(c.title)}</div>
+          <div class="d">${esc(c.owner_name || '')}</div>
+          <div class="d xs">Giá trị ${money(c.value)} · ${esc(CONTRACT_STATUS[c.status]?.n || c.status)}</div></div>
+        <div class="right">${canDecideContract(c) ? `<button class="btn sm amber" data-ok-contract="${esc(c.id)}">Duyệt</button>
+          <div class="mt"><button class="btn sm" data-revise-contract="${esc(c.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs" style="color:${t.color}">Chờ ${c.status === 'pending_v1' ? 'TPKD' : 'HCNS'} duyệt</span>`}</div>
+      </div>`).join('')}</div>` : empty('circleCheck', 'Không có hợp đồng chờ duyệt.')}</div>`;
+  };
+  const bind = () => bindApprovalActions(el, 'contracts', () => render(el));
+  await mount(el, load, draw, bind);
+}
 
 export async function render(el) {
+  if (isHR()) return renderHR(el);
+
   const load = async () => {
     const [a, dc, t] = await Promise.all([get('/activities?days=14'), get('/daily-contacts'), get('/tasks')]);
     return { acts: a.items || [], stats: a.stats, contacts: dc.items || [], tasks: (t.items || []).filter(x => x.status !== 'done') };

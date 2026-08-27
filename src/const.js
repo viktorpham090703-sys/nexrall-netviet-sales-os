@@ -17,9 +17,37 @@ export const STAGES = [
   { k: 'ban_giao', n: 'Bàn giao', ic: icon('inbox') },
   { k: 'hoan_tat', n: 'Hoàn tất', ic: icon('trophy') },
 ];
-export const stageName = (k) => (STAGES.find(s => s.k === k) || {}).n || k;
+/* Quy trình đấu thầu (khách hàng tập đoàn lớn) — chạy song song với STAGES qua deal.process_type.
+ * Từ "Trúng thầu" hội tụ thẳng vào TERMINAL_STAGES bên dưới, không định nghĩa lại 4 bước cuối.
+ * Khớp thứ tự với server/routes/deals.js TENDER_STAGES (server) — 2 mảng trùng lặp có chủ đích,
+ * giống cách STAGES/TENDER_STAGES thường đã trùng lặp client/server trong dự án này. */
+export const TENDER_STAGES = [
+  { k: 'tiep_can_truoc', n: 'Tiếp cận trước', ic: icon('sprout') },
+  { k: 'nhan_thu_moi', n: 'Nhận thư mời thầu', ic: icon('mail') },
+  { k: 'chuan_bi_ho_so', n: 'Chuẩn bị hồ sơ', ic: icon('fileText') },
+  { k: 'cho_duyet_ho_so', n: 'Chờ duyệt hồ sơ', ic: icon('clock') },
+  { k: 'da_nop_ho_so', n: 'Đã nộp hồ sơ', ic: icon('circleCheck') },
+  { k: 'thuong_thao', n: 'Đang thương thảo', ic: icon('handshake') },
+  { k: 'mou', n: 'Biên bản ghi nhớ (MOU)', ic: icon('penLine') },
+  { k: 'trung_thau', n: 'Trúng thầu', ic: icon('trophy') },
+];
+export const stageName = (k) => (STAGES.find(s => s.k === k) || TENDER_STAGES.find(s => s.k === k) || {}).n || k;
 /* Giai đoạn kết thúc — trùng với TERMINAL bên server/routes/deals.js, xem chú thích ở đó. */
 export const TERMINAL_STAGES = ['hop_dong_da_ky', 'dang_san_xuat', 'ban_giao', 'hoan_tat'];
+export const PROCESS_TYPE_NAME = { thong_thuong: 'Thông thường', dau_thau: 'Đấu thầu' };
+
+/* Quy mô khách hàng — cột nv_customers.scale đã tồn tại trong CSDL (seed ngẫu nhiên 3 giá trị này)
+ * nhưng trước đây chưa có field nào trong UI để xem/sửa. 'Tập đoàn' là điều kiện nhận diện khách
+ * hàng thuộc diện áp dụng quy trình đấu thầu. */
+export const CUSTOMER_SCALE_OPTIONS = ['SME', 'Doanh nghiệp lớn', 'Tập đoàn'];
+
+/* Màu theo loại hồ sơ HCNS xét duyệt — khớp màu 3 stat tile trên Console HCNS (báo giá=amber,
+ * hợp đồng=blue, hồ sơ thầu=red) để dùng thống nhất ở mọi nơi hiển thị danh sách chờ duyệt. */
+export const APPROVAL_TONE = {
+  quote: { chip: 'amber', color: 'var(--orange)' },
+  contract: { chip: 'blue', color: 'var(--blue)' },
+  tender: { chip: 'red', color: 'var(--red)' },
+};
 
 export const TEMPS = { hot: { n: 'Nóng', c: 'red' }, warm: { n: 'Ấm', c: 'amber' }, cold: { n: 'Nguội', c: 'blue' } };
 

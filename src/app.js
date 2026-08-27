@@ -31,18 +31,30 @@ const VIEWS = {
 };
 
 const SALES_NAV = [
-  ['cockpit', icon('home'), 'Cockpit'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'],
+  ['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'],
   ['tasks', icon('inbox'), 'Việc'], ['more', icon('moreHorizontal'), 'Thêm'],
 ];
 const SALES_SIDE_NAV = [
-  { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Cockpit'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
+  { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
   { sec: 'Khác', items: [['crm', icon('folderOpen'), 'CRM 360° Khách hàng'], ['ai', icon('bot'), 'AI Trợ lý'], ['activities', icon('calendarDays'), 'Lịch & Hoạt động'], ['reports', icon('clipboardList'), 'Báo cáo EOD & Tuần'], ['kpi', icon('trophy'), 'KPI & Hoa hồng'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá'], ['training', icon('graduationCap'), 'Đào tạo']] },
 ];
 const LEAD_NAV = [
-  { sec: 'Điều hành', items: [['console', icon('slidersHorizontal'), 'Console đội'], ['cockpit', icon('home'), 'Cockpit cá nhân'], ['tasks', icon('inbox'), 'Giao việc & SLA']] },
+  { sec: 'Điều hành', items: [['console', icon('slidersHorizontal'), 'Console đội'], ['cockpit', icon('home'), 'Trang chủ cá nhân'], ['tasks', icon('inbox'), 'Giao việc & SLA']] },
   { sec: 'Kinh doanh', items: [['pipeline', icon('barChart2'), 'Pipeline đội'], ['crm', icon('folderOpen'), 'CRM 360°'], ['prospect', icon('search'), 'Tìm khách & Thầu'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá']] },
   { sec: 'Đo lường', items: [['reports', icon('clipboardList'), 'Báo cáo'], ['kpi', icon('trophy'), 'KPI · Hoa hồng · PIP'], ['activities', icon('calendarDays'), 'Hoạt động']] },
   { sec: 'Khác', items: [['training', icon('graduationCap'), 'Đào tạo'], ['ai', icon('bot'), 'AI Trợ lý'], ['admin', icon('usersRound'), 'Quản trị']] },
+];
+/* HCNS chỉ cần xem/xét duyệt — không có nhiệm vụ điều hành đội sales (Pipeline, CRM, Báo cáo,
+ * KPI, Đào tạo...), nên menu chỉ còn đúng 5 mục. "console" giữ nguyên route (đã là trang duyệt
+ * của HCNS) nhưng đổi nhãn/icon thành "Trang chủ" vì đây là màn hình chính của HCNS. */
+const HR_NAV = [
+  { sec: 'Điều hành', items: [
+    ['console', icon('home'), 'Trang chủ'],
+    ['prospect', icon('search'), 'Duyệt Thầu'],
+    ['saleskit', icon('fileText'), 'Duyệt Báo giá'],
+    ['activities', icon('calendarDays'), 'Duyệt Hợp đồng'],
+    ['admin', icon('usersRound'), 'Quản trị'],
+  ] },
 ];
 
 function parseHash() {
@@ -57,13 +69,13 @@ const notiBadge = () => icon('bell', 17) + (state.unread ? `<span class="dot">${
 function shell(view) {
   const me = state.me;
   const lead = isLead();
-  const navGroups = lead ? LEAD_NAV : SALES_SIDE_NAV;
+  const navGroups = me.role === 'hr' ? HR_NAV : lead ? LEAD_NAV : SALES_SIDE_NAV;
   const nav = navGroups.map(g => `<div class="sec">${esc(g.sec)}</div>` + g.items
     .filter(i => i[0] !== 'admin' || isLead())
     .map(i => `<a href="#/${i[0]}" class="${view === i[0] ? 'active' : ''}"><span>${i[1]}</span>${esc(i[2])}</a>`).join('')).join('');
   return `<div class="shell with-side">
     <aside class="sidebar" id="sidebar">
-      <div class="row mb"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></div>
+      <div class="row mb"><a href="#/${homeView()}" class="brand-logo-link"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></a></div>
       <a href="#/profile" class="side-profile-btn ${view === 'profile' ? 'active' : ''}">
         <div class="avatar">${esc(initials(me.name))}</div>
         <div class="side-profile-info">

@@ -121,6 +121,7 @@ export async function crmRoutes(ctx) {
     const f = {
       name: b.name != null ? str(b.name, 160) : cur.name,
       industry: b.industry != null ? str(b.industry, 60) : cur.industry,
+      scale: b.scale != null ? str(b.scale, 40) : cur.scale,
       phone: b.phone != null ? vPhone(b.phone) : cur.phone,
       email: b.email != null ? vEmail(b.email) : cur.email,
       temp: ['hot', 'warm', 'cold'].includes(b.temp) ? b.temp : cur.temp,
@@ -129,8 +130,8 @@ export async function crmRoutes(ctx) {
       nguon_khach_hang: b.nguonKhachHang !== undefined ? vEnum(b.nguonKhachHang, LEAD_SOURCES, 'Nguồn khách hàng', null) : cur.nguon_khach_hang,
       partner_id: b.partnerId !== undefined ? (str(b.partnerId, 40) || null) : cur.partner_id,
     };
-    await env.DB.prepare('UPDATE nv_customers SET name=?,industry=?,phone=?,email=?,temp=?,note=?,owner_id=?,nguon_khach_hang=?,partner_id=?,updated_at=? WHERE id=?')
-      .bind(f.name, f.industry, f.phone, f.email, f.temp, f.note, f.owner_id, f.nguon_khach_hang, f.partner_id, now(), p.id).run();
+    await env.DB.prepare('UPDATE nv_customers SET name=?,industry=?,scale=?,phone=?,email=?,temp=?,note=?,owner_id=?,nguon_khach_hang=?,partner_id=?,updated_at=? WHERE id=?')
+      .bind(f.name, f.industry, f.scale, f.phone, f.email, f.temp, f.note, f.owner_id, f.nguon_khach_hang, f.partner_id, now(), p.id).run();
     await audit(env, ctx.me.id, 'update', 'customer', p.id, {});
     return json({ ok: true });
   }

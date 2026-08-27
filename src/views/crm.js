@@ -1,7 +1,7 @@
 import { get, post, patch } from '../api.js';
 import { state, isLead, assigneeField } from '../state.js';
 import { esc, money, mount, chip, empty, rel, fmtDT, toast, modal, initials } from '../ui.js';
-import { TEMPS, SERVICES, ACT_TYPES, actIcon, actName, stageName, LEAD_SOURCES, leadSourceName } from '../const.js';
+import { TEMPS, SERVICES, ACT_TYPES, actIcon, actName, stageName, LEAD_SOURCES, leadSourceName, CUSTOMER_SCALE_OPTIONS } from '../const.js';
 import { aiModal } from '../aiPref.js';
 import { icon } from '../icons.js';
 
@@ -65,6 +65,7 @@ export async function render(el, params) {
       fields: [
         { name: 'name', label: 'Tên công ty', required: true },
         { name: 'industry', label: 'Ngành hàng' },
+        { name: 'scale', label: 'Quy mô', type: 'select', options: [{ v: '', n: '— chưa rõ —' }, ...CUSTOMER_SCALE_OPTIONS] },
         { name: 'phone', label: 'Điện thoại' }, { name: 'email', label: 'Email' },
         { name: 'temp', label: 'Phân loại', type: 'select', options: [{ v: 'hot', n: 'Nóng' }, { v: 'warm', n: 'Ấm' }, { v: 'cold', n: 'Nguội' }] },
         { name: 'nguonKhachHang', label: 'Nguồn khách hàng', type: 'select', options: [{ v: '', n: '— chưa rõ —' }, ...LEAD_SOURCES] },
@@ -87,7 +88,7 @@ async function detail(el, id) {
     return `<div class="page-head">
       <a class="btn sm" href="#/crm">${icon('arrowLeft', 15)}</a>
       <div class="grow"><h2>${esc(c.name)}</h2>
-        <p>${esc(c.industry || '—')} · ${esc(c.scale || '')} · nguồn ${esc(c.source || '—')}</p></div>
+        <p>${esc(c.industry || '—')} · ${esc(c.scale || 'Chưa rõ quy mô')} <button class="btn sm" data-scale style="padding:1px 6px;margin-left:4px">${icon('pencil', 11)}</button> · nguồn ${esc(c.source || '—')}</p></div>
       ${chip(TEMPS[c.temp]?.n || c.temp, TEMPS[c.temp]?.c)}
     </div>
 
@@ -136,6 +137,11 @@ async function detail(el, id) {
     el.querySelectorAll('[data-temp]').forEach(b => b.onclick = async () => {
       try { await patch('/customers/' + id, { temp: b.dataset.temp }); toast('Đã cập nhật phân loại', 'ok'); detail(el, id); }
       catch (e) { toast(e.message, 'err'); }
+    });
+    el.querySelector('[data-scale]').onclick = () => modal({
+      title: 'Sửa quy mô khách hàng',
+      fields: [{ name: 'scale', label: 'Quy mô', type: 'select', value: d.customer.scale || '', options: [{ v: '', n: '— chưa rõ —' }, ...CUSTOMER_SCALE_OPTIONS] }],
+      submitText: 'Lưu', onSubmit: async (v) => { await patch('/customers/' + id, { scale: v.scale }); toast('Đã cập nhật quy mô', 'ok'); detail(el, id); },
     });
     el.querySelector('[data-act]').onclick = () => logActivity({ customerId: id }, () => detail(el, id));
     el.querySelector('[data-contact]').onclick = () => modal({

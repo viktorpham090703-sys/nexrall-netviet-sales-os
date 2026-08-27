@@ -178,6 +178,14 @@ const MIGRATIONS = [
   // Tài liệu đính kèm (báo giá/hợp đồng) upload ở Sales Kit — file gốc lưu trong R2 (binding DOCS,
   // xem wrangler.toml), bảng này chỉ giữ metadata + kết quả AI đọc/phân tích file.
   `CREATE TABLE IF NOT EXISTS nv_documents (id TEXT PRIMARY KEY, quote_id TEXT, contract_id TEXT, owner_id TEXT NOT NULL, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER DEFAULT 0, r2_key TEXT NOT NULL, ai_summary TEXT, ai_provider TEXT, ai_model TEXT, status TEXT DEFAULT 'done', created_at INTEGER NOT NULL)`,
+  // 43: quy trình đấu thầu tập đoàn lớn — deal chạy 1 trong 2 loại quy trình song song
+  // (thong_thuong | dau_thau, xem TENDER_STAGES ở routes/deals.js). tender_id là liên kết THẬT
+  // giữa deal và cơ hội thầu gốc (trước đây convert() chỉ ghi vào note dạng text tự do, không
+  // truy vấn được). negotiation_round đếm số vòng thương thảo — tài liệu quy trình đấu thầu nêu
+  // rõ có thể lặp nhiều vòng, mỗi vòng cần thống nhất nội bộ trước khi phản hồi khách.
+  `ALTER TABLE nv_deals ADD COLUMN process_type TEXT NOT NULL DEFAULT 'thong_thuong'`,
+  `ALTER TABLE nv_deals ADD COLUMN tender_id TEXT`,
+  `ALTER TABLE nv_deals ADD COLUMN negotiation_round INTEGER NOT NULL DEFAULT 0`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
