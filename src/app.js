@@ -31,15 +31,15 @@ const VIEWS = {
 };
 
 const SALES_NAV = [
-  ['cockpit', icon('home'), 'Cockpit'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'],
+  ['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'],
   ['tasks', icon('inbox'), 'Việc'], ['more', icon('moreHorizontal'), 'Thêm'],
 ];
 const SALES_SIDE_NAV = [
-  { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Cockpit'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
+  { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
   { sec: 'Khác', items: [['crm', icon('folderOpen'), 'CRM 360° Khách hàng'], ['ai', icon('bot'), 'AI Trợ lý'], ['activities', icon('calendarDays'), 'Lịch & Hoạt động'], ['reports', icon('clipboardList'), 'Báo cáo EOD & Tuần'], ['kpi', icon('trophy'), 'KPI & Hoa hồng'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá'], ['training', icon('graduationCap'), 'Đào tạo']] },
 ];
 const LEAD_NAV = [
-  { sec: 'Điều hành', items: [['console', icon('slidersHorizontal'), 'Console đội'], ['cockpit', icon('home'), 'Cockpit cá nhân'], ['tasks', icon('inbox'), 'Giao việc & SLA']] },
+  { sec: 'Điều hành', items: [['console', icon('slidersHorizontal'), 'Console đội'], ['cockpit', icon('home'), 'Trang chủ cá nhân'], ['tasks', icon('inbox'), 'Giao việc & SLA']] },
   { sec: 'Kinh doanh', items: [['pipeline', icon('barChart2'), 'Pipeline đội'], ['crm', icon('folderOpen'), 'CRM 360°'], ['prospect', icon('search'), 'Tìm khách & Thầu'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá']] },
   { sec: 'Đo lường', items: [['reports', icon('clipboardList'), 'Báo cáo'], ['kpi', icon('trophy'), 'KPI · Hoa hồng · PIP'], ['activities', icon('calendarDays'), 'Hoạt động']] },
   { sec: 'Khác', items: [['training', icon('graduationCap'), 'Đào tạo'], ['ai', icon('bot'), 'AI Trợ lý'], ['admin', icon('usersRound'), 'Quản trị']] },
@@ -63,7 +63,7 @@ function shell(view) {
     .map(i => `<a href="#/${i[0]}" class="${view === i[0] ? 'active' : ''}"><span>${i[1]}</span>${esc(i[2])}</a>`).join('')).join('');
   return `<div class="shell with-side">
     <aside class="sidebar" id="sidebar">
-      <div class="row mb"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></div>
+      <a href="#/${homeView()}" class="row mb" style="text-decoration:none"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></a>
       <a href="#/profile" class="side-profile-btn ${view === 'profile' ? 'active' : ''}">
         <div class="avatar">${esc(initials(me.name))}</div>
         <div class="side-profile-info">
