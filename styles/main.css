@@ -26,6 +26,8 @@ img{max-width:100%}
   background:var(--bg2);border-bottom:1px solid var(--line)}
 .topbar .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.3px}
 .brand-logo{height:34px;display:block}
+.sidebar a.brand-logo-link{display:inline-block;padding:0;border-radius:0;background:none;width:auto}
+.sidebar a.brand-logo-link:hover,.sidebar a.brand-logo-link:active,.sidebar a.brand-logo-link.active{background:none;box-shadow:none}
 .topbar .grow{flex:1}
 .icon-btn{background:var(--bg2);border:1px solid var(--line);color:var(--txt);width:36px;height:36px;border-radius:10px;
   display:grid;place-items:center;cursor:pointer;position:relative;font-size:16px}

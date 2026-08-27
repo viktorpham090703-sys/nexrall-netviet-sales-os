@@ -63,7 +63,7 @@ function shell(view) {
     .map(i => `<a href="#/${i[0]}" class="${view === i[0] ? 'active' : ''}"><span>${i[1]}</span>${esc(i[2])}</a>`).join('')).join('');
   return `<div class="shell with-side">
     <aside class="sidebar" id="sidebar">
-      <a href="#/${homeView()}" class="row mb" style="text-decoration:none"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></a>
+      <div class="row mb"><a href="#/${homeView()}" class="brand-logo-link"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></a></div>
       <a href="#/profile" class="side-profile-btn ${view === 'profile' ? 'active' : ''}">
         <div class="avatar">${esc(initials(me.name))}</div>
         <div class="side-profile-info">
