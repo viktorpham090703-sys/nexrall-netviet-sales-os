@@ -1,9 +1,10 @@
 import { get, post } from '../api.js';
 import { isLead } from '../state.js';
-import { esc, mount, chip, empty, fmtDT, toast, stat } from '../ui.js';
+import { esc, mount, chip, empty, fmtDT, toast, stat, bindTabs } from '../ui.js';
 import { actIcon, actName } from '../const.js';
 import { logActivity } from './crm.js';
 import { quickContact } from './cockpit.js';
+import { icon } from '../icons.js';
 
 let tab = 'activities';
 
@@ -31,7 +32,7 @@ export async function render(el) {
     </div>
 
     <div class="row mb" style="gap:8px">
-      <button class="btn sm grow" data-sync>📞 Đồng bộ call log (mock)</button>
+      <button class="btn sm grow" data-sync>${icon('phone', 14)} Đồng bộ call log (mock)</button>
       <button class="btn sm grow amber" data-newcontact>+ Liên hệ mới</button>
     </div>
 
@@ -49,20 +50,20 @@ export async function render(el) {
           <div class="d">${esc(a.customer_name || '—')} · ${fmtDT(a.happened_at)}${isLead() ? ' · ' + esc(a.user_name || '') : ''}</div>
           ${a.note ? `<div class="d xs">${esc(a.note)}</div>` : ''}</div>
         ${a.outcome ? chip(a.outcome, a.outcome === 'Tích cực' ? 'green' : a.outcome === 'Từ chối' ? 'red' : 'grey') : ''}
-      </div>`).join('')}</div>`).join('') : empty('🕓', 'Chưa ghi nhận hoạt động nào.'))
+      </div>`).join('')}</div>`).join('') : empty('clock', 'Chưa ghi nhận hoạt động nào.'))
       : tab === 'contacts' ? (d.contacts.length ? `<div class="card">${d.contacts.map(c => `<div class="item">
-          <div class="dot-i">🆕</div><div class="grow"><div class="t">${esc(c.name)}</div>
+          <div class="dot-i">${icon('userPlus')}</div><div class="grow"><div class="t">${esc(c.name)}</div>
           <div class="d">${esc(c.company || '')} · ${esc(c.channel || '')} · ${fmtDT(c.created_at)}</div></div>
-          ${isLead() ? chip(c.user_name || '', 'grey') : ''}</div>`).join('')}</div>` : empty('🆕', 'Chưa có liên hệ mới.'))
+          ${isLead() ? chip(c.user_name || '', 'grey') : ''}</div>`).join('')}</div>` : empty('userPlus', 'Chưa có liên hệ mới.'))
       : (d.tasks.length ? `<div class="card">${d.tasks.map(t => `<div class="item">
-          <div class="dot-i">${t.due_at && t.due_at < Date.now() / 1000 ? '⏰' : '🗓️'}</div>
+          <div class="dot-i">${icon(t.due_at && t.due_at < Date.now() / 1000 ? 'alarmClock' : 'calendarDays')}</div>
           <div class="grow"><div class="t">${esc(t.title)}</div>
           <div class="d">Hạn ${fmtDT(t.due_at)}${t.assigner_name ? ' · giao bởi ' + esc(t.assigner_name) : ''}</div></div>
-          <a class="btn sm" href="#/tasks">Mở</a></div>`).join('')}</div>` : empty('🗓️', 'Không có lịch nhắc nào.'))}`;
+          <a class="btn sm" href="#/tasks">Mở</a></div>`).join('')}</div>` : empty('calendarDays', 'Không có lịch nhắc nào.'))}`;
   };
 
   const bind = () => {
-    el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(el); });
+    bindTabs(el, t => tab = t, render);
     el.querySelector('[data-log]').onclick = () => logActivity({}, () => render(el));
     el.querySelector('[data-newcontact]').onclick = () => quickContact(() => render(el));
     el.querySelector('[data-sync]').onclick = async (e) => {

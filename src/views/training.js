@@ -1,6 +1,7 @@
 import { get, post } from '../api.js';
 import { isLead, salesUsers } from '../state.js';
 import { esc, mount, chip, bar, empty, toast, modal, stat, fmtDate } from '../ui.js';
+import { icon } from '../icons.js';
 
 export async function render(el) {
   const load = () => get('/trainings');
@@ -23,7 +24,7 @@ export async function render(el) {
       const arr = d.items.filter(t => t.category === cat);
       if (!arr.length) return '';
       return `<div class="sec-title">${esc(cat)}</div><div class="card">${arr.map(t => `<div class="item">
-        <div class="dot-i">${t.prog_status === 'completed' ? '✅' : t.required ? '⭐' : '🎬'}</div>
+        <div class="dot-i">${icon(t.prog_status === 'completed' ? 'circleCheck' : t.required ? 'star' : 'clapperboard')}</div>
         <div class="grow"><div class="t">${esc(t.title)}</div>
           <div class="d">${t.duration_min} phút · ${t.required ? 'Bắt buộc' : 'Tự chọn'} · dành cho ${esc(t.role_target)}</div>
           <div class="d xs">${esc(t.description || '')}</div>
@@ -39,7 +40,7 @@ export async function render(el) {
     }).join('')}
 
     ${isLead() && d.team.length ? `<div class="sec-title">Tiến độ đội</div><div class="card">${d.team.map(m => `<div class="item">
-      <div class="dot-i">👤</div><div class="grow"><div class="t">${esc(m.name)}</div>
+      <div class="dot-i">${icon('user')}</div><div class="grow"><div class="t">${esc(m.name)}</div>
       <div class="mt">${bar(m.done || 0, m.total || 1, 'green')}</div>
       <div class="d xs">${m.done || 0}/${m.total || 0} bài hoàn thành</div></div></div>`).join('')}</div>` : ''}`;
   };

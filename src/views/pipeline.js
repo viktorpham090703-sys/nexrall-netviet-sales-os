@@ -1,9 +1,10 @@
 import { get, post, patch } from '../api.js';
-import { isLead, salesUsers } from '../state.js';
+import { isLead, salesUsers, assigneeField } from '../state.js';
 import { esc, money, mount, chip, empty, stat, toast, modal, fmtDate } from '../ui.js';
-import { STAGES, SERVICES, stageName } from '../const.js';
+import { STAGES, SERVICES, stageName, PA_OPTIONS, EXEC_SOURCE_OPTIONS } from '../const.js';
 import { logActivity } from './crm.js';
 import { quickContact } from './cockpit.js';
+import { icon } from '../icons.js';
 
 let view = 'kanban';
 let owner = 'all';
@@ -22,7 +23,7 @@ export async function render(el) {
     const expected = open.reduce((s, x) => s + x.expected, 0);
     const breach = d.items.filter(x => x.slaBreach);
     return `<div class="page-head">
-      <div class="grow"><h2>Pipeline & Deal</h2><p>7 giai đoạn · giá trị kỳ vọng tự tính · cờ SLA chống lead nguội</p></div>
+      <div class="grow"><h2>Pipeline & Deal</h2><p>14 giai đoạn · giá trị kỳ vọng tự tính · cờ SLA chống lead nguội</p></div>
       <div class="right">
         <button class="btn primary sm" data-add>+ Deal</button>
         <div class="mt"><button class="btn amber sm" data-quickcontact>+ Liên hệ mới hôm nay</button></div>
@@ -79,13 +80,13 @@ const kanban = (d) => `<div class="kanban">${STAGES.map(s => {
 }).join('')}</div>`;
 
 const list = (items) => items.length ? `<div class="card">${items.map(x => `<div class="item">
-    <div class="dot-i">${x.status === 'won' ? '🏆' : x.slaBreach ? '🔥' : '📈'}</div>
+    <div class="dot-i">${icon(x.status === 'won' ? 'trophy' : x.slaBreach ? 'flame' : 'trendingUp')}</div>
     <div class="grow"><div class="t">${esc(x.title)}</div>
       <div class="d">${esc(x.customer_name || '—')} · ${stageName(x.stage)} · KV ${money(x.expected)}</div>
       <div class="d xs">Cập nhật ${x.idleDays} ngày trước · SLA ${x.slaLimit} ngày${x.owner_name ? ' · ' + esc(x.owner_name) : ''}</div></div>
     <div class="right">${chip(money(x.value), 'blue')}
       <div class="mt"><button class="btn sm" data-deal="${esc(x.id)}">Mở</button></div></div>
-  </div>`).join('')}</div>` : empty('📭', 'Không có deal nào ở nhóm này.');
+  </div>`).join('')}</div>` : empty('inbox', 'Không có deal nào ở nhóm này.');
 
 function addDeal(customers, after) {
   modal({
@@ -96,7 +97,8 @@ function addDeal(customers, after) {
       { name: 'service', label: 'Dịch vụ', type: 'select', options: SERVICES },
       { name: 'value', label: 'Giá trị (đ)', type: 'number', value: 50000000 },
       { name: 'stage', label: 'Giai đoạn', type: 'select', options: STAGES.map(s => ({ v: s.k, n: s.n })) },
-      ...(isLead() ? [{ name: 'ownerId', label: 'Giao cho', type: 'select', options: salesUsers().map(u => ({ v: u.id, n: u.name })) }] : []),
+      { name: 'phuongAnHopTac', label: 'Phương án hợp tác (nếu qua Partner)', type: 'select', options: [{ v: '', n: '— không —' }, ...PA_OPTIONS] },
+      ...(isLead() ? [assigneeField('ownerId')] : []),
     ],
     onSubmit: async (v) => { await post('/deals', v); toast('Đã tạo cơ hội', 'ok'); after(); },
   });
@@ -114,6 +116,8 @@ export function openDeal(x, after) {
       { name: 'stage', label: 'Chuyển giai đoạn', type: 'select', value: x.stage, options: STAGES.map(s => ({ v: s.k, n: s.n })) },
       { name: 'value', label: 'Giá trị (đ)', type: 'number', value: x.value },
       { name: 'probability', label: 'Xác suất (%)', type: 'number', value: x.probability },
+      { name: 'phuongAnHopTac', label: 'Phương án hợp tác', type: 'select', value: x.phuong_an_hop_tac || '', options: [{ v: '', n: '— không —' }, ...PA_OPTIONS] },
+      { name: 'nguonThucHien', label: 'Nguồn thực hiện (bước 1-3)', type: 'select', value: x.nguon_thuc_hien || '', options: [{ v: '', n: '— chưa rõ —' }, ...EXEC_SOURCE_OPTIONS] },
       { name: 'note', label: 'Ghi chú cập nhật', type: 'textarea', rows: 2, value: x.note || '' },
     ],
     submitText: 'Cập nhật deal',

@@ -1,11 +1,35 @@
-import { json, match, need, uid, now, DAY, readBody, scope, isLead, audit, notify, num, str, monthKey, sameWorkspaceUser, wsBucket } from '../lib/util.js';
-import { getConfig } from '../lib/kpi.js';
-import { vMoney, vPercent, vText, vFutureTs, vCount, MAX_QTY } from '../lib/validate.js';
+import { json, match, need, uid, now, DAY, readBody, scope, audit, notify, num, str, monthKey, resolveAssignableOwner, wsBucket, LEAD_ROLES } from '../lib/util.js';
+import { getConfig, slaLimit } from '../lib/kpi.js';
+import { vMoney, vPercent, vText, vFutureTs, vCount, MAX_QTY, vEnum } from '../lib/validate.js';
 
-export const STAGES = ['lead_moi', 'tiep_can', 'nhu_cau', 'bao_gia', 'dam_phan', 'chot', 'trien_khai'];
-const PROB = { lead_moi: 10, tiep_can: 20, nhu_cau: 40, bao_gia: 60, dam_phan: 75, chot: 100, trien_khai: 100 };
-/** Giai đoạn kết thúc — không cho kéo ngược về giai đoạn trước (state machine). */
-const TERMINAL = ['chot', 'trien_khai'];
+/* 14 bước theo quy trình vận hành PKD (spec làm cơ sở CRM, mục 7) — thay cho pipeline 7 bước cũ.
+ * Khớp thứ tự với src/const.js STAGES (client) — 2 mảng trùng lặp có chủ đích, xem chú thích ở đó. */
+export const STAGES = [
+  'lead_moi', 'tiep_can', 'du_dieu_kien', 'chao_hang',
+  'cho_duyet_bg_v1', 'cho_duyet_bg_v2', 'da_gui_bao_gia', 'dam_phan',
+  'cho_duyet_hd_v1', 'cho_duyet_hd_v2', 'hop_dong_da_ky', 'dang_san_xuat', 'ban_giao', 'hoan_tat',
+];
+export const PROB = {
+  lead_moi: 10, tiep_can: 15, du_dieu_kien: 25, chao_hang: 35,
+  cho_duyet_bg_v1: 45, cho_duyet_bg_v2: 55, da_gui_bao_gia: 65, dam_phan: 70,
+  cho_duyet_hd_v1: 80, cho_duyet_hd_v2: 90, hop_dong_da_ky: 100, dang_san_xuat: 100, ban_giao: 100, hoan_tat: 100,
+};
+/** Giai đoạn kết thúc — không cho kéo ngược về giai đoạn trước (state machine). Từ "Hợp đồng đã
+ * ký" trở đi (đã ký hợp đồng, đang sản xuất, bàn giao, hoàn tất) coi như đã chốt được doanh thu. */
+const TERMINAL = ['hop_dong_da_ky', 'dang_san_xuat', 'ban_giao', 'hoan_tat'];
+
+/** Trạng thái deal sau khi cập nhật — thứ tự ưu tiên: huỷ tường minh > vào giai đoạn đã ký hợp
+ * đồng trở đi > mở lại tường minh > vẫn đang "thất bại" trước đó > mặc định "đang mở". */
+function computeDealStatus(d, b, stage) {
+  if (b.status === 'lost') return 'lost';
+  if (TERMINAL.includes(stage)) return 'won';
+  if (b.status === 'open') return 'open';
+  if (d.status === 'lost') return 'lost';
+  return 'open';
+}
+
+/** Tỉ lệ hoa hồng mặc định theo dòng dịch vụ, khi deal chưa có báo giá đã duyệt để tính chính xác hơn. */
+export const defaultCommissionRate = (service) => service === 'Gameshow' ? 4 : service === 'Xây kênh' ? 7 : 6;
 
 /**
  * Tỉ lệ hoa hồng thực tế của 1 deal.
@@ -33,7 +57,33 @@ async function commissionRate(env, dealId, service) {
       }
     } catch (e) { /* báo giá hỏng → dùng mặc định */ }
   }
-  return service === 'Gameshow' ? 4 : service === 'Xây kênh' ? 7 : 6;
+  return defaultCommissionRate(service);
+}
+
+/**
+ * Tính giá 1 báo giá theo danh sách gói + chiết khấu — dùng chung cho tạo mới (POST /api/quotes)
+ * và sửa & trình lại (PATCH /api/quotes/:id nhánh resubmit) để không chép lại logic tính giá.
+ * `overCapItems` chỉ để NÊU RÕ cho người duyệt (gói nào vượt trần riêng của nó), KHÔNG chặn ở đây —
+ * trần chặn cứng duy nhất (hardCap toàn hệ) do nơi gọi tự kiểm tra trước khi gọi hàm này.
+ */
+async function computeQuotePricing(env, items, disc) {
+  const { results: prods } = await env.DB.prepare('SELECT * FROM nv_products WHERE active=1').all();
+  let subtotal = 0, commission = 0;
+  const overCapItems = [];
+  const clean = items.map(it => {
+    const pr = (prods || []).find(x => x.id === it.productId);
+    const price = pr ? pr.price : vMoney(it.price, 'Đơn giá');
+    const qty = vCount(it.qty, 'Số lượng', { max: MAX_QTY }) || 1;
+    if (pr && disc > Number(pr.max_discount ?? 100)) {
+      overCapItems.push({ name: pr.name, cap: Number(pr.max_discount), over: +(disc - Number(pr.max_discount)).toFixed(1) });
+    }
+    subtotal += price * qty;
+    commission += price * qty * ((pr?.commission_rate) || 5) / 100;
+    return { productId: it.productId, name: pr ? pr.name : str(it.name, 160), qty, price };
+  });
+  const total = subtotal * (1 - disc / 100);
+  commission = Math.round(commission * (1 - disc / 100));
+  return { clean, subtotal, total, commission, overCapItems };
 }
 
 export async function dealRoutes(ctx) {
@@ -48,14 +98,13 @@ export async function dealRoutes(ctx) {
       FROM nv_deals d LEFT JOIN nv_customers c ON c.id=d.customer_id LEFT JOIN nv_users u ON u.id=d.owner_id
       WHERE 1=1${s.sql} ORDER BY d.value DESC LIMIT 300`).bind(...s.args).all();
     const cfg = await getConfig(env, ctx.me.id);
-    const sla = cfg.sla_days || {};
     const t = now();
     const items = (results || []).map(d => {
       const idle = Math.floor((t - (d.last_activity_at || d.created_at)) / DAY);
-      const limit = sla[d.stage] || 5;
+      const limit = slaLimit(cfg, d.stage);
       return { ...d, idleDays: idle, slaLimit: limit, slaBreach: d.status === 'open' && idle > limit, expected: (d.value || 0) * (d.probability || 0) / 100 };
     });
-    return json({ items, stages: STAGES, sla });
+    return json({ items, stages: STAGES, sla: cfg.sla_days || {} });
   }
 
   if ((p = match(ctx, 'POST', '/api/deals'))) {
@@ -65,10 +114,15 @@ export async function dealRoutes(ctx) {
     const value = vMoney(b.value, 'Giá trị hợp đồng');
     const stage = STAGES.includes(b.stage) ? b.stage : 'lead_moi';
     const t = now(), id = uid('dl');
-    const owner = isLead(ctx.me) && b.ownerId ? await sameWorkspaceUser(env, ctx, b.ownerId) : null;
-    await env.DB.prepare('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    const owner = await resolveAssignableOwner(env, ctx, b.ownerId);
+    // Phương án hợp tác gắn ở cấp deal (không phải cấp partner/khách hàng) — xem chú thích ở
+    // migration nv_deals.phuong_an_hop_tac (server/lib/db.js). nguồn_thực_hiện chỉ để tách bạch
+    // công sức Sale/Partner phục vụ tính hoa hồng SAU NÀY, không có logic tính toán ở đợt này.
+    const pa = vEnum(b.phuongAnHopTac, ['PA1', 'PA2'], 'Phương án hợp tác', null);
+    const execSource = vEnum(b.nguonThucHien, ['sale', 'partner'], 'Nguồn thực hiện', null);
+    await env.DB.prepare('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,note,phuong_an_hop_tac,nguon_thuc_hien,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .bind(id, owner ? owner.id : ctx.me.id, str(b.customerId, 40), title, str(b.service, 40),
-        value, stage, PROB[stage], 'open', str(b.source, 60), vFutureTs(b.expectedCloseAt, t + 30 * DAY, 'Ngày dự kiến chốt'), t, t, str(b.note, 800), t, t).run();
+        value, stage, PROB[stage], 'open', str(b.source, 60), vFutureTs(b.expectedCloseAt, t + 30 * DAY, 'Ngày dự kiến chốt'), t, t, str(b.note, 800), pa, execSource, t, t).run();
     await audit(env, ctx.me.id, 'create', 'deal', id, { title: b.title });
     return json({ id });
   }
@@ -86,15 +140,17 @@ export async function dealRoutes(ctx) {
     if (TERMINAL.includes(d.stage) && stage !== d.stage && !TERMINAL.includes(stage) && b.status !== 'lost') {
       return json({ error: 'Deal đã chốt không thể quay lại giai đoạn trước. Nếu hợp đồng bị huỷ, hãy đánh dấu "Thất bại" kèm lý do.' }, 409);
     }
-    const status = b.status === 'lost' ? 'lost' : (stage === 'chot' || stage === 'trien_khai') ? 'won' : b.status === 'open' ? 'open' : d.status === 'lost' ? 'lost' : 'open';
+    const status = computeDealStatus(d, b, stage);
     const value = b.value != null ? vMoney(b.value, 'Giá trị hợp đồng') : d.value;
     const prob = b.probability != null ? num(b.probability, PROB[stage]) : (stage !== d.stage ? PROB[stage] : d.probability);
     const wonAt = status === 'won' ? (d.won_at || t) : null;
-    await env.DB.prepare('UPDATE nv_deals SET title=?,service=?,value=?,stage=?,probability=?,status=?,lost_reason=?,note=?,expected_close_at=?,last_activity_at=?,stage_changed_at=?,won_at=?,updated_at=? WHERE id=?')
+    const pa = b.phuongAnHopTac !== undefined ? vEnum(b.phuongAnHopTac, ['PA1', 'PA2'], 'Phương án hợp tác', null) : d.phuong_an_hop_tac;
+    const execSource = b.nguonThucHien !== undefined ? vEnum(b.nguonThucHien, ['sale', 'partner'], 'Nguồn thực hiện', null) : d.nguon_thuc_hien;
+    await env.DB.prepare('UPDATE nv_deals SET title=?,service=?,value=?,stage=?,probability=?,status=?,lost_reason=?,note=?,expected_close_at=?,last_activity_at=?,stage_changed_at=?,won_at=?,phuong_an_hop_tac=?,nguon_thuc_hien=?,updated_at=? WHERE id=?')
       .bind(b.title != null ? str(b.title, 160) : d.title, b.service != null ? str(b.service, 40) : d.service, value, stage, prob, status,
         b.lostReason != null ? str(b.lostReason, 200) : d.lost_reason, b.note != null ? str(b.note, 800) : d.note,
         b.expectedCloseAt != null ? num(b.expectedCloseAt, d.expected_close_at) : d.expected_close_at,
-        t, stage !== d.stage ? t : d.stage_changed_at, wonAt, t, p.id).run();
+        t, stage !== d.stage ? t : d.stage_changed_at, wonAt, pa, execSource, t, p.id).run();
 
     if (stage !== d.stage) {
       await env.DB.prepare('INSERT INTO nv_activities (id,user_id,customer_id,deal_id,type,subject,note,outcome,duration,happened_at,created_at) VALUES (?,?,?,?,?,?,?,?,0,?,?)')
@@ -129,7 +185,7 @@ export async function dealRoutes(ctx) {
 
   /** Xoá deal — chỉ TP/Admin, và chỉ khi chưa phát sinh hoa hồng đã chi. Ghi audit đầy đủ. */
   if ((p = match(ctx, 'DELETE', '/api/deals/:id'))) {
-    need(ctx, ['manager', 'admin']);
+    need(ctx, LEAD_ROLES);
     const s = scope(ctx, 'owner_id');
     const d = await env.DB.prepare('SELECT * FROM nv_deals WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
     if (!d) return json({ error: 'Không tìm thấy cơ hội' }, 404);
@@ -182,62 +238,203 @@ export async function dealRoutes(ctx) {
     const items = Array.isArray(b.items) ? b.items.slice(0, 20) : [];
     if (!items.length) return json({ error: 'Chưa chọn gói dịch vụ nào' }, 400);
     const cfg = await getConfig(env, ctx.me.id);
-    const { results: prods } = await env.DB.prepare('SELECT * FROM nv_products WHERE active=1').all();
     const disc = vPercent(b.discountPct, 'Chiết khấu');
-    let subtotal = 0, commission = 0;
-    // Gói nào bị chiết khấu vượt trần RIÊNG của nó — chỉ để nêu rõ cho TP duyệt, KHÔNG chặn ở đây:
-    // trần riêng từng gói (max_discount) chỉ là mốc cần duyệt, trần CHẶN CỨNG duy nhất là hardCap toàn hệ.
-    const overCapItems = [];
-    const clean = items.map(it => {
-      const pr = (prods || []).find(x => x.id === it.productId);
-      const price = pr ? pr.price : vMoney(it.price, 'Đơn giá');
-      const qty = vCount(it.qty, 'Số lượng', { max: MAX_QTY }) || 1;
-      if (pr && disc > Number(pr.max_discount ?? 100)) {
-        overCapItems.push({ name: pr.name, cap: Number(pr.max_discount), over: +(disc - Number(pr.max_discount)).toFixed(1) });
-      }
-      subtotal += price * qty;
-      commission += price * qty * ((pr?.commission_rate) || 5) / 100;
-      return { productId: it.productId, name: pr ? pr.name : str(it.name, 160), qty, price };
-    });
     const hardCap = Number(cfg.discount_hard_cap ?? 30);
     // Trần cứng toàn hệ (spec: tổng ưu đãi ≤ 30%) — DUY NHẤT mức này bị chặn hẳn, kể cả khi vượt
-    // trần riêng của gói. Chiết khấu > ngưỡng thường (15%) nhưng ≤ trần cứng phải đi qua TP duyệt,
-    // không được chặn cứng — nếu không báo giá không bao giờ tới được trạng thái 'pending'.
+    // trần riêng của gói. Chiết khấu > ngưỡng thường (15%) nhưng ≤ trần cứng phải đi qua TPKD duyệt,
+    // không được chặn cứng — nếu không báo giá không bao giờ tới được trạng thái chờ duyệt.
     if (disc > hardCap) {
       return json({ error: `Chiết khấu ${disc}% vượt trần cho phép ${hardCap}%. Vui lòng điều chỉnh hoặc xin cơ chế riêng từ Ban Giám đốc.` }, 400);
     }
-    const total = subtotal * (1 - disc / 100);
-    commission = commission * (1 - disc / 100);
+    const { clean, subtotal, total, commission, overCapItems } = await computeQuotePricing(env, items, disc);
     const threshold = cfg.discount_threshold ?? 15;
-    const status = disc > threshold ? 'pending' : 'draft';
+    const status = disc > threshold ? 'pending_v1' : 'draft';
     const t = now(), id = uid('qt');
     await env.DB.prepare('INSERT INTO nv_quotes (id,deal_id,owner_id,customer_id,title,items,subtotal,discount_pct,total,commission,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .bind(id, str(b.dealId, 40), ctx.me.id, str(b.customerId, 40), str(b.title, 160) || 'Báo giá NetViet', JSON.stringify(clean),
-        subtotal, disc, total, Math.round(commission), status, t, t).run();
-    if (status === 'pending') {
+        subtotal, disc, total, commission, status, t, t).run();
+    if (status === 'pending_v1') {
       const overCapNote = overCapItems.length
         ? ' Vượt trần riêng: ' + overCapItems.map(o => `${o.name} (trần ${o.cap}%, chênh +${o.over}%)`).join('; ') + '.'
         : '';
-      // Chỉ báo TP CÙNG workspace với người gửi báo giá — TP thật không cần nhận thông báo
-      // duyệt chiết khấu cho báo giá demo, và ngược lại.
+      // V1 = TPKD duyệt trước — chỉ báo TPKD CÙNG workspace với người gửi báo giá.
       const { results: mgrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='manager' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
-      for (const m of mgrs || []) await notify(env, m.id, { type: 'approval', title: 'Chờ duyệt chiết khấu ' + disc + '%', body: (ctx.me.name || '') + ' gửi báo giá vượt ngưỡng ' + threshold + '%.' + overCapNote, link: '#/saleskit', level: 'danger' });
+      for (const m of mgrs || []) await notify(env, m.id, { type: 'approval', title: 'Chờ duyệt báo giá (V1) — chiết khấu ' + disc + '%', body: (ctx.me.name || '') + ' gửi báo giá vượt ngưỡng ' + threshold + '%.' + overCapNote, link: '#/saleskit', level: 'danger' });
     }
-    return json({ id, status, subtotal, total, commission: Math.round(commission), threshold, overCapItems });
+    return json({ id, status, subtotal, total, commission, threshold, overCapItems });
   }
 
+  /* Duyệt báo giá 2 vòng (TPKD→Giám đốc) VÀ sửa & trình lại đều đi qua route này — phân nhánh
+   * theo hình dạng body, giống cách PATCH /api/deals/:id đã là 1 route đa năng. `scope()` tự khớp
+   * đúng quyền cho cả 2 phía: lead thấy toàn workspace (đủ cho nhánh duyệt), sales chỉ thấy đúng
+   * báo giá của mình (đủ cho nhánh sửa & trình lại — không cần kiểm tra owner riêng nữa). */
   if ((p = match(ctx, 'PATCH', '/api/quotes/:id'))) {
-    need(ctx, ['manager', 'admin']);
+    need(ctx);
     const b = await readBody(ctx.request);
     const s = scope(ctx, 'owner_id');
     const q = await env.DB.prepare('SELECT * FROM nv_quotes WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
     if (!q) return json({ error: 'Không tìm thấy báo giá' }, 404);
-    const st = ['approved', 'rejected'].includes(b.status) ? b.status : 'approved';
-    await env.DB.prepare('UPDATE nv_quotes SET status=?,approver_id=?,approve_note=?,updated_at=? WHERE id=?')
-      .bind(st, ctx.me.id, str(b.note, 300), now(), p.id).run();
-    await notify(env, q.owner_id, { type: 'approval', title: st === 'approved' ? '✅ Báo giá được duyệt' : '❌ Báo giá bị từ chối', body: q.title + (b.note ? ' – ' + b.note : ''), link: '#/saleskit', level: st === 'approved' ? 'info' : 'warn' });
-    await audit(env, ctx.me.id, 'approve_quote', 'quote', p.id, { status: st });
-    return json({ ok: true });
+    const t = now();
+
+    // Nhánh DUYỆT: body có `decision` ('approved' | 'revise') — chỉ 2 kết quả, không có "từ chối".
+    if (b.decision != null) {
+      need(ctx, LEAD_ROLES);
+      const decision = ['approved', 'revise'].includes(b.decision) ? b.decision : null;
+      if (!decision) return json({ error: 'Kết quả duyệt không hợp lệ' }, 400);
+      const note = str(b.note, 300);
+      if (q.status === 'pending_v1') {
+        if (!['manager', 'admin'].includes(ctx.me.role)) return json({ error: 'Chỉ Trưởng phòng kinh doanh (hoặc Admin) mới duyệt được vòng 1' }, 403);
+        // "Yêu cầu điều chỉnh" quay lại ĐÚNG vòng đang chờ, không lùi thêm — status giữ pending_v1.
+        const nextStatus = decision === 'approved' ? 'pending_v2' : 'pending_v1';
+        await env.DB.prepare('UPDATE nv_quotes SET status=?,v1_approver_id=?,v1_decision=?,v1_note=?,v1_decided_at=?,updated_at=? WHERE id=?')
+          .bind(nextStatus, ctx.me.id, decision, note, t, t, p.id).run();
+        if (decision === 'approved') {
+          // Admin cũng có thể tự duyệt V1 (vai trò Giám đốc đã sáp nhập vào Admin) — bỏ qua chính
+          // người vừa duyệt để không tự báo cho mình chờ duyệt V2.
+          const { results: dirs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
+          for (const d2 of dirs || []) if (d2.id !== ctx.me.id) await notify(env, d2.id, { type: 'approval', title: 'Chờ duyệt báo giá (V2): ' + q.title, body: (ctx.me.name || '') + ' đã duyệt vòng 1.', link: '#/saleskit', level: 'danger' });
+        } else {
+          await notify(env, q.owner_id, { type: 'approval', title: '✏️ TPKD yêu cầu điều chỉnh báo giá', body: q.title + (note ? ' – ' + note : ''), link: '#/saleskit', level: 'warn' });
+        }
+        await audit(env, ctx.me.id, 'approve_quote_v1', 'quote', p.id, { decision });
+        return json({ ok: true, status: nextStatus });
+      }
+      if (q.status === 'pending_v2') {
+        if (ctx.me.role !== 'admin') return json({ error: 'Chỉ Admin/BGĐ mới duyệt được vòng 2' }, 403);
+        // TPKD KHÔNG cần duyệt lại nếu Admin/BGĐ yêu cầu điều chỉnh — quay lại đúng vòng V2.
+        const nextStatus = decision === 'approved' ? 'approved' : 'pending_v2';
+        await env.DB.prepare('UPDATE nv_quotes SET status=?,v2_approver_id=?,v2_decision=?,v2_note=?,v2_decided_at=?,updated_at=? WHERE id=?')
+          .bind(nextStatus, ctx.me.id, decision, note, t, t, p.id).run();
+        await notify(env, q.owner_id, decision === 'approved'
+          ? { type: 'approval', title: '✅ Báo giá đã được duyệt', body: q.title, link: '#/saleskit', level: 'info' }
+          : { type: 'approval', title: '✏️ Admin/BGĐ yêu cầu điều chỉnh báo giá', body: q.title + (note ? ' – ' + note : ''), link: '#/saleskit', level: 'warn' });
+        await audit(env, ctx.me.id, 'approve_quote_v2', 'quote', p.id, { decision });
+        return json({ ok: true, status: nextStatus });
+      }
+      return json({ error: 'Báo giá không ở trạng thái chờ duyệt' }, 409);
+    }
+
+    // Nhánh SỬA & TRÌNH LẠI: body có `items` — chỉ chủ báo giá, chỉ khi vòng hiện tại đang bị yêu
+    // cầu điều chỉnh. `scope()` ở trên đã đảm bảo sales chỉ lấy được đúng báo giá của chính mình.
+    if (b.items != null) {
+      const roundRevising = (q.status === 'pending_v1' && q.v1_decision === 'revise') || (q.status === 'pending_v2' && q.v2_decision === 'revise');
+      if (!roundRevising) return json({ error: 'Báo giá chưa bị yêu cầu điều chỉnh, không cần trình lại' }, 409);
+      const items = Array.isArray(b.items) ? b.items.slice(0, 20) : [];
+      if (!items.length) return json({ error: 'Chưa chọn gói dịch vụ nào' }, 400);
+      const cfg = await getConfig(env, ctx.me.id);
+      const disc = vPercent(b.discountPct, 'Chiết khấu');
+      const hardCap = Number(cfg.discount_hard_cap ?? 30);
+      if (disc > hardCap) return json({ error: `Chiết khấu ${disc}% vượt trần cho phép ${hardCap}%.` }, 400);
+      const { clean, subtotal, total, commission } = await computeQuotePricing(env, items, disc);
+      const round = q.status === 'pending_v1' ? 1 : 2;
+      const sql = round === 1
+        ? 'UPDATE nv_quotes SET title=?,items=?,subtotal=?,discount_pct=?,total=?,commission=?,v1_approver_id=NULL,v1_decision=NULL,v1_note=NULL,v1_decided_at=NULL,updated_at=? WHERE id=?'
+        : 'UPDATE nv_quotes SET title=?,items=?,subtotal=?,discount_pct=?,total=?,commission=?,v2_approver_id=NULL,v2_decision=NULL,v2_note=NULL,v2_decided_at=NULL,updated_at=? WHERE id=?';
+      const title = b.title != null ? str(b.title, 160) : q.title;
+      await env.DB.prepare(sql).bind(title, JSON.stringify(clean), subtotal, disc, total, commission, t, p.id).run();
+      // V1 báo lại TPKD; V2 báo THẲNG Admin/BGĐ — không quay lại TPKD (đúng tài liệu).
+      const targetRole = round === 1 ? 'manager' : 'admin';
+      const { results: targets } = await env.DB.prepare('SELECT id FROM nv_users WHERE role=? AND active=1 AND is_demo=?').bind(targetRole, wsBucket(ctx.me)).all();
+      for (const u2 of targets || []) await notify(env, u2.id, { type: 'approval', title: 'Báo giá đã sửa, chờ duyệt lại: ' + title, body: (ctx.me.name || '') + ' đã cập nhật theo yêu cầu điều chỉnh.', link: '#/saleskit', level: 'danger' });
+      await audit(env, ctx.me.id, 'resubmit_quote', 'quote', p.id, { round });
+      return json({ ok: true, subtotal, total, commission });
+    }
+
+    return json({ error: 'Thiếu dữ liệu cập nhật' }, 400);
+  }
+
+  /* ================= Hợp đồng sản xuất (duyệt 2 vòng TPKD→HCNS) =================
+   * Không có ngưỡng bỏ qua duyệt như báo giá — mọi hợp đồng đều bắt buộc qua đủ 2 vòng, bắt đầu
+   * thẳng ở 'pending_v1'. Đổi điều khoản hợp đồng so với báo giá đã duyệt KHÔNG cần duyệt lại báo
+   * giá (đã chốt với người dùng) — chỉ chạy đúng luồng duyệt hợp đồng này là đủ. */
+  if ((p = match(ctx, 'GET', '/api/contracts'))) {
+    need(ctx);
+    const s = scope(ctx, 'c.owner_id');
+    const { results } = await env.DB.prepare(`SELECT c.*, u.name owner_name, cu.name customer_name, d.title deal_title
+      FROM nv_contracts c LEFT JOIN nv_users u ON u.id=c.owner_id LEFT JOIN nv_customers cu ON cu.id=c.customer_id LEFT JOIN nv_deals d ON d.id=c.deal_id
+      WHERE 1=1${s.sql} ORDER BY c.created_at DESC LIMIT 100`).bind(...s.args).all();
+    return json({ items: results || [] });
+  }
+
+  if ((p = match(ctx, 'POST', '/api/contracts'))) {
+    need(ctx);
+    const b = await readBody(ctx.request);
+    const title = vText(b.title, 'Tên hợp đồng', { max: 160, required: true });
+    const value = vMoney(b.value, 'Giá trị hợp đồng');
+    const t = now(), id = uid('ct2');
+    await env.DB.prepare(`INSERT INTO nv_contracts (id,deal_id,quote_id,owner_id,customer_id,title,value,payment_schedule,penalty_terms,note,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,'pending_v1',?,?)`)
+      .bind(id, str(b.dealId, 40) || null, str(b.quoteId, 40) || null, ctx.me.id, str(b.customerId, 40) || null,
+        title, value, str(b.paymentSchedule, 500), str(b.penaltyTerms, 500), str(b.note, 500), t, t).run();
+    // V1 = TPKD duyệt trước — chỉ báo TPKD CÙNG workspace với người tạo hợp đồng.
+    const { results: mgrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='manager' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
+    for (const m of mgrs || []) await notify(env, m.id, { type: 'approval', title: 'Chờ duyệt hợp đồng (V1): ' + title, body: (ctx.me.name || '') + ' đã lập hợp đồng ' + new Intl.NumberFormat('vi-VN').format(value) + 'đ.', link: '#/saleskit', level: 'danger' });
+    await audit(env, ctx.me.id, 'create', 'contract', id, { title, value });
+    return json({ id, status: 'pending_v1' });
+  }
+
+  /* Cùng khuôn mẫu như PATCH /api/quotes/:id — duyệt (`decision`) hoặc sửa & trình lại (`title`/
+   * `value` có mặt trong body cùng lúc). */
+  if ((p = match(ctx, 'PATCH', '/api/contracts/:id'))) {
+    need(ctx);
+    const b = await readBody(ctx.request);
+    const s = scope(ctx, 'owner_id');
+    const c = await env.DB.prepare('SELECT * FROM nv_contracts WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
+    if (!c) return json({ error: 'Không tìm thấy hợp đồng' }, 404);
+    const t = now();
+
+    if (b.decision != null) {
+      need(ctx, LEAD_ROLES);
+      const decision = ['approved', 'revise'].includes(b.decision) ? b.decision : null;
+      if (!decision) return json({ error: 'Kết quả duyệt không hợp lệ' }, 400);
+      const note = str(b.note, 300);
+      if (c.status === 'pending_v1') {
+        if (!['manager', 'admin'].includes(ctx.me.role)) return json({ error: 'Chỉ Trưởng phòng kinh doanh (hoặc Admin) mới duyệt được vòng 1' }, 403);
+        const nextStatus = decision === 'approved' ? 'pending_v2' : 'pending_v1';
+        await env.DB.prepare('UPDATE nv_contracts SET status=?,v1_approver_id=?,v1_decision=?,v1_note=?,v1_decided_at=?,updated_at=? WHERE id=?')
+          .bind(nextStatus, ctx.me.id, decision, note, t, t, p.id).run();
+        if (decision === 'approved') {
+          const { results: hrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='hr' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
+          for (const h of hrs || []) await notify(env, h.id, { type: 'approval', title: 'Chờ duyệt hợp đồng (V2): ' + c.title, body: (ctx.me.name || '') + ' đã duyệt vòng 1.', link: '#/saleskit', level: 'danger' });
+        } else {
+          await notify(env, c.owner_id, { type: 'approval', title: '✏️ TPKD yêu cầu điều chỉnh hợp đồng', body: c.title + (note ? ' – ' + note : ''), link: '#/saleskit', level: 'warn' });
+        }
+        await audit(env, ctx.me.id, 'approve_contract_v1', 'contract', p.id, { decision });
+        return json({ ok: true, status: nextStatus });
+      }
+      if (c.status === 'pending_v2') {
+        if (!['hr', 'admin'].includes(ctx.me.role)) return json({ error: 'Chỉ Hành chính nhân sự (hoặc Admin) mới duyệt được vòng 2' }, 403);
+        const nextStatus = decision === 'approved' ? 'approved' : 'pending_v2';
+        await env.DB.prepare('UPDATE nv_contracts SET status=?,v2_approver_id=?,v2_decision=?,v2_note=?,v2_decided_at=?,updated_at=? WHERE id=?')
+          .bind(nextStatus, ctx.me.id, decision, note, t, t, p.id).run();
+        await notify(env, c.owner_id, decision === 'approved'
+          ? { type: 'approval', title: '✅ Hợp đồng đã ký', body: c.title, link: '#/saleskit', level: 'info' }
+          : { type: 'approval', title: '✏️ HCNS yêu cầu điều chỉnh hợp đồng', body: c.title + (note ? ' – ' + note : ''), link: '#/saleskit', level: 'warn' });
+        await audit(env, ctx.me.id, 'approve_contract_v2', 'contract', p.id, { decision });
+        return json({ ok: true, status: nextStatus });
+      }
+      return json({ error: 'Hợp đồng không ở trạng thái chờ duyệt' }, 409);
+    }
+
+    if (b.title != null || b.value != null) {
+      const roundRevising = (c.status === 'pending_v1' && c.v1_decision === 'revise') || (c.status === 'pending_v2' && c.v2_decision === 'revise');
+      if (!roundRevising) return json({ error: 'Hợp đồng chưa bị yêu cầu điều chỉnh, không cần trình lại' }, 409);
+      const title = vText(b.title, 'Tên hợp đồng', { max: 160, required: true });
+      const value = vMoney(b.value, 'Giá trị hợp đồng');
+      const round = c.status === 'pending_v1' ? 1 : 2;
+      const sql = round === 1
+        ? 'UPDATE nv_contracts SET title=?,value=?,payment_schedule=?,penalty_terms=?,note=?,v1_approver_id=NULL,v1_decision=NULL,v1_note=NULL,v1_decided_at=NULL,updated_at=? WHERE id=?'
+        : 'UPDATE nv_contracts SET title=?,value=?,payment_schedule=?,penalty_terms=?,note=?,v2_approver_id=NULL,v2_decision=NULL,v2_note=NULL,v2_decided_at=NULL,updated_at=? WHERE id=?';
+      await env.DB.prepare(sql).bind(title, value, str(b.paymentSchedule, 500), str(b.penaltyTerms, 500), str(b.note, 500), t, p.id).run();
+      // V1 báo lại TPKD; V2 báo THẲNG HCNS — không quay lại TPKD.
+      const targetRole = round === 1 ? 'manager' : 'hr';
+      const { results: targets } = await env.DB.prepare('SELECT id FROM nv_users WHERE role=? AND active=1 AND is_demo=?').bind(targetRole, wsBucket(ctx.me)).all();
+      for (const u2 of targets || []) await notify(env, u2.id, { type: 'approval', title: 'Hợp đồng đã sửa, chờ duyệt lại: ' + title, body: (ctx.me.name || '') + ' đã cập nhật theo yêu cầu điều chỉnh.', link: '#/saleskit', level: 'danger' });
+      await audit(env, ctx.me.id, 'resubmit_contract', 'contract', p.id, { round });
+      return json({ ok: true });
+    }
+
+    return json({ error: 'Thiếu dữ liệu cập nhật' }, 400);
   }
 
   /* ================= Cơ hội đấu thầu (mock scan) ================= */
@@ -268,9 +465,14 @@ export async function dealRoutes(ctx) {
     need(ctx);
     const td = await env.DB.prepare('SELECT * FROM nv_tender_leads WHERE id=?').bind(p.id).first();
     if (!td) return json({ error: 'Không tìm thấy cơ hội thầu' }, 404);
+    // Mỗi cơ hội thầu chỉ được chuyển thành Deal ĐÚNG 1 LẦN — chuyển lại sẽ sinh thêm khách
+    // hàng/deal trùng và cộng khống định mức liên hệ mới (FR-M2 "chống nhân đôi định mức").
+    if (td.status === 'converted') {
+      return json({ error: `Cơ hội thầu "${td.title}" đã được chuyển thành deal trước đó.` }, 409);
+    }
     const t = now();
     const b = await readBody(ctx.request);
-    const ownerRow = isLead(ctx.me) && b.ownerId ? await sameWorkspaceUser(env, ctx, b.ownerId) : null;
+    const ownerRow = await resolveAssignableOwner(env, ctx, b.ownerId);
     const owner = ownerRow ? ownerRow.id : ctx.me.id;
     const cusId = uid('cs'), dealId = uid('dl');
     await env.DB.batch([

@@ -64,6 +64,7 @@ const TASK_GUIDE = {
   pricing: 'Tra bảng giá dưới đây và trả lời: giá niêm yết, chiết khấu tối đa được phép, giá sàn, hoa hồng sales ước tính, và gợi ý chốt deal mà không phải giảm giá. Tính toán chính xác theo số liệu bảng giá.',
   research: 'Phác hồ sơ nhanh về khách hàng: quy mô, hoạt động truyền thông, người ra quyết định, điểm đau, góc tiếp cận đề xuất, cảnh báo rủi ro. Nêu rõ phần nào là suy đoán.',
   coach: 'Phân tích tình huống deal và đưa hành động cụ thể trong 24h tới: kiểm tra 3 điều kiện chốt (đúng người quyết định – đủ ngân sách – có deadline) và cách xử lý phần còn thiếu.',
+  document: 'Đọc kỹ nội dung file đính kèm (báo giá/hợp đồng) và liệt kê thông tin chính theo gạch đầu dòng: bên liên quan/khách hàng, hạng mục & số lượng, đơn giá & tổng giá trị, chiết khấu/điều khoản thanh toán, thời hạn hiệu lực, điều khoản phạt (nếu có), và điểm cần lưu ý hoặc thiếu sót so với quy trình NetViet. Chỉ dùng thông tin có trong file, không suy đoán thêm.',
 };
 
 function buildSystem(kind, ctx) {
@@ -97,13 +98,14 @@ const shortErr = (t) => {
 async function kvGet(env, k) { try { return await env.SHARED_KV?.get(k); } catch (e) { return null; } }
 async function kvPut(env, k, v) { try { await env.SHARED_KV?.put(k, v, { expirationTtl: 21600 }); } catch (e) { /* noop */ } }
 
-async function geminiOnce(env, model, system, user, maxTokens) {
+async function geminiOnce(env, model, system, user, maxTokens, document) {
+  const parts = document ? [{ inline_data: { mime_type: document.mime, data: document.data } }, { text: user }] : [{ text: user }];
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       system_instruction: { parts: [{ text: system }] },
-      contents: [{ role: 'user', parts: [{ text: user }] }],
+      contents: [{ role: 'user', parts }],
       generationConfig: { temperature: 0.7, maxOutputTokens: maxTokens || 1400 },
     }),
     signal: AbortSignal.timeout(30000),
@@ -119,7 +121,10 @@ async function geminiOnce(env, model, system, user, maxTokens) {
   return text;
 }
 
-async function claudeOnce(env, model, system, user, maxTokens) {
+async function claudeOnce(env, model, system, user, maxTokens, document) {
+  const content = document
+    ? [{ type: document.mime.startsWith('image/') ? 'image' : 'document', source: { type: 'base64', media_type: document.mime, data: document.data } }, { type: 'text', text: user }]
+    : user;
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -132,7 +137,7 @@ async function claudeOnce(env, model, system, user, maxTokens) {
       max_tokens: maxTokens || 1400,
       temperature: 0.7,
       system,
-      messages: [{ role: 'user', content: user }],
+      messages: [{ role: 'user', content }],
     }),
     signal: AbortSignal.timeout(30000),
   });
@@ -148,7 +153,7 @@ async function claudeOnce(env, model, system, user, maxTokens) {
 }
 
 /** Gọi provider thật, tự thử lần lượt vài model nếu model mặc định không tồn tại. */
-async function callProvider(env, provider, system, user, maxTokens) {
+async function callProvider(env, provider, system, user, maxTokens, document) {
   const isG = provider === 'gemini';
   const envModel = isG ? env.GEMINI_MODEL : env.CLAUDE_MODEL;
   const cached = await kvGet(env, 'ai:model:' + provider);
@@ -157,7 +162,7 @@ async function callProvider(env, provider, system, user, maxTokens) {
   let last = null;
   for (const m of models) {
     try {
-      const text = await (isG ? geminiOnce(env, m, system, user, maxTokens) : claudeOnce(env, m, system, user, maxTokens));
+      const text = await (isG ? geminiOnce(env, m, system, user, maxTokens, document) : claudeOnce(env, m, system, user, maxTokens, document));
       if (m !== cached) await kvPut(env, 'ai:model:' + provider, m);
       return { text, model: m };
     } catch (e) {
@@ -185,7 +190,7 @@ function detect(kind, prompt) {
   return 'coach';
 }
 
-export async function askAI(env, { kind, prompt, context, provider }) {
+export async function askAI(env, { kind, prompt, context, provider, document }) {
   const k = detect(kind, prompt);
   const ctx = context || {};
   const p = (prompt || '').trim();
@@ -193,7 +198,7 @@ export async function askAI(env, { kind, prompt, context, provider }) {
   const providerLabel = (key) => (PROVIDERS.find((x) => x.key === key) || {}).label || key;
 
   if (sel.key === 'mock') {
-    const m = mockAnswer(k, p, ctx);
+    const m = mockAnswer(k, p, ctx, document);
     return { ...m, provider: 'mock', providerLabel: 'AI mẫu (offline)', model: 'rule-based', notice: sel.notice };
   }
 
@@ -205,14 +210,14 @@ export async function askAI(env, { kind, prompt, context, provider }) {
   ].filter(Boolean).join('\n');
 
   try {
-    const r = await callProvider(env, sel.key, system, userMsg, 1400);
+    const r = await callProvider(env, sel.key, system, userMsg, 1400, document);
     return {
       kind: k, text: r.text, mock: false,
       provider: sel.key, providerLabel: providerLabel(sel.key), model: r.model, notice: sel.notice,
     };
   } catch (e) {
     console.error('AI provider error', sel.key, e.message);
-    const m = mockAnswer(k, p, ctx);
+    const m = mockAnswer(k, p, ctx, document);
     return {
       kind: k, text: m.text, mock: true, provider: 'mock', providerLabel: 'AI mẫu (offline)', model: 'rule-based',
       fallbackFrom: sel.key,
@@ -263,8 +268,19 @@ function matchProduct(query, products) {
   return { product: scored[0].pr, candidates: scored.slice(0, 3).map((s) => s.pr) };
 }
 
-function mockAnswer(k, p, ctx) {
+function mockAnswer(k, p, ctx, document) {
   const products = ctx.products || [];
+
+  if (k === 'document') {
+    return {
+      kind: k, mock: true,
+      text: [
+        `_Chưa đọc được nội dung file${document ? ' (' + document.mime + ')' : ''} — AI mẫu (offline) không xử lý được file đính kèm._`,
+        '',
+        'Vào Secrets của app nhập `GEMINI_API_KEY` hoặc `ANTHROPIC_API_KEY` rồi tải lại tài liệu — AI thật sẽ đọc file và liệt kê: khách hàng, hạng mục & giá trị, điều khoản thanh toán, thời hạn hiệu lực, và các điểm cần lưu ý.',
+      ].join('\n'),
+    };
+  }
 
   if (k === 'pricing') {
     if (!products.length) return { kind: k, mock: true, text: 'Chưa có gói dịch vụ nào trong bảng giá. Vào Sales Kit để bổ sung.' };

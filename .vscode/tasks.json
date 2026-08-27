@@ -1,0 +1,33 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Chạy dev server (localhost:8787)",
+      "type": "shell",
+      "command": "npm run dev",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": [{ "regexp": "^\\s*(.*)$", "file": 1, "location": 1, "message": 1 }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*Starting local server.*",
+          "endsPattern": ".*Ready on http.*"
+        }
+      },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Cài dependencies",
+      "type": "shell",
+      "command": "npm install",
+      "problemMatcher": []
+    },
+    {
+      "label": "Reset dữ liệu D1 local",
+      "type": "shell",
+      "command": "npm run reset-db",
+      "problemMatcher": []
+    }
+  ]
+}

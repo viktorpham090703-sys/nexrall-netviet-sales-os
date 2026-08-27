@@ -5,9 +5,10 @@ import { crmRoutes } from './server/routes/crm.js';
 import { dealRoutes } from './server/routes/deals.js';
 import { workRoutes } from './server/routes/work.js';
 import { miscRoutes } from './server/routes/misc.js';
+import { documentRoutes } from './server/routes/documents.js';
 import { resolveActor } from './server/lib/auth.js';
 
-const ROUTERS = [coreRoutes, crmRoutes, dealRoutes, workRoutes, miscRoutes];
+const ROUTERS = [coreRoutes, crmRoutes, dealRoutes, workRoutes, miscRoutes, documentRoutes];
 export const SCHEMA_NS = 'nv_'; // bảng của app dùng tiền tố nv_ (tách khỏi schema cũ)
 
 export async function handle(request, env) {

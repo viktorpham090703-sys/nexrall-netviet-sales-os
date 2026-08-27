@@ -27,11 +27,24 @@ export function match(ctx, method, pattern) {
   return params;
 }
 
-export const isLead = (me) => !!me && (me.role === 'manager' || me.role === 'admin');
+/* Giám đốc (director) đã sáp nhập vào Admin/BGĐ — admin vừa duyệt vòng 1 khi cần vừa là người
+ * duyệt vòng 2 báo giá. hr (HCNS) vẫn là vai trò riêng, duyệt vòng 2 hợp đồng — xếp chung nhóm
+ * "lead" với manager/admin để hưởng cùng quyền xem đội/nav sẵn có; việc DUYỆT VÒNG NÀO thì gate
+ * riêng bằng role cụ thể ngay tại API duyệt, không trộn vào đây. */
+export const isLead = (me) => !!me && LEAD_ROLES.includes(me.role);
+export const LEAD_ROLES = ['manager', 'admin', 'hr'];
 
 export function need(ctx, roles) {
   if (!ctx.me) throw new HttpError(401, 'Chưa đăng nhập');
   if (roles && !roles.includes(ctx.me.role)) throw new HttpError(403, 'Bạn không có quyền thực hiện thao tác này');
+  return ctx.me;
+}
+
+/** Thêm/khoá tài khoản, đổi vai trò, đặt/reset mật khẩu nhân sự khác — không phải mọi role='admin'
+ * đều được làm việc này (xem cột can_manage_accounts trên nv_users, migration 32). */
+export function needAccountManage(ctx) {
+  need(ctx, ['admin']);
+  if (!ctx.me.can_manage_accounts) throw new HttpError(403, 'Tài khoản Admin của bạn không có quyền quản lý tài khoản nhân sự khác');
   return ctx.me;
 }
 
@@ -83,18 +96,45 @@ export async function sameWorkspaceUser(env, ctx, userId) {
   return row;
 }
 
+/** TP/Admin có thể gán bản ghi mới cho 1 người khác cùng workspace qua `requestedId`; nếu
+ * không phải lead hoặc không gửi id, trả về null (gọi nơi dùng sẽ tự fallback về ctx.me.id). */
+export async function resolveAssignableOwner(env, ctx, requestedId) {
+  return isLead(ctx.me) && requestedId ? await sameWorkspaceUser(env, ctx, requestedId) : null;
+}
+
+/** Lấy user theo id, coi như 404 nếu không tồn tại hoặc khác workspace với actor — dùng để
+ * chặn 1 Admin/TP thao tác lên tài khoản của workspace khác (demo vs. chính thức). */
+export async function requireSameWorkspaceUser(env, ctx, id) {
+  const row = await env.DB.prepare('SELECT * FROM nv_users WHERE id=?').bind(id).first();
+  if (!row || wsBucket(row) !== wsBucket(ctx.me)) return null;
+  return row;
+}
+
+/**
+ * Lệch múi giờ vận hành: NetViet chạy theo giờ VN (UTC+7). Mọi mốc "ngày/tháng" nghiệp vụ —
+ * định mức ngày (M1), kỳ báo cáo EOD & hạn 17h30 (M6), kỳ KPI/hoa hồng (M7) — phải cắt theo
+ * giờ VN chứ không theo UTC. Trước đây các hàm dưới đây dùng UTC nên "hôm nay" chỉ đổi lúc
+ * 07:00 giờ VN: báo cáo nộp lúc 6h sáng hôm sau vẫn bị ghi vào ngày hôm trước VÀ được tính
+ * ĐÚNG HẠN dù đã quá mốc 17h30 hơn 12 tiếng (mất hiệu lực điểm kỷ luật KL01).
+ */
+export const TZ_OFFSET = 7 * 3600;
+
+/** Ngày làm việc hiện tại theo giờ VN, dạng YYYY-MM-DD. `offset` tính bằng ngày. */
 export function todayKey(offset = 0) {
-  const d = new Date(Date.now() + offset * 86400000);
-  return d.toISOString().slice(0, 10);
+  return new Date((now() + TZ_OFFSET + offset * 86400) * 1000).toISOString().slice(0, 10);
 }
+/** Tham số ?period= trên query string, mặc định về kỳ tháng hiện tại nếu không truyền. */
+export const periodParam = (url) => url.searchParams.get('period') || monthKey();
+
+/** Kỳ tháng theo giờ VN, dạng YYYY-MM. */
 export function monthKey(ts) {
-  const d = ts ? new Date(ts * 1000) : new Date();
-  return d.toISOString().slice(0, 7);
+  const base = ts != null && ts !== '' ? Number(ts) : now();
+  return new Date((base + TZ_OFFSET) * 1000).toISOString().slice(0, 7);
 }
-export function startOfDay(ts = Date.now() / 1000) {
-  const d = new Date(ts * 1000);
-  d.setUTCHours(0, 0, 0, 0);
-  return Math.floor(d.getTime() / 1000);
+/** Mốc 00:00 giờ VN của ngày chứa `ts` — trả về epoch giây (UTC) để so với các cột thời gian. */
+export function startOfDay(ts = now()) {
+  const shifted = Math.floor(Number(ts)) + TZ_OFFSET;
+  return shifted - ((shifted % 86400) + 86400) % 86400 - TZ_OFFSET;
 }
 
 export async function audit(env, userId, action, entity, entityId, meta) {

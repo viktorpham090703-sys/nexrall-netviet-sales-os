@@ -5,9 +5,13 @@
  */
 import { get, post } from './api.js';
 import { esc, toast, modal } from './ui.js';
+import { icon } from './icons.js';
 
 const KEY = 'nv_ai_provider';
 let cache = null;
+
+/** Icon Lucide theo mã nhà cung cấp AI (nhãn/emoji vẫn lấy từ server để hiển thị dạng text trong <select>). */
+export const providerIconName = (key) => key === 'gemini' ? 'sparkles' : key === 'claude' ? 'bot' : key === 'mock' ? 'flaskConical' : 'bot';
 
 export const getProvider = () => localStorage.getItem(KEY) || 'auto';
 export const setProvider = (v) => v && v !== 'auto' ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY);
@@ -46,7 +50,7 @@ export function pickerHTML(d) {
     <span class="xs mut">Chạy bằng:</span>
     ${list.map((p) => `<button class="btn sm ${cur === p.key ? 'primary' : ''}" data-aiprov="${esc(p.key)}"
       title="${esc(p.configured ? (p.model || '') : 'Chưa nhập ' + (p.secret || 'API key'))}">
-      ${p.icon} ${esc(p.label.replace('Google ', '').replace('Anthropic ', ''))}${p.configured ? '' : ' 🔒'}</button>`).join('')}
+      ${icon(providerIconName(p.key), 14)} ${esc(p.label.replace('Google ', '').replace('Anthropic ', ''))}${p.configured ? '' : ' ' + icon('lock', 12)}</button>`).join('')}
     ${cur === 'auto' ? '<span class="xs mut">· đang ở chế độ tự động</span>' : `<button class="btn sm" data-aiprov="auto">Tự động</button>`}
   </div>`;
 }
@@ -67,10 +71,14 @@ export function bindPicker(el, after) {
   });
 }
 
+function refreshProviderCache(r) {
+  if (r.providers) cache = { providers: r.providers, active: cache?.active };
+}
+
 /** Gọi AI kèm nhà cung cấp đang chọn. */
 export async function askAI(body) {
   const r = await post('/ai/chat', { provider: getProvider(), ...body });
-  if (r.providers) cache = { providers: r.providers, active: cache?.active };
+  refreshProviderCache(r);
   return r;
 }
 
@@ -78,7 +86,7 @@ export async function askAI(body) {
 export function answerHTML(r) {
   return `<div class="ai-bubble">${esc(r.text)}</div>
     <div class="xs mut mt">Nguồn: ${esc((r.providerLabel || r.provider || 'AI') + (r.model && r.model !== 'rule-based' ? ' · ' + r.model : ''))}</div>
-    ${r.notice ? `<div class="xs mt" style="color:#F59E0B">⚠️ ${esc(r.notice)}</div>` : ''}`;
+    ${r.notice ? `<div class="xs mt" style="color:#F59E0B">${icon('triangleAlert', 12)} ${esc(r.notice)}</div>` : ''}`;
 }
 
 export async function testProvider(key) {
@@ -89,10 +97,10 @@ export async function testProvider(key) {
  * Modal AI dùng chung cho mọi tính năng cần AI:
  * cho phép chọn Gemini / Claude / AI mẫu trước khi tạo nội dung.
  */
-export async function aiModal({ title, kind, prompt, customerId, extra, promptLabel, submitText }) {
+export async function aiModal({ title, titleIcon, kind, prompt, customerId, extra, promptLabel, submitText }) {
   const d = await providers();
   modal({
-    title: title || '🤖 AI trợ lý',
+    title: title || 'AI trợ lý', titleIcon: titleIcon || 'bot',
     wide: true,
     fields: [
       { name: 'provider', label: 'Chọn AI xử lý', type: 'select', value: getProvider(), options: providerOptions(d) },
@@ -102,16 +110,16 @@ export async function aiModal({ title, kind, prompt, customerId, extra, promptLa
     html: '<div data-airesult class="mt"></div>',
     onSubmit: async (v, root) => {
       const out = root.querySelector('[data-airesult]');
-      out.innerHTML = '<div class="ai-bubble">⏳ AI đang xử lý, vui lòng chờ…</div>';
+      out.innerHTML = `<div class="ai-bubble">${icon('loaderCircle', 14, { class: 'spin' })} AI đang xử lý, vui lòng chờ…</div>`;
       setProvider(v.provider);
       try {
         const r = await post('/ai/chat', { kind, provider: v.provider, prompt: v.prompt, customerId, extra });
-        if (r.providers) cache = { providers: r.providers, active: cache?.active };
-        out.innerHTML = answerHTML(r) + '<button type="button" class="btn sm mt" data-copy>📋 Sao chép</button>';
+        refreshProviderCache(r);
+        out.innerHTML = answerHTML(r) + `<button type="button" class="btn sm mt" data-copy>${icon('copy', 14)} Sao chép</button>`;
         const c = out.querySelector('[data-copy]');
         c.onclick = () => { try { navigator.clipboard.writeText(r.text); toast('Đã sao chép', 'ok'); } catch (e) { toast('Không sao chép được', 'err'); } };
       } catch (e) {
-        out.innerHTML = `<div class="err-box">⚠️ ${esc(e.message)}</div>`;
+        out.innerHTML = `<div class="err-box">${icon('triangleAlert', 15)} ${esc(e.message)}</div>`;
       }
       return false;
     },

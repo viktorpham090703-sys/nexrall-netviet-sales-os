@@ -1,6 +1,8 @@
 import { get } from '../api.js';
 import { state, isLead, salesUsers } from '../state.js';
-import { esc, money, vnd, mount, chip, bar, ring, empty, fmtDate, stat, pct } from '../ui.js';
+import { esc, money, vnd, mount, chip, bar, ring, empty, fmtDate, stat, pct, bindTabs } from '../ui.js';
+import { PIP_STATUS, gradeTone } from '../const.js';
+import { icon } from '../icons.js';
 
 let target = '';
 let tab = 'score';
@@ -36,8 +38,8 @@ export async function render(el) {
         </div>
       </div>
       <div class="row mt"><div class="grow sm">Xếp loại: <b>${k.grade}</b> — ${esc(k.gradeNote)}</div>
-        ${k.total < 60 ? chip('Nguy cơ PIP', 'red') : k.total >= 90 ? chip('Top performer', 'green') : ''}</div>
-      ${d.managerNote ? `<div class="sm mut mt">📝 Nhận xét TP: ${esc(d.managerNote)}</div>` : ''}
+        ${k.grade === 'Kém' ? chip('Nguy cơ PIP', 'red') : k.grade === 'Xuất sắc' ? chip('Top performer', 'green') : ''}</div>
+      ${d.managerNote ? `<div class="sm mut mt">${icon('notepadText', 14)} Nhận xét TP: ${esc(d.managerNote)}</div>` : ''}
     </div>
 
     <div class="seg mt mb">
@@ -61,31 +63,30 @@ export async function render(el) {
       </div>` : ''}
 
     ${tab === 'comm' ? (d.commissions.length ? `<div class="card">${d.commissions.map(c => `<div class="item">
-        <div class="dot-i">💰</div><div class="grow"><div class="t">${esc(c.deal_title || 'Hợp đồng')}</div>
+        <div class="dot-i">${icon('banknote')}</div><div class="grow"><div class="t">${esc(c.deal_title || 'Hợp đồng')}</div>
         <div class="d">Doanh số ${money(c.base)} · tỷ lệ ${c.rate}% · ${fmtDate(c.created_at)}</div></div>
         <div class="right"><b>${vnd(c.amount)}</b><div>${chip(c.status === 'da_duyet' ? 'Đã duyệt' : 'Dự kiến', c.status === 'da_duyet' ? 'green' : 'amber')}</div></div>
       </div>`).join('')}
       <div class="row mt"><div class="grow b">Tổng hoa hồng kỳ</div><b style="color:#F59E0B">${vnd(d.commissions.reduce((s, c) => s + c.amount, 0))}</b></div>
-      </div>` : empty('💰', 'Chưa có hoa hồng trong kỳ này.')) : ''}
+      </div>` : empty('banknote', 'Chưa có hoa hồng trong kỳ này.')) : ''}
 
     ${tab === 'rank' ? `<div class="card">${d.leaderboard.map((r, i) => `<div class="item">
-        <div class="dot-i">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</div>
+        <div class="dot-i" style="color:${i === 0 ? '#F59E0B' : i === 1 ? '#9CA3AF' : i === 2 ? '#B45309' : 'inherit'}">${i <= 2 ? icon(i === 0 ? 'trophy' : 'medal') : (i + 1)}</div>
         <div class="grow"><div class="t">${esc(r.name)}${r.userId === state.me.id ? ' (bạn)' : ''}</div>
         <div class="d">DT ${money(r.revenue)} · ${r.wonN} deal · ${r.newContacts} liên hệ mới</div></div>
-        <div class="right"><b>${r.total}</b> ${chip(r.grade, r.total >= 80 ? 'green' : r.total >= 60 ? 'amber' : 'red')}</div>
-      </div>`).join('') || empty('🏆', 'Chưa có dữ liệu xếp hạng.')}</div>` : ''}
+        <div class="right"><b>${r.total}</b> ${chip(r.grade, gradeTone(r.total))}</div>
+      </div>`).join('') || empty('trophy', 'Chưa có dữ liệu xếp hạng.')}</div>` : ''}
 
     ${tab === 'pip' ? (d.pips.length ? `<div class="card">${d.pips.map(p => `<div class="item">
-        <div class="dot-i">📋</div><div class="grow"><div class="t">PIP ${esc(p.phase)} ngày${isLead() ? ' · ' + esc(p.user_name || '') : ''}</div>
+        <div class="dot-i">${icon('clipboardList')}</div><div class="grow"><div class="t">PIP ${esc(p.phase)} ngày${isLead() ? ' · ' + esc(p.user_name || '') : ''}</div>
         <div class="d">${esc(p.goal)}</div>
         <div class="d xs">${fmtDate(p.start_at)} → ${fmtDate(p.end_at)} · chỉ số: ${esc(p.metric || '—')}</div></div>
-        ${chip(p.status === 'dat' ? 'Đạt' : p.status === 'khong_dat' ? 'Không đạt' : p.status === 'huy' ? 'Huỷ' : 'Đang chạy',
-      p.status === 'dat' ? 'green' : p.status === 'khong_dat' ? 'red' : 'amber')}
-      </div>`).join('')}</div>` : empty('📋', 'Không có bản ghi PIP nào. Giữ phong độ nhé!')) : ''}`;
+        ${chip(PIP_STATUS[p.status]?.n, PIP_STATUS[p.status]?.c)}
+      </div>`).join('')}</div>` : empty('clipboardList', 'Không có bản ghi PIP nào. Giữ phong độ nhé!')) : ''}`;
   };
 
   const bind = () => {
-    el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(el); });
+    bindTabs(el, t => tab = t, render);
     el.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { target = b.dataset.t; render(el); });
   };
 

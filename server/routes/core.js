@@ -1,8 +1,8 @@
-import { json, match, need, uid, now, DAY, readBody, audit, notify, isLead, startOfDay, todayKey, monthKey, wsScope } from '../lib/util.js';
-import { getConfig, computeKpi } from '../lib/kpi.js';
+import { json, match, need, uid, now, DAY, readBody, audit, notify, isLead, startOfDay, todayKey, monthKey, wsScope, wsBucket, LEAD_ROLES } from '../lib/util.js';
+import { getConfig, computeKpi, slaLimit, businessDaysElapsed } from '../lib/kpi.js';
 import { createSession, destroySession, readToken, verifyPassword, hashPassword, DUMMY_PASSWORD_HASH } from '../lib/auth.js';
 import { appMode, DEMO_PASSWORD } from '../lib/db.js';
-import { vPassword } from '../lib/validate.js';
+import { vPassword, vText, vPhone, vDateStr, vEmail } from '../lib/validate.js';
 import { clientIp, loginRateLimited, recordLoginFailure, clearLoginAttempts } from '../lib/ratelimit.js';
 
 export async function coreRoutes(ctx) {
@@ -19,7 +19,7 @@ export async function coreRoutes(ctx) {
     // Đã đăng nhập: chỉ liệt kê nhân sự CÙNG workspace (demo/chính thức) với người xem — tài khoản
     // demo không được thấy tên nhân sự chính thức thật xuất hiện ở bất kỳ đâu trong app, và ngược lại.
     const showUsers = !!ctx.me || mode === 'demo';
-    const bucket = ctx.me ? (ctx.me.is_demo ? 1 : 0) : 1;
+    const bucket = ctx.me ? wsBucket(ctx.me) : 1;
     const { results: users } = showUsers
       ? (await env.DB.prepare(`SELECT ${cols} FROM nv_users WHERE active=1 AND is_demo=? ORDER BY CASE role WHEN "admin" THEN 1 WHEN "manager" THEN 2 ELSE 3 END, name`).bind(bucket).all())
       : { results: [] };
@@ -51,7 +51,7 @@ export async function coreRoutes(ctx) {
     // email + 5 lần nữa bằng mã nhân viên). Không tìm thấy tài khoản → khoá theo chính định danh
     // đã gõ (không có id nào khác để quy về).
     const u = await env.DB.prepare(
-      'SELECT id,name,email,role,title,created_at,password_hash,must_change_password FROM nv_users WHERE (id=? OR lower(email)=lower(?)) AND active=1')
+      'SELECT id,name,email,role,title,created_at,password_hash,must_change_password,can_manage_accounts FROM nv_users WHERE (id=? OR lower(email)=lower(?)) AND active=1')
       .bind(identifier, identifier).first();
     const rlKey = u ? u.id : identifier.toLowerCase();
 
@@ -73,6 +73,7 @@ export async function coreRoutes(ctx) {
     }
     await clearLoginAttempts(env, rlKey, ip);
     delete u.password_hash;
+    u.can_manage_accounts = !!u.can_manage_accounts;
     const s = await createSession(env, u.id, ctx.request.headers.get('user-agent'));
     await audit(env, u.id, 'login', 'user', u.id, { via: 'password' });
     return json({ me: u, token: s.token, expiresAt: s.expiresAt });
@@ -88,6 +89,42 @@ export async function coreRoutes(ctx) {
     // Huỷ mọi phiên khác — phòng trường hợp mật khẩu tạm đã bị lộ trước khi được đổi.
     await env.DB.prepare('DELETE FROM nv_sessions WHERE user_id=? AND token!=?').bind(ctx.me.id, ctx.me._token).run();
     await audit(env, ctx.me.id, 'password_changed', 'user', ctx.me.id, {});
+    return json({ ok: true });
+  }
+
+  /* --- Hồ sơ nhân sự tự khai: xem thông tin cá nhân của CHÍNH mình --- */
+  if ((p = match(ctx, 'GET', '/api/account/profile'))) {
+    need(ctx);
+    const u = await env.DB.prepare(
+      'SELECT id,name,email,role,title,phone,birth_date,id_number,id_expiry,address,school,emergency_contact FROM nv_users WHERE id=?')
+      .bind(ctx.me.id).first();
+    return json({ profile: u });
+  }
+
+  /* --- Hồ sơ nhân sự tự khai: cập nhật thông tin cá nhân của CHÍNH mình. Mọi trường đều tự sửa
+     được, TRỪ Mã nhân viên (id — khoá chính, không đổi được) và role/title (phân quyền, vẫn chỉ
+     Admin quản lý qua Quản trị). Email tự sửa được nhưng phải kiểm tra trùng vì đây cũng là định
+     danh đăng nhập. --- */
+  if ((p = match(ctx, 'PATCH', '/api/account/profile'))) {
+    need(ctx);
+    const b = await readBody(ctx.request);
+    const name = vText(b.name, 'Họ và tên', { max: 120, required: true });
+    const email = vEmail(b.email);
+    if (email) {
+      const dup = await env.DB.prepare('SELECT id FROM nv_users WHERE LOWER(email)=? AND id!=?').bind(email.toLowerCase(), ctx.me.id).first();
+      if (dup) return json({ error: `Email ${email} đã được dùng cho tài khoản khác.` }, 409);
+    }
+    const phone = vPhone(b.phone);
+    const birth_date = vDateStr(b.birth_date, 'Ngày sinh');
+    const id_number = vText(b.id_number, 'Số CCCD', { max: 30 });
+    const id_expiry = vDateStr(b.id_expiry, 'Hạn CCCD');
+    const address = vText(b.address, 'Địa chỉ liên hệ', { max: 300 });
+    const school = vText(b.school, 'Trường học', { max: 200 });
+    const emergency_contact = vText(b.emergency_contact, 'Liên hệ khẩn cấp', { max: 200 });
+    await env.DB.prepare(
+      `UPDATE nv_users SET name=?, email=?, phone=?, birth_date=?, id_number=?, id_expiry=?, address=?, school=?, emergency_contact=? WHERE id=?`)
+      .bind(name, email, phone, birth_date, id_number, id_expiry, address, school, emergency_contact, ctx.me.id).run();
+    await audit(env, ctx.me.id, 'profile_updated', 'user', ctx.me.id, {});
     return json({ ok: true });
   }
 
@@ -116,9 +153,8 @@ export async function coreRoutes(ctx) {
       FROM nv_activities WHERE user_id=? AND happened_at>=?`).bind(me.id, sod).first();
     const todayDC = Number(await D.prepare('SELECT COUNT(*) n FROM nv_daily_contacts WHERE user_id=? AND created_at>=?').bind(me.id, sod).first('n')) || 0;
     const { results: tasks } = await D.prepare("SELECT t.*, u.name assigner_name FROM nv_tasks t LEFT JOIN nv_users u ON u.id=t.assigner_id WHERE t.user_id=? AND t.status!='done' ORDER BY CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.due_at").bind(me.id).all();
-    const sla = cfg.sla_days || {};
     const { results: deals } = await D.prepare("SELECT d.*, c.name customer_name FROM nv_deals d LEFT JOIN nv_customers c ON c.id=d.customer_id WHERE d.owner_id=? AND d.status='open' ORDER BY d.last_activity_at ASC").bind(me.id).all();
-    const risky = deals.filter(d => (t - (d.last_activity_at || 0)) > (sla[d.stage] || 5) * DAY)
+    const risky = deals.filter(d => (t - (d.last_activity_at || 0)) > slaLimit(cfg, d.stage) * DAY)
       .map(d => ({ ...d, idleDays: Math.floor((t - (d.last_activity_at || 0)) / DAY) }));
     const reportToday = await D.prepare("SELECT id FROM nv_daily_reports WHERE user_id=? AND kind='day' AND period=?").bind(me.id, todayKey()).first();
     const { results: notis } = await D.prepare('SELECT * FROM nv_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 6').bind(me.id).all();
@@ -130,7 +166,7 @@ export async function coreRoutes(ctx) {
     if (risky.length) reminders.push({ level: 'danger', text: `${risky.length} deal vượt SLA – nguy cơ nguội, cần chăm ngay.`, link: '#/pipeline' });
     const pendingAssign = tasks.filter(x => x.assigner_id && !x.accepted_at);
     if (pendingAssign.length) reminders.push({ level: 'warn', text: `${pendingAssign.length} việc được giao chưa xác nhận nhận việc (SLA ${cfg.task_accept_sla_min || 120} phút).`, link: '#/tasks' });
-    if (!reportToday && new Date().getUTCHours() >= 8) reminders.push({ level: 'info', text: 'Chưa nộp báo cáo cuối ngày (EOD).', link: '#/reports' });
+    if (!reportToday && ((new Date().getUTCHours() + 7) % 24) >= 15) reminders.push({ level: 'info', text: 'Chưa nộp báo cáo cuối ngày (EOD).', link: '#/reports' });
     if (!reminders.length) reminders.push({ level: 'ok', text: 'Bạn đang bám sát kế hoạch. Giữ nhịp nhé!', link: '#/pipeline' });
 
     return json({
@@ -165,19 +201,15 @@ export async function coreRoutes(ctx) {
     return json({ ok: true });
   }
 
-  /* --- Chống chụp màn: ghi log --- */
-  if ((p = match(ctx, 'POST', '/api/audit/screen'))) {
-    const b = await readBody(ctx.request);
-    await audit(env, ctx.me?.id, 'screen_capture_suspect', 'screen', String(b.view || '').slice(0, 60), { reason: String(b.reason || '').slice(0, 80), ua: (ctx.request.headers.get('user-agent') || '').slice(0, 120) });
-    return json({ ok: true });
-  }
   if ((p = match(ctx, 'GET', '/api/audit'))) {
-    need(ctx, ['admin', 'manager']);
+    need(ctx, LEAD_ROLES);
     // Chỉ hiện log của nhân sự CÙNG workspace, cộng với log hệ thống không gắn user (vd cron_run) —
     // Admin demo không được thấy nhật ký hoạt động thật của nhân sự chính thức, và ngược lại.
+    // Trả kèm u.role để phân biệt ngay trong danh sách hành động của Admin khác/TP/Sales — phục vụ
+    // TGĐ (HAUNV) giám sát chéo cấp dưới, kể cả Admin khác, mà không cần tra thêm ở mục Người dùng.
     const ws = wsScope(ctx, 'a.user_id');
     const { results } = await env.DB.prepare(
-      `SELECT a.*, u.name user_name FROM nv_audit_logs a LEFT JOIN nv_users u ON u.id=a.user_id
+      `SELECT a.*, u.name user_name, u.role user_role FROM nv_audit_logs a LEFT JOIN nv_users u ON u.id=a.user_id
        WHERE a.user_id IS NULL OR (1=1${ws.sql})
        ORDER BY a.created_at DESC LIMIT 120`).bind(...ws.args).all();
     return json({ items: results || [] });
@@ -189,9 +221,19 @@ export async function coreRoutes(ctx) {
    */
   // Nền tảng có thể gọi bằng POST (scheduler) hoặc GET (kiểm thử thủ công) → chấp nhận cả hai.
   if ((p = match(ctx, 'GET', '/api/__cron') || match(ctx, 'POST', '/api/__cron'))) {
+    // Route này GHI THẬT vào nv_notifications + nv_audit_logs. Trước đây nó không kiểm tra gì cả,
+    // nên bất kỳ ai biết đường dẫn đều gọi được từ Internet để bơm thông báo/leo thang giả và
+    // làm phình CSDL. Nay chỉ chấp nhận: (a) bộ lập lịch của nền tảng — gửi kèm khoá bí mật
+    // CRON_SECRET ở header X-Cron-Key, hoặc (b) TP/Admin gọi tay để kiểm thử.
+    const cronKey = ctx.request.headers.get('x-cron-key') || '';
+    const secret = env.CRON_SECRET || '';
+    const bySecret = !!secret && cronKey === secret;
+    if (!bySecret && !isLead(ctx.me)) {
+      return json({ error: 'Không có quyền chạy tác vụ nền' }, 403);
+    }
     const t = now();
     const since = t - 12 * 3600;
-    const out = { sla: 0, escalation: 0, tasks: 0, reports: 0, tenders: 0, pip: 0 };
+    const out = { sla: 0, escalation: 0, tasks: 0, reports: 0, tenders: 0, pip: 0, quoteSla: 0, contractSla: 0 };
 
     // Đã nhắc gì trong 12h qua? (khoá = type|link|title để không gửi trùng)
     const { results: recent } = await env.DB.prepare('SELECT user_id,type,title FROM nv_notifications WHERE created_at >= ?').bind(since).all();
@@ -205,7 +247,6 @@ export async function coreRoutes(ctx) {
     };
 
     const cfg = await getConfig(env);
-    const sla = cfg.sla_days || {};
     const { results: managers } = await env.DB.prepare("SELECT id,is_demo FROM nv_users WHERE role IN ('manager','admin') AND active=1").all();
     // Leo thang chỉ tới quản lý CÙNG workspace (demo/chính thức) với chủ deal/PIP — deal mẫu demo
     // không được làm phiền quản lý thật, và ngược lại.
@@ -216,7 +257,7 @@ export async function coreRoutes(ctx) {
       "SELECT d.*, u.name owner_name, u.is_demo owner_is_demo FROM nv_deals d JOIN nv_users u ON u.id=d.owner_id WHERE d.status='open'").all();
     for (const d of deals || []) {
       const idle = (t - (d.last_activity_at || d.created_at)) / DAY;
-      const limit = sla[d.stage] || 5;
+      const limit = slaLimit(cfg, d.stage);
       if (idle > limit) {
         if (await push(d.owner_id, { type: 'sla', title: '🔴 Deal quá SLA: ' + d.title, body: `Đã ${Math.floor(idle)} ngày không có hoạt động (SLA ${limit} ngày).`, link: '#/pipeline', level: 'danger' })) out.sla++;
       }
@@ -271,6 +312,52 @@ export async function coreRoutes(ctx) {
       if (await push(r.user_id, { type: 'pip', title: '📌 Mốc PIP sắp đến hạn', body: r.goal, link: '#/kpi', level: 'danger' })) out.pip++;
       for (const m of managersFor(r.user_is_demo)) {
         if (await push(m.id, { type: 'pip', title: 'Mốc PIP của ' + r.user_name + ' sắp đến hạn', body: r.goal, link: '#/console', level: 'warn' })) out.pip++;
+      }
+    }
+
+    /* 6. Báo giá chờ duyệt quá 1 ngày làm việc — nhắc đúng người đang cần duyệt (TPKD ở V1,
+     * Admin/BGĐ ở V2 — vai trò Giám đốc đã sáp nhập vào Admin); quá 2 ngày làm việc thì leo thang
+     * thêm cho Admin cùng workspace (bỏ qua nếu vòng đó chính Admin đã là người duyệt, tránh báo
+     * trùng 2 lần cho cùng một người). */
+    const { results: pendingQuotes } = await env.DB.prepare(
+      "SELECT q.*, u.is_demo owner_is_demo FROM nv_quotes q JOIN nv_users u ON u.id=q.owner_id WHERE q.status IN ('pending_v1','pending_v2')").all();
+    for (const q of pendingQuotes || []) {
+      const since = q.status === 'pending_v2' ? (q.v1_decided_at || q.created_at) : q.created_at;
+      const elapsed = businessDaysElapsed(since, t);
+      if (elapsed < 1) continue;
+      const round = q.status === 'pending_v1' ? 'V1' : 'V2';
+      const approverRole = q.status === 'pending_v1' ? 'manager' : 'admin';
+      const { results: approvers } = await env.DB.prepare('SELECT id FROM nv_users WHERE role=? AND active=1 AND is_demo=?').bind(approverRole, q.owner_is_demo ? 1 : 0).all();
+      for (const a of approvers || []) {
+        if (await push(a.id, { type: 'approval', title: `🔴 Báo giá chờ duyệt ${round} quá hạn`, body: q.title + ` – đã ${elapsed} ngày làm việc chưa xử lý.`, link: '#/saleskit', level: 'danger' })) out.quoteSla++;
+      }
+      if (elapsed >= 2 && approverRole !== 'admin') {
+        const { results: admins } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(q.owner_is_demo ? 1 : 0).all();
+        for (const ad of admins || []) {
+          if (await push(ad.id, { type: 'approval', title: `⚠️ Leo thang duyệt báo giá ${round}: ` + q.title, body: `Chờ duyệt ${round} đã ${elapsed} ngày làm việc (gấp đôi ngưỡng).`, link: '#/console', level: 'danger' })) out.quoteSla++;
+        }
+      }
+    }
+
+    /* 7. Hợp đồng chờ duyệt quá 1 ngày làm việc — nhắc TPKD ở V1, HCNS ở V2; quá 2 ngày làm việc
+     * thì leo thang thêm cho Admin cùng workspace (cùng khuôn mẫu mục 6 ở trên cho báo giá). */
+    const { results: pendingContracts } = await env.DB.prepare(
+      "SELECT c.*, u.is_demo owner_is_demo FROM nv_contracts c JOIN nv_users u ON u.id=c.owner_id WHERE c.status IN ('pending_v1','pending_v2')").all();
+    for (const c of pendingContracts || []) {
+      const since = c.status === 'pending_v2' ? (c.v1_decided_at || c.created_at) : c.created_at;
+      const elapsed = businessDaysElapsed(since, t);
+      if (elapsed < 1) continue;
+      const round = c.status === 'pending_v1' ? 'V1' : 'V2';
+      const approverRole = c.status === 'pending_v1' ? 'manager' : 'hr';
+      const { results: approvers } = await env.DB.prepare('SELECT id FROM nv_users WHERE role=? AND active=1 AND is_demo=?').bind(approverRole, c.owner_is_demo ? 1 : 0).all();
+      for (const a of approvers || []) {
+        if (await push(a.id, { type: 'approval', title: `🔴 Hợp đồng chờ duyệt ${round} quá hạn`, body: c.title + ` – đã ${elapsed} ngày làm việc chưa xử lý.`, link: '#/saleskit', level: 'danger' })) out.contractSla++;
+      }
+      if (elapsed >= 2) {
+        const { results: admins } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(c.owner_is_demo ? 1 : 0).all();
+        for (const ad of admins || []) {
+          if (await push(ad.id, { type: 'approval', title: `⚠️ Leo thang duyệt hợp đồng ${round}: ` + c.title, body: `Chờ duyệt ${round} đã ${elapsed} ngày làm việc (gấp đôi ngưỡng).`, link: '#/console', level: 'danger' })) out.contractSla++;
+        }
       }
     }
 

@@ -1,12 +1,19 @@
-import { now, DAY, monthKey } from './util.js';
+import { now, DAY, monthKey, TZ_OFFSET } from './util.js';
 
 const DEFAULTS = {
   quota_daily_contacts: 8, quota_calls: 25, quota_meetings: 2, quota_followups: 10,
   target_revenue: 400000000, target_deals: 3, target_pipeline: 1200000000,
   discount_threshold: 15, discount_hard_cap: 30, report_deadline_hour: 17.5, task_accept_sla_min: 120,
   ramp_days: 30, pip_quota_ratio: 0.7, pip_window_days: 14,
-  sla_days: { lead_moi: 2, tiep_can: 3, nhu_cau: 5, bao_gia: 4, dam_phan: 5, chot: 3, trien_khai: 14 },
+  sla_days: {
+    lead_moi: 2, tiep_can: 3, du_dieu_kien: 3, chao_hang: 4,
+    cho_duyet_bg_v1: 1, cho_duyet_bg_v2: 1, da_gui_bao_gia: 3, dam_phan: 5,
+    cho_duyet_hd_v1: 1, cho_duyet_hd_v2: 1, hop_dong_da_ky: 3, dang_san_xuat: 14, ban_giao: 5, hoan_tat: 3,
+  },
 };
+
+/** Hạn SLA (ngày) của 1 giai đoạn pipeline theo cấu hình hiệu lực, mặc định 5 ngày nếu chưa cấu hình. */
+export const slaLimit = (cfg, stage) => (cfg.sla_days || {})[stage] || 5;
 
 /**
  * Cấu hình hiệu lực = mặc định < global < theo từng user.
@@ -46,9 +53,11 @@ export const gradeNote = (t) => t >= 90 ? 'Vượt chuẩn – đề xuất khen
 
 function workdaysSoFar(period) {
   const [y, m] = period.split('-').map(Number);
-  const today = new Date();
-  const isCurrent = today.toISOString().slice(0, 7) === period;
-  const lastDay = isCurrent ? today.getUTCDate() : new Date(Date.UTC(y, m, 0)).getUTCDate();
+  // Ngày "hôm nay" phải tính theo giờ VN — dùng UTC thì trong khoảng 00:00–07:00 giờ VN
+  // hệ thống vẫn coi là ngày hôm trước, làm lệch mẫu số ngày công của cả tháng.
+  const todayVN = new Date((now() + TZ_OFFSET) * 1000);
+  const isCurrent = todayVN.toISOString().slice(0, 7) === period;
+  const lastDay = isCurrent ? todayVN.getUTCDate() : new Date(Date.UTC(y, m, 0)).getUTCDate();
   let n = 0;
   for (let d = 1; d <= lastDay; d++) {
     const w = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
@@ -57,9 +66,29 @@ function workdaysSoFar(period) {
   return Math.max(1, n);
 }
 
+/** Số ngày làm việc (bỏ T7/CN) đã trôi qua giữa 2 mốc thời gian (giây) — dùng cho cảnh báo SLA
+ * duyệt báo giá/hợp đồng quá hạn ("quá 1 ngày làm việc"). Khác mục đích với workdaysSoFar() ở
+ * trên (đếm ngày công CẢ THÁNG cho mẫu số KPI) nên viết hàm riêng, không dùng chung. */
+export function businessDaysElapsed(fromTs, toTs) {
+  if (!fromTs || !toTs || toTs <= fromTs) return 0;
+  const d = new Date((fromTs + TZ_OFFSET) * 1000);
+  d.setUTCHours(0, 0, 0, 0);
+  const end = new Date((toTs + TZ_OFFSET) * 1000);
+  end.setUTCHours(0, 0, 0, 0);
+  let n = 0;
+  while (d.getTime() < end.getTime()) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const w = d.getUTCDay();
+    if (w !== 0 && w !== 6) n++;
+  }
+  return n;
+}
+
 export async function computeKpi(env, user, period = monthKey()) {
-  const from = Math.floor(Date.UTC(+period.slice(0, 4), +period.slice(5, 7) - 1, 1) / 1000);
-  const to = Math.floor(Date.UTC(+period.slice(0, 4), +period.slice(5, 7), 1) / 1000);
+  // Biên kỳ = 00:00 giờ VN ngày 1 của tháng (không phải 00:00 UTC) — nếu không, deal chốt lúc
+  // 0h–7h sáng ngày 1 sẽ bị tính nhầm sang tháng trước, kéo theo doanh thu & hoa hồng lệch kỳ.
+  const from = Math.floor(Date.UTC(+period.slice(0, 4), +period.slice(5, 7) - 1, 1) / 1000) - TZ_OFFSET;
+  const to = Math.floor(Date.UTC(+period.slice(0, 4), +period.slice(5, 7), 1) / 1000) - TZ_OFFSET;
   // Kỳ đã kết thúc → dùng cấu hình đang hiệu lực ở CUỐI kỳ đó, không dùng ngưỡng hôm nay
   const cfg = await getConfig(env, user.id, Math.min(now(), to - 1));
   const wd = workdaysSoFar(period);
@@ -76,9 +105,16 @@ export async function computeKpi(env, user, period = monthKey()) {
 
   const won = await D.prepare("SELECT COUNT(*) n, COALESCE(SUM(value),0) v FROM nv_deals WHERE owner_id=? AND status='won' AND won_at>=? AND won_at<?").bind(user.id, from, to).first();
   const pipe = await D.prepare("SELECT COALESCE(SUM(value*probability/100.0),0) v, COUNT(*) n FROM nv_deals WHERE owner_id=? AND status='open'").bind(user.id).first();
-  const acts = await D.prepare('SELECT COUNT(*) n, COUNT(DISTINCT date(happened_at,"unixepoch")) d FROM nv_activities WHERE user_id=? AND happened_at>=? AND happened_at<?').bind(user.id, from, to).first();
+  const acts = await D.prepare('SELECT COUNT(*) n, COUNT(DISTINCT date(happened_at + 25200,"unixepoch")) d FROM nv_activities WHERE user_id=? AND happened_at>=? AND happened_at<?').bind(user.id, from, to).first();
   const dc = await D.prepare('SELECT COUNT(*) n FROM nv_daily_contacts WHERE user_id=? AND created_at>=? AND created_at<?').bind(user.id, from, to).first();
-  const rp = await D.prepare("SELECT COUNT(*) n, COALESCE(SUM(late),0) l FROM nv_daily_reports WHERE user_id=? AND kind='day' AND period>=? AND period<=?").bind(user.id, period + '-01', period + '-31').first();
+  // Mỗi lần nộp/cập nhật báo cáo tạo 1 bản ghi MỚI (bất biến, giữ lịch sử — xem POST /api/reports)
+  // nên 1 ngày có thể có NHIỀU bản ghi; chỉ tính bản MỚI NHẤT của mỗi ngày (rn=1) để "số ngày đã
+  // nộp"/"số ngày trễ hạn" không bị đếm trùng khi nhân sự cập nhật lại báo cáo cùng ngày nhiều lần.
+  const rp = await D.prepare(
+    `SELECT COUNT(*) n, COALESCE(SUM(late),0) l FROM (
+       SELECT late, ROW_NUMBER() OVER (PARTITION BY period ORDER BY submitted_at DESC) rn
+       FROM nv_daily_reports WHERE user_id=? AND kind='day' AND period>=? AND period<=?
+     ) WHERE rn=1`).bind(user.id, period + '-01', period + '-31').first();
   const trn = await D.prepare("SELECT COUNT(*) n, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) c FROM nv_training_progress WHERE user_id=?").bind(user.id).first();
   const aiN = await D.prepare('SELECT COUNT(*) n FROM nv_ai_interactions WHERE user_id=? AND created_at>=?').bind(user.id, from).first();
   const openDeals = await D.prepare("SELECT stage, last_activity_at FROM nv_deals WHERE owner_id=? AND status='open'").bind(user.id).all();

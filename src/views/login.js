@@ -1,6 +1,7 @@
 import { state, login } from '../state.js';
 import { esc, initials, toast } from '../ui.js';
 import { ROLE_NAME } from '../const.js';
+import { icon } from '../icons.js';
 
 export async function render(el) {
   const isDemo = state.mode === 'demo';
@@ -15,7 +16,7 @@ export async function render(el) {
       <p class="login-sub">Quản trị kinh doanh — TVC/Video AI · Booking Gameshow · Xây kênh triệu view</p>
 
       ${notInitialized ? `
-        <div class="err-box mt">⚠️ Hệ thống chưa được khởi tạo, liên hệ quản trị viên.</div>
+        <div class="err-box mt">${icon('triangleAlert', 15)} Hệ thống chưa được khởi tạo, liên hệ quản trị viên.</div>
       ` : `
         <form data-login-form class="mt">
           <label class="f"><span>EMAIL / MÃ NHÂN VIÊN</span>
@@ -24,7 +25,7 @@ export async function render(el) {
           <label class="f"><span>MẬT KHẨU</span>
             <div class="pw-wrap">
               <input name="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
-              <button type="button" class="pw-toggle" data-toggle-pw aria-label="Hiện mật khẩu">👁️</button>
+              <button type="button" class="pw-toggle" data-toggle-pw aria-label="Hiện mật khẩu">${icon('eye', 16)}</button>
             </div>
           </label>
           <button type="submit" class="btn primary block login-submit mt">Đăng nhập</button>
@@ -51,7 +52,7 @@ export async function render(el) {
   toggle.onclick = () => {
     const show = pwInput.type === 'password';
     pwInput.type = show ? 'text' : 'password';
-    toggle.textContent = show ? '🙈' : '👁️';
+    toggle.innerHTML = show ? icon('eyeOff', 16) : icon('eye', 16);
     toggle.setAttribute('aria-label', show ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
   };
 
@@ -77,10 +78,10 @@ export async function render(el) {
 
   const demoWrap = el.querySelector('[data-demo-accts]');
   demoWrap.innerHTML = state.users.map(u => `<button type="button" class="acct sm" data-id="${esc(u.id)}">
-      <div class="avatar" style="background:${u.role === 'admin' ? 'linear-gradient(135deg,#1D4ED8,#4f46e5)' : u.role === 'manager' ? 'linear-gradient(135deg,#B91C1C,#F59E0B)' : 'linear-gradient(135deg,#3f3f46,#52525b)'}">${esc(initials(u.name))}</div>
+      <div class="avatar" style="background:${u.role === 'admin' ? 'linear-gradient(135deg,#2563EB,#3B82F6)' : u.role === 'manager' ? 'linear-gradient(135deg,#EF3B24,#F59E0B)' : u.role === 'hr' ? 'linear-gradient(135deg,#0D9488,#2DD4BF)' : 'linear-gradient(135deg,#6B7280,#9CA3AF)'}">${esc(initials(u.name))}</div>
       <div class="grow"><div class="b">${esc(u.name)}</div>
         <div class="sm mut">${esc(ROLE_NAME[u.role] || u.role)} · mã: ${esc(u.id)}</div></div>
-      <span class="chip ${u.role === 'sales' ? 'grey' : u.role === 'manager' ? 'amber' : 'blue'}">${esc(u.role)}</span>
+      <span class="chip ${u.role === 'sales' ? 'grey' : u.role === 'manager' ? 'amber' : u.role === 'hr' ? 'green' : 'blue'}">${esc(u.role)}</span>
     </button>`).join('');
 
   demoWrap.querySelectorAll('.acct').forEach(b => b.onclick = () => {

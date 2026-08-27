@@ -1,0 +1,29 @@
+# Copy file này thành .dev.vars rồi điền key thật để test AI ở local.
+# Không có key thì app vẫn chạy đầy đủ bằng AI mẫu (offline).
+# .dev.vars đã nằm trong .gitignore nên không sợ lộ key.
+
+# Chế độ vận hành — 'demo' | 'production'. KHÔNG khai báo (hoặc khai báo giá trị khác 'demo')
+# → mặc định 'production' (fail-safe: quên cấu hình thì KHÔNG tự nạp dữ liệu giả vào CSDL thật).
+# 'demo': seed() nạp đầy đủ 5 tài khoản demo + dữ liệu mẫu ở lần chạy đầu (CSDL nv_users rỗng).
+# 'production': KHÔNG seed dữ liệu giả; lần chạy đầu chỉ khởi tạo đúng 1 tài khoản admin từ
+# BOOTSTRAP_ADMIN_EMAIL/BOOTSTRAP_ADMIN_PASSWORD bên dưới (thiếu 1 trong 2 thì không tạo gì cả).
+APP_MODE=demo
+
+# Chỉ dùng khi APP_MODE=production và CSDL nv_users đang rỗng — khởi tạo tài khoản admin đầu
+# tiên (buộc đổi mật khẩu ở lần đăng nhập đầu). Không có tác dụng khi đã có tài khoản nào rồi.
+BOOTSTRAP_ADMIN_EMAIL=
+BOOTSTRAP_ADMIN_PASSWORD=
+
+GEMINI_API_KEY=
+ANTHROPIC_API_KEY=
+
+# Tuỳ chọn — bỏ trống thì dùng mặc định trong code
+GEMINI_MODEL=
+CLAUDE_MODEL=
+
+# Các tích hợp còn ở chế độ mock
+TENDER_API_KEY=
+PBX_API_KEY=
+
+# Khoá cho bộ lập lịch gọi /api/__cron (M10 Automation). Bắt buộc khi deploy thật.
+CRON_SECRET=doi-thanh-chuoi-ngau-nhien

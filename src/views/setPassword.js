@@ -1,6 +1,7 @@
 import { get, post } from '../api.js';
 import { esc, toast } from '../ui.js';
 import { state } from '../state.js';
+import { icon } from '../icons.js';
 
 /**
  * Đặt mật khẩu. Phục vụ 3 tình huống:
@@ -90,5 +91,5 @@ function bindForm(body, onSuccess) {
 }
 
 function errorBlock(msg) {
-  return `<p class="sm mut">⚠️ ${esc(msg)}</p><a class="btn block mt" href="#/login">Quay lại đăng nhập</a>`;
+  return `<p class="sm mut">${icon('triangleAlert', 14)} ${esc(msg)}</p><a class="btn block mt" href="#/login">Quay lại đăng nhập</a>`;
 }

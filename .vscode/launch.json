@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Mở app trong Chrome (localhost:8787)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:8787",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "Chạy dev server (localhost:8787)",
+      "sourceMapPathOverrides": {
+        "/src/*": "${workspaceFolder}/src/*",
+        "/styles/*": "${workspaceFolder}/styles/*"
+      }
+    }
+  ]
+}

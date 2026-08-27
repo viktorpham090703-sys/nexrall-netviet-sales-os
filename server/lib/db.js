@@ -1,5 +1,6 @@
 import { now, uid, DAY } from './util.js';
 import { hashPassword } from './auth.js';
+import { PROB, defaultCommissionRate } from '../routes/deals.js';
 
 let _migrated = false;
 
@@ -60,6 +61,123 @@ const MIGRATIONS = [
   // Đây là UPDATE dữ liệu 1 lần theo đúng danh sách mã nhân viên đã xác nhận, không đụng schema,
   // không đụng mật khẩu/role/quyền, không ảnh hưởng tài khoản demo hay tài khoản khác.
   `UPDATE nv_users SET is_demo=0 WHERE id IN ('HAUNV','HUONGNT','DUCHT','DUCNH','HUONGLT','PHUONGVH')`,
+  // 32: tách quyền QUẢN LÝ TÀI KHOẢN ra khỏi role='admin' — trước đây bất kỳ ai role='admin' cũng
+  // toàn quyền thêm/khoá/đổi mật khẩu tài khoản khác. Nay có Admin "điều hành" (toàn quyền) và
+  // Admin "nghiệp vụ" (không đụng được tài khoản nhân sự khác). Mặc định 1 để KHÔNG đổi hành vi
+  // của các admin đã có từ trước (demo, admin khởi tạo qua BOOTSTRAP_ADMIN_*...).
+  `ALTER TABLE nv_users ADD COLUMN can_manage_accounts INTEGER NOT NULL DEFAULT 1`,
+  // 33: gán role + quyền quản lý tài khoản theo đúng danh sách đã xác nhận cho 6 tài khoản nhân sự
+  // chính thức ở migration 31 — HAUNV là Admin toàn quyền (kể cả quản lý tài khoản); HUONGNT & DUCHT
+  // là Admin nhưng KHÔNG được thêm/khoá tài khoản hay đổi mật khẩu nhân sự khác; DUCNH là Trưởng
+  // phòng (manager); PHUONGVH & HUONGLT là nhân viên sales. Dùng UPSERT: nếu id đã tồn tại (đã được
+  // Admin tạo thẳng trong CSDL production như ghi chú ở migration 31) thì chỉ CẬP NHẬT role/quyền,
+  // không đụng tên/email/mật khẩu hiện có; nếu id CHƯA tồn tại (ví dụ CSDL local mới) thì tạo mới
+  // với tên tạm = mã nhân viên, chưa có mật khẩu — Admin toàn quyền tự cấp liên kết thiết lập
+  // mật khẩu (setup-link) như quy trình cấp tài khoản bình thường.
+  `INSERT INTO nv_users (id,name,role,active,created_at,is_demo,can_manage_accounts) VALUES ('HAUNV','HAUNV','admin',1,CAST(strftime('%s','now') AS INTEGER),0,1) ON CONFLICT(id) DO UPDATE SET role='admin', can_manage_accounts=1`,
+  `INSERT INTO nv_users (id,name,role,active,created_at,is_demo,can_manage_accounts) VALUES ('HUONGNT','HUONGNT','admin',1,CAST(strftime('%s','now') AS INTEGER),0,0) ON CONFLICT(id) DO UPDATE SET role='admin', can_manage_accounts=0`,
+  `INSERT INTO nv_users (id,name,role,active,created_at,is_demo,can_manage_accounts) VALUES ('DUCHT','DUCHT','admin',1,CAST(strftime('%s','now') AS INTEGER),0,0) ON CONFLICT(id) DO UPDATE SET role='admin', can_manage_accounts=0`,
+  `INSERT INTO nv_users (id,name,role,active,created_at,is_demo,can_manage_accounts) VALUES ('DUCNH','DUCNH','manager',1,CAST(strftime('%s','now') AS INTEGER),0,0) ON CONFLICT(id) DO UPDATE SET role='manager', can_manage_accounts=0`,
+  `INSERT INTO nv_users (id,name,role,active,created_at,is_demo,can_manage_accounts) VALUES ('PHUONGVH','PHUONGVH','sales',1,CAST(strftime('%s','now') AS INTEGER),0,0) ON CONFLICT(id) DO UPDATE SET role='sales', can_manage_accounts=0`,
+  `INSERT INTO nv_users (id,name,role,active,created_at,is_demo,can_manage_accounts) VALUES ('HUONGLT','HUONGLT','sales',1,CAST(strftime('%s','now') AS INTEGER),0,0) ON CONFLICT(id) DO UPDATE SET role='sales', can_manage_accounts=0`,
+  // 34: hồ sơ nhân sự tự khai — nhân viên tự xem/cập nhật thông tin cá nhân (ngày sinh, CCCD,
+  // địa chỉ, trường học, liên hệ khẩn cấp) từ trang "Hồ sơ nhân sự". Không đụng định danh đăng
+  // nhập (email) hay phân quyền (role/title) — các cột đó vẫn chỉ do Admin quản lý qua Quản trị.
+  `ALTER TABLE nv_users ADD COLUMN birth_date TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN id_number TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN id_expiry TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN address TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN school TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN emergency_contact TEXT`,
+  // 35: pipeline đổi từ 7 → 14 bước theo quy trình vận hành PKD (spec làm cơ sở CRM, mục 7) —
+  // chuyển stage của deal ĐANG CÓ trong CSDL sang key mới tương ứng gần nhất. 'lead_moi'/'tiep_can'/
+  // 'dam_phan' giữ nguyên key (không cần UPDATE). Không đụng deal đã ở stage cũ không còn tồn tại
+  // dưới dạng khác (không có) — mọi key cũ đều có đích đến rõ ràng.
+  `UPDATE nv_deals SET stage='du_dieu_kien' WHERE stage='nhu_cau'`,
+  `UPDATE nv_deals SET stage='chao_hang' WHERE stage='bao_gia'`,
+  `UPDATE nv_deals SET stage='hop_dong_da_ky' WHERE stage='chot'`,
+  `UPDATE nv_deals SET stage='hoan_tat' WHERE stage='trien_khai'`,
+  // 36: duyệt báo giá 2 vòng (TPKD→Giám đốc) — status cũ 'pending'/'rejected' không còn dùng, thay
+  // bằng 'pending_v1'/'pending_v2'; 'draft'/'approved' giữ nguyên. Thêm cột lưu quyết định từng
+  // vòng — v1 = TPKD, v2 = Giám đốc. decision chỉ 2 giá trị 'approved'|'revise', không có "từ chối".
+  `UPDATE nv_quotes SET status='pending_v1' WHERE status='pending'`,
+  `UPDATE nv_quotes SET status='draft' WHERE status='rejected'`,
+  `ALTER TABLE nv_quotes ADD COLUMN v1_approver_id TEXT`,
+  `ALTER TABLE nv_quotes ADD COLUMN v1_decision TEXT`,
+  `ALTER TABLE nv_quotes ADD COLUMN v1_note TEXT`,
+  `ALTER TABLE nv_quotes ADD COLUMN v1_decided_at INTEGER`,
+  `ALTER TABLE nv_quotes ADD COLUMN v2_approver_id TEXT`,
+  `ALTER TABLE nv_quotes ADD COLUMN v2_decision TEXT`,
+  `ALTER TABLE nv_quotes ADD COLUMN v2_note TEXT`,
+  `ALTER TABLE nv_quotes ADD COLUMN v2_decided_at INTEGER`,
+  // 37: thực thể Hợp đồng riêng (trước đây chỉ là trạng thái "Chốt hợp đồng" của deal, không có
+  // dữ liệu riêng) — duyệt 2 vòng TPKD→HCNS, cùng khuôn mẫu v1/v2 như báo giá. KHÔNG có ngưỡng
+  // bỏ qua duyệt như báo giá (không có trạng thái 'draft') — mọi hợp đồng đều qua đủ 2 vòng.
+  `CREATE TABLE IF NOT EXISTS nv_contracts (id TEXT PRIMARY KEY, deal_id TEXT, quote_id TEXT, owner_id TEXT NOT NULL, customer_id TEXT, title TEXT NOT NULL, value REAL DEFAULT 0, payment_schedule TEXT, penalty_terms TEXT, note TEXT, status TEXT NOT NULL DEFAULT 'pending_v1', v1_approver_id TEXT, v1_decision TEXT, v1_note TEXT, v1_decided_at INTEGER, v2_approver_id TEXT, v2_decision TEXT, v2_note TEXT, v2_decided_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  // 38: migration 37 ở trên từng bị lỗi cú pháp (chuỗi SQL nhiều dòng khiến D1 .exec() báo
+  // "incomplete input") trên CSDL local đã chạy trước khi sửa — thêm lại ĐÚNG câu lệnh đã sửa
+  // (dạng CREATE TABLE IF NOT EXISTS, 1 dòng) làm migration MỚI để CSDL đó bắt kịp. Vô hại với
+  // CSDL đã tạo đúng bảng từ migration 37 (IF NOT EXISTS tự bỏ qua).
+  `CREATE TABLE IF NOT EXISTS nv_contracts (id TEXT PRIMARY KEY, deal_id TEXT, quote_id TEXT, owner_id TEXT NOT NULL, customer_id TEXT, title TEXT NOT NULL, value REAL DEFAULT 0, payment_schedule TEXT, penalty_terms TEXT, note TEXT, status TEXT NOT NULL DEFAULT 'pending_v1', v1_approver_id TEXT, v1_decision TEXT, v1_note TEXT, v1_decided_at INTEGER, v2_approver_id TEXT, v2_decision TEXT, v2_note TEXT, v2_decided_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  // 39: thực thể Partner (đối tác hợp tác bán hàng) — không truy cập CRM trực tiếp, dữ liệu do
+  // sale phụ trách nhập hộ. Quan hệ partner→sale phụ trách CỐ ĐỊNH (1 partner luôn thuộc đúng 1
+  // sale), không phải trường tự do — thể hiện bằng cột sale_phu_trach_id bắt buộc (NOT NULL).
+  `CREATE TABLE IF NOT EXISTS nv_partners (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT, email TEXT, note TEXT, sale_phu_trach_id TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  // 40: nguồn khách hàng cố định (5 giá trị, mục 3 tài liệu) — cột MỚI, tách riêng khỏi `source`
+  // hiện có (source/channel là kênh tiếp cận marketing dùng cho Tìm khách & ghi liên hệ hằng
+  // ngày — khác khái niệm, không thay thế). partner_id chỉ có ý nghĩa khi nguồn là 1 trong 2
+  // dòng Partner. phương_án_hợp_tác gắn ở CẤP DEAL (không phải cấp partner/customer) vì 1
+  // partner có thể chạy cả PA1 lẫn PA2 cùng lúc tuỳ từng deal (đúng lý do nêu ở mục 3 tài liệu).
+  `ALTER TABLE nv_customers ADD COLUMN nguon_khach_hang TEXT`,
+  `ALTER TABLE nv_customers ADD COLUMN partner_id TEXT`,
+  `ALTER TABLE nv_deals ADD COLUMN phuong_an_hop_tac TEXT`,
+  // nguồn_thực_hiện: Sale hay Partner thực hiện các bước 1-3 của deal PA2 — chỉ để TÁCH BẠCH
+  // công sức phục vụ tính hoa hồng SAU NÀY (mục 5 tài liệu nêu rõ nằm ngoài phạm vi tài liệu
+  // này) — không có logic tính hoa hồng nào gắn theo cột này ở đợt này, chỉ lưu dữ liệu.
+  `ALTER TABLE nv_deals ADD COLUMN nguon_thuc_hien TEXT`,
+  // 41: sáp nhập vai trò Giám đốc (director) vào Admin/BGĐ theo yêu cầu mới — director không còn
+  // là vai trò riêng, Admin đảm nhận luôn việc duyệt vòng 2 báo giá. Chuyển mọi user cũ đang mang
+  // role='director' sang 'admin' để không bị mất khả năng đăng nhập/đúng quyền sau khi gỡ vai trò.
+  `UPDATE nv_users SET role='admin' WHERE role='director'`,
+  // 42: chỉ giữ ĐÚNG 1 tài khoản Admin/BGĐ (Nguyễn Văn A, id 'u_admin') — sáp nhập toàn bộ dữ liệu
+  // đang gắn với tài khoản Giám đốc cũ (Đặng Minh Giám, id 'u_dir', đã đổi role sang 'admin' ở
+  // migration 41) sang 'u_admin' rồi xoá hẳn tài khoản 'u_dir'. Rà theo TỪNG cột tham chiếu user_id
+  // có trong toàn bộ schema (không chỉ những bảng thực tế đang có dữ liệu) để migration này vẫn
+  // đúng nếu sau này dữ liệu demo phát sinh thêm ở các bảng khác.
+  `UPDATE nv_customers SET owner_id='u_admin' WHERE owner_id='u_dir'`,
+  `UPDATE nv_leads SET owner_id='u_admin' WHERE owner_id='u_dir'`,
+  `UPDATE nv_tender_leads SET assigned_to='u_admin' WHERE assigned_to='u_dir'`,
+  `UPDATE nv_deals SET owner_id='u_admin' WHERE owner_id='u_dir'`,
+  `UPDATE nv_quotes SET owner_id='u_admin' WHERE owner_id='u_dir'`,
+  `UPDATE nv_quotes SET approver_id='u_admin' WHERE approver_id='u_dir'`,
+  `UPDATE nv_quotes SET v1_approver_id='u_admin' WHERE v1_approver_id='u_dir'`,
+  `UPDATE nv_quotes SET v2_approver_id='u_admin' WHERE v2_approver_id='u_dir'`,
+  `UPDATE nv_contracts SET owner_id='u_admin' WHERE owner_id='u_dir'`,
+  `UPDATE nv_contracts SET v1_approver_id='u_admin' WHERE v1_approver_id='u_dir'`,
+  `UPDATE nv_contracts SET v2_approver_id='u_admin' WHERE v2_approver_id='u_dir'`,
+  `UPDATE nv_activities SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_daily_contacts SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_tasks SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_tasks SET assigner_id='u_admin' WHERE assigner_id='u_dir'`,
+  `UPDATE nv_daily_reports SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_kpi_config SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_kpi_scores SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_commissions SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_pip_records SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_pip_records SET manager_id='u_admin' WHERE manager_id='u_dir'`,
+  `UPDATE nv_training_progress SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_training_progress SET assigned_by='u_admin' WHERE assigned_by='u_dir'`,
+  `UPDATE nv_notifications SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_ai_interactions SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_audit_logs SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_password_setup_tokens SET user_id='u_admin' WHERE user_id='u_dir'`,
+  `UPDATE nv_password_setup_tokens SET created_by='u_admin' WHERE created_by='u_dir'`,
+  `UPDATE nv_partners SET sale_phu_trach_id='u_admin' WHERE sale_phu_trach_id='u_dir'`,
+  `DELETE FROM nv_sessions WHERE user_id='u_dir'`,
+  `DELETE FROM nv_users WHERE id='u_dir'`,
+  // Tài liệu đính kèm (báo giá/hợp đồng) upload ở Sales Kit — file gốc lưu trong R2 (binding DOCS,
+  // xem wrangler.toml), bảng này chỉ giữ metadata + kết quả AI đọc/phân tích file.
+  `CREATE TABLE IF NOT EXISTS nv_documents (id TEXT PRIMARY KEY, quote_id TEXT, contract_id TEXT, owner_id TEXT NOT NULL, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER DEFAULT 0, r2_key TEXT NOT NULL, ai_summary TEXT, ai_provider TEXT, ai_model TEXT, status TEXT DEFAULT 'done', created_at INTEGER NOT NULL)`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
@@ -70,6 +188,14 @@ export function appMode(env) {
 
 /** Mật khẩu demo dùng chung — chỉ có ý nghĩa ở chế độ demo, không tồn tại trong mã nguồn phía client. */
 export const DEMO_PASSWORD = 'Netviet@123';
+
+// 6 tài khoản nhân sự chính thức ở migration 31/33 (xem chú thích ở đó) — dùng lại ở đây để gán
+// mật khẩu khởi tạo, không lặp lại danh sách id bằng tay.
+const OFFICIAL_ACCOUNT_IDS = ['HAUNV', 'HUONGNT', 'DUCHT', 'DUCNH', 'PHUONGVH', 'HUONGLT'];
+/** Mật khẩu khởi tạo dùng CHUNG cho 6 tài khoản nhân sự chính thức trên — theo yêu cầu trực tiếp
+ * của người vận hành hệ thống (không phải lựa chọn mặc định của app). Trùng giá trị với
+ * DEMO_PASSWORD là chủ ý của người vận hành, không phải nhầm lẫn. */
+const OFFICIAL_ACCOUNT_INITIAL_PASSWORD = 'Netviet@123';
 
 export async function migrate(env) {
   if (_migrated) return;
@@ -89,10 +215,51 @@ export async function migrate(env) {
         .bind('schema_version', String(MIGRATIONS.length)).run();
     } catch (e) { console.error('meta', e.message); }
   }
+  // Gán mật khẩu khởi tạo cho 6 tài khoản nhân sự chính thức — chạy ở CẢ 2 chế độ (các tài khoản
+  // này là is_demo=0, độc lập với demo/production), TRƯỚC nhánh seed/bootstrap bên dưới.
+  await assignOfficialAccountInitialPasswords(env);
   // Migration LUÔN chạy ở cả 2 chế độ (production cần đủ bảng); chỉ việc NẠP DỮ LIỆU là tách theo môi trường —
   // demo nạp đầy đủ dữ liệu mẫu, production chỉ khởi tạo đúng 1 tài khoản admin từ secret, không có gì khác.
-  if (appMode(env) === 'demo') await seed(env);
-  else await bootstrapProductionAdmin(env);
+  if (appMode(env) === 'demo') {
+    // CSDL demo đã seed từ trước (seed() dưới đây tự thoát sớm nếu vậy) vẫn cần được BỔ SUNG 2 tài
+    // khoản demo mới (Giám đốc, HCNS) khi nâng cấp lên pipeline 2 vòng duyệt — không thể chờ seed()
+    // vì seed() không chạy lại một khi đã có 'u_admin'.
+    await ensureRoleExpansionDemoAccounts(env);
+    await seed(env);
+  } else await bootstrapProductionAdmin(env);
+}
+
+/** Gán OFFICIAL_ACCOUNT_INITIAL_PASSWORD cho 6 tài khoản nhân sự chính thức — CHỈ cho tài khoản
+ * nào đang chưa có mật khẩu (password_hash NULL/rỗng). Không bao giờ ghi đè mật khẩu đã có sẵn
+ * (kể cả trên CSDL production, nơi các tài khoản này có thể đã được cấp mật khẩu riêng từ trước) —
+ * tự tính lại từ CSDL mỗi lần nên an toàn khi chạy lặp lại (idempotent). Buộc đổi mật khẩu ở lần
+ * đăng nhập đầu (must_change_password=1) vì đây là mật khẩu DÙNG CHUNG, không nên giữ lâu dài. */
+async function assignOfficialAccountInitialPasswords(env) {
+  const placeholders = OFFICIAL_ACCOUNT_IDS.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM nv_users WHERE id IN (${placeholders}) AND (password_hash IS NULL OR password_hash = '')`)
+    .bind(...OFFICIAL_ACCOUNT_IDS).all();
+  if (!results || !results.length) return;
+  const hash = await hashPassword(OFFICIAL_ACCOUNT_INITIAL_PASSWORD);
+  for (const row of results) {
+    await env.DB.prepare('UPDATE nv_users SET password_hash=?, must_change_password=1 WHERE id=?').bind(hash, row.id).run();
+  }
+  console.log('[migrate] Đã gán mật khẩu khởi tạo dùng chung cho ' + results.length + ' tài khoản nhân sự chính thức: ' + results.map(r => r.id).join(', '));
+}
+
+/** Bổ sung tài khoản demo mới (HCNS) cho CSDL demo đã seed từ trước — seed() ở dưới tự thoát sớm
+ * khi đã có 'u_admin' nên không tự thêm được tài khoản này khi nâng cấp lên pipeline duyệt 2 vòng.
+ * Idempotent: dò đúng id 'u_hr', có rồi thì không làm gì. Chỉ chạy ở chế độ demo.
+ * Không còn tạo tài khoản 'u_dir' (Giám đốc) nữa — vai trò này đã sáp nhập vào Admin/BGĐ; CSDL nào
+ * đã có sẵn 'u_dir' từ trước thì migration 41 ở trên tự chuyển role sang 'admin'. */
+async function ensureRoleExpansionDemoAccounts(env) {
+  const exists = await env.DB.prepare("SELECT id FROM nv_users WHERE id='u_hr'").first();
+  if (exists) return;
+  const demoHash = await hashPassword(DEMO_PASSWORD);
+  const t = now();
+  await env.DB.prepare('INSERT INTO nv_users (id,name,email,role,title,phone,active,created_at,password_hash,is_demo) VALUES (?,?,?,?,?,?,1,?,?,1)')
+    .bind('u_hr', 'Ngô Thị Sự', 'demo-hr@example.com', 'hr', 'Chuyên viên Hành chính Nhân sự', '0901000007', t, demoHash).run();
+  console.log('[migrate] Đã tạo tài khoản demo mới: u_hr (hr).');
 }
 
 /** Production, lần chạy đầu (nv_users rỗng): khởi tạo ĐÚNG 1 tài khoản admin từ secret, không sinh
@@ -121,8 +288,13 @@ async function bootstrapProductionAdmin(env) {
 const pick = (arr, i) => arr[i % arr.length];
 
 async function seed(env) {
-  const c = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_users').first('n')) || 0;
-  if (c > 0) return;
+  // Không dùng COUNT(*) toàn bảng: 6 tài khoản nhân sự chính thức (HAUNV...) ở migration 33 luôn
+  // được tạo TRƯỚC bước này bất kể demo/production, nên nv_users không bao giờ rỗng khi tới đây —
+  // nếu gác theo tổng số dòng thì seed() vĩnh viễn không chạy, làm mất trắng dữ liệu mẫu demo (kể
+  // cả 5 tài khoản demo hiện trên màn đăng nhập). Dùng đúng id demo cố định ('u_admin') làm cờ
+  // idempotent cho RIÊNG bộ dữ liệu mẫu này, độc lập với các tài khoản chính thức is_demo=0.
+  const seeded = await env.DB.prepare("SELECT id FROM nv_users WHERE id='u_admin'").first();
+  if (seeded) return;
   const T = now();
   const S = [];
   const P = (sql, ...b) => S.push(env.DB.prepare(sql).bind(...b));
@@ -136,6 +308,9 @@ async function seed(env) {
     ['u_s1', 'Lê Văn C', 'demo-sales1@example.com', 'sales', 'Chuyên viên Kinh doanh', '0901000003'],
     ['u_s2', 'Phạm Thị D', 'demo-sales2@example.com', 'sales', 'Chuyên viên Kinh doanh', '0901000004'],
     ['u_s3', 'Hoàng Văn E', 'demo-sales3@example.com', 'sales', 'Chuyên viên Kinh doanh', '0901000005'],
+    // Vai trò duyệt vòng 2 theo quy trình vận hành PKD (báo giá V2 = Admin/BGĐ — vai trò Giám đốc
+    // đã sáp nhập vào Admin, dùng chung 'u_admin' ở trên; hợp đồng V2 = HCNS).
+    ['u_hr', 'Ngô Thị Sự', 'demo-hr@example.com', 'hr', 'Chuyên viên Hành chính Nhân sự', '0901000007'],
   ];
   // is_demo=1 để tách khỏi nhân sự thật (thêm sau qua Quản trị), không lộ lên màn đăng nhập công khai.
   const demoHash = await hashPassword(DEMO_PASSWORD);
@@ -147,7 +322,7 @@ async function seed(env) {
     ['quota_daily_contacts', '8'], ['quota_calls', '25'], ['quota_meetings', '2'],
     ['target_revenue', '400000000'], ['target_deals', '3'], ['target_pipeline', '1200000000'],
     ['discount_threshold', '15'], ['report_deadline_hour', '17.5'],
-    ['sla_days', '{"lead_moi":2,"tiep_can":3,"nhu_cau":5,"bao_gia":4,"dam_phan":5,"chot":3,"trien_khai":14}'],
+    ['sla_days', '{"lead_moi":2,"tiep_can":3,"du_dieu_kien":3,"chao_hang":4,"cho_duyet_bg_v1":1,"cho_duyet_bg_v2":1,"da_gui_bao_gia":3,"dam_phan":5,"cho_duyet_hd_v1":1,"cho_duyet_hd_v2":1,"hop_dong_da_ky":3,"dang_san_xuat":14,"ban_giao":5,"hoan_tat":3}'],
     ['task_accept_sla_min', '120'],
   ];
   cfg.forEach(([k, v]) => P('INSERT INTO nv_kpi_config (id,user_id,ckey,value,updated_at) VALUES (?,NULL,?,?,?)', uid('cfg'), k, v, T));
@@ -200,35 +375,34 @@ async function seed(env) {
       uid('ct'), c[0], pick(['Anh Khoa', 'Chị Vy'], i), 'Chuyên viên Truyền thông', '09' + (33000000 + i * 771), 'staff' + i + '@netviet-demo.vn', T - 40 * DAY);
   });
 
-  /* ---------- Deals: đủ 7 giai đoạn ---------- */
-  const stages = ['lead_moi', 'tiep_can', 'nhu_cau', 'bao_gia', 'dam_phan', 'chot', 'trien_khai'];
-  const prob = { lead_moi: 10, tiep_can: 20, nhu_cau: 40, bao_gia: 60, dam_phan: 75, chot: 100, trien_khai: 100 };
+  /* ---------- Deals: trải đủ 14 giai đoạn của pipeline mới để demo trực quan ---------- */
+  const prob = PROB;
   const dealSeeds = [
     ['dl_01', 'u_s1', 'cs_01', 'TVC AI ra mắt sữa hạt Việt Xanh', 'TVC/Video', 45000000, 'lead_moi', 1],
     ['dl_02', 'u_s1', 'cs_02', 'Chuỗi Video AI dự án An Phát Riverside', 'TVC/Video', 80000000, 'tiep_can', 6],
-    ['dl_03', 'u_s1', 'cs_03', 'Tài trợ mùa Gameshow "Tài chính thông minh"', 'Gameshow', 900000000, 'dam_phan', 2],
-    ['dl_04', 'u_s1', 'cs_04', 'Xây kênh TikTok Nâu Việt 3 tháng', 'Xây kênh', 120000000, 'bao_gia', 9],
-    ['dl_05', 'u_s2', 'cs_05', 'TVC 30s dòng thuốc bổ Minh Long', 'TVC/Video', 150000000, 'nhu_cau', 3],
-    ['dl_06', 'u_s2', 'cs_06', 'Booking talkshow giáo dục SmartKid', 'Gameshow', 250000000, 'bao_gia', 5],
-    ['dl_07', 'u_s2', 'cs_07', 'Video AI ra mắt mẫu xe mới', 'TVC/Video', 80000000, 'tiep_can', 11],
-    ['dl_08', 'u_s2', 'cs_08', 'Livestream bán hàng GreenMart Tết', 'Xây kênh', 60000000, 'chot', 4],
-    ['dl_09', 'u_s3', 'cs_09', 'Xây kênh YouTube VinaSoft 6 tháng', 'Xây kênh', 220000000, 'nhu_cau', 8],
-    ['dl_10', 'u_s3', 'cs_10', 'TVC AI + chuỗi viral Hạ Vy', 'TVC/Video', 125000000, 'dam_phan', 1],
-    ['dl_11', 'u_s3', 'cs_11', 'TVC AI 15s Nội thất Nhà Mới', 'TVC/Video', 45000000, 'lead_moi', 5],
-    ['dl_12', 'u_s3', 'cs_12', 'Tài trợ Gameshow nông nghiệp Đại Lộc', 'Gameshow', 250000000, 'trien_khai', 12],
-    ['dl_13', 'u_s1', 'cs_01', 'Gói xây kênh TikTok Việt Xanh', 'Xây kênh', 120000000, 'chot', 20],
-    ['dl_14', 'u_s2', 'cs_05', 'Chuỗi Video AI dược mỹ phẩm', 'TVC/Video', 80000000, 'trien_khai', 26],
+    ['dl_03', 'u_s1', 'cs_03', 'Tài trợ mùa Gameshow "Tài chính thông minh"', 'Gameshow', 900000000, 'du_dieu_kien', 2],
+    ['dl_04', 'u_s1', 'cs_04', 'Xây kênh TikTok Nâu Việt 3 tháng', 'Xây kênh', 120000000, 'chao_hang', 9],
+    ['dl_05', 'u_s2', 'cs_05', 'TVC 30s dòng thuốc bổ Minh Long', 'TVC/Video', 150000000, 'cho_duyet_bg_v1', 1],
+    ['dl_06', 'u_s2', 'cs_06', 'Booking talkshow giáo dục SmartKid', 'Gameshow', 250000000, 'cho_duyet_bg_v2', 1],
+    ['dl_07', 'u_s2', 'cs_07', 'Video AI ra mắt mẫu xe mới', 'TVC/Video', 80000000, 'da_gui_bao_gia', 3],
+    ['dl_08', 'u_s2', 'cs_08', 'Livestream bán hàng GreenMart Tết', 'Xây kênh', 60000000, 'dam_phan', 4],
+    ['dl_09', 'u_s3', 'cs_09', 'Xây kênh YouTube VinaSoft 6 tháng', 'Xây kênh', 220000000, 'cho_duyet_hd_v1', 1],
+    ['dl_10', 'u_s3', 'cs_10', 'TVC AI + chuỗi viral Hạ Vy', 'TVC/Video', 125000000, 'cho_duyet_hd_v2', 1],
+    ['dl_11', 'u_s3', 'cs_11', 'TVC AI 15s Nội thất Nhà Mới', 'TVC/Video', 45000000, 'hop_dong_da_ky', 5],
+    ['dl_12', 'u_s3', 'cs_12', 'Tài trợ Gameshow nông nghiệp Đại Lộc', 'Gameshow', 250000000, 'dang_san_xuat', 12],
+    ['dl_13', 'u_s1', 'cs_01', 'Gói xây kênh TikTok Việt Xanh', 'Xây kênh', 120000000, 'ban_giao', 20],
+    ['dl_14', 'u_s2', 'cs_05', 'Chuỗi Video AI dược mỹ phẩm', 'TVC/Video', 80000000, 'hoan_tat', 26],
   ];
   dealSeeds.forEach((d, i) => {
     const [id, owner, cus, title, service, value, stage, idleDays] = d;
-    const won = (stage === 'chot' || stage === 'trien_khai');
+    const won = ['hop_dong_da_ky', 'dang_san_xuat', 'ban_giao', 'hoan_tat'].includes(stage);
     P('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,won_at,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       id, owner, cus, title, service, value, stage, prob[stage], won ? 'won' : 'open',
       pick(['Review', 'MGM', 'Liên minh', 'CTV/KOL'], i),
       T + (10 + i * 2) * DAY, T - idleDays * DAY, T - idleDays * DAY, won ? T - idleDays * DAY : null,
       'Deal demo phục vụ trình diễn pipeline.', T - (40 - i) * DAY, T - idleDays * DAY);
     if (won) {
-      const rate = service === 'Gameshow' ? 4 : service === 'Xây kênh' ? 7 : 6;
+      const rate = defaultCommissionRate(service);
       P('INSERT INTO nv_commissions (id,user_id,deal_id,period,base,rate,amount,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
         uid('cm'), owner, id, new Date((T - idleDays * DAY) * 1000).toISOString().slice(0, 7),
         value, rate, Math.round(value * rate / 100), idleDays > 20 ? 'da_duyet' : 'du_kien', T - idleDays * DAY);

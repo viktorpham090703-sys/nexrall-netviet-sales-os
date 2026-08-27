@@ -1,4 +1,4 @@
-import { json, match, need, uid, now, readBody, isLead, audit, notify, num, str, wsScope, wsBucket, sameWorkspaceUser } from '../lib/util.js';
+import { json, match, need, needAccountManage, uid, now, readBody, isLead, audit, notify, num, str, wsScope, wsBucket, sameWorkspaceUser, requireSameWorkspaceUser, LEAD_ROLES } from '../lib/util.js';
 import { askAI, AI_TASKS, providerStatus, pickProvider, testProvider } from '../lib/ai.js';
 import { getConfig } from '../lib/kpi.js';
 import { vEmail, vPhone, vText, vPassword } from '../lib/validate.js';
@@ -49,7 +49,7 @@ export async function miscRoutes(ctx) {
   }
 
   if ((p = match(ctx, 'POST', '/api/trainings/assign'))) {
-    need(ctx, ['manager', 'admin']);
+    need(ctx, LEAD_ROLES);
     const b = await readBody(ctx.request);
     if (!b.userId || !b.trainingId) return json({ error: 'Thiếu nhân sự hoặc bài học' }, 400);
     const target = await sameWorkspaceUser(env, ctx, b.userId);
@@ -63,7 +63,7 @@ export async function miscRoutes(ctx) {
   }
 
   if ((p = match(ctx, 'POST', '/api/trainings/new'))) {
-    need(ctx, ['manager', 'admin']);
+    need(ctx, LEAD_ROLES);
     const b = await readBody(ctx.request);
     if (!b.title || !b.url) return json({ error: 'Thiếu tiêu đề hoặc link video' }, 400);
     const id = uid('tr');
@@ -85,7 +85,7 @@ export async function miscRoutes(ctx) {
   }
 
   if ((p = match(ctx, 'POST', '/api/ai/test'))) {
-    need(ctx, ['manager', 'admin']);
+    need(ctx, LEAD_ROLES);
     const b = await readBody(ctx.request);
     const r = await testProvider(env, String(b.provider || 'gemini'));
     await audit(env, ctx.me.id, 'ai_test', 'ai_provider', String(b.provider || ''), { ok: !!r.ok });
@@ -125,7 +125,7 @@ export async function miscRoutes(ctx) {
   }
 
   if ((p = match(ctx, 'POST', '/api/config'))) {
-    need(ctx, ['admin', 'manager']);
+    need(ctx, LEAD_ROLES);
     const b = await readBody(ctx.request);
     if (!b.key) return json({ error: 'Thiếu khoá cấu hình' }, 400);
     const userId = b.userId ? String(b.userId) : null;
@@ -145,7 +145,7 @@ export async function miscRoutes(ctx) {
   }
 
   if ((p = match(ctx, 'GET', '/api/users'))) {
-    need(ctx, ['admin', 'manager']);
+    need(ctx, LEAD_ROLES);
     // Chỉ liệt kê nhân sự CÙNG workspace (demo/chính thức) với người xem — tài khoản demo (mật
     // khẩu công khai trên màn đăng nhập) không được thấy tên/thông tin nhân sự chính thức thật.
     const { results } = await env.DB.prepare('SELECT id,name,email,role,title,phone,active,created_at FROM nv_users WHERE is_demo=? ORDER BY role, name').bind(wsBucket(ctx.me)).all();
@@ -153,7 +153,7 @@ export async function miscRoutes(ctx) {
   }
 
   if ((p = match(ctx, 'POST', '/api/users'))) {
-    need(ctx, ['admin']);
+    needAccountManage(ctx);
     const b = await readBody(ctx.request);
     const uName = vText(b.name, 'Tên nhân sự', { max: 80, required: true, min: 2 });
     const uEmail = vEmail(b.email);
@@ -169,38 +169,55 @@ export async function miscRoutes(ctx) {
     // Tài khoản mới kế thừa workspace của người tạo — Admin demo tạo thì vẫn là demo, Admin
     // chính thức tạo thì là chính thức. Không để lẫn 2 workspace ngay từ lúc tạo tài khoản.
     await env.DB.prepare('INSERT INTO nv_users (id,name,email,role,title,phone,active,created_at,password_hash,is_demo) VALUES (?,?,?,?,?,?,1,?,?,?)')
-      .bind(id, uName, uEmail, ['sales', 'manager', 'admin'].includes(b.role) ? b.role : 'sales', str(b.title, 80), vPhone(b.phone), now(), passwordHash, wsBucket(ctx.me)).run();
+      .bind(id, uName, uEmail, ['sales', 'manager', 'admin', 'hr'].includes(b.role) ? b.role : 'sales', str(b.title, 80), vPhone(b.phone), now(), passwordHash, wsBucket(ctx.me)).run();
     await audit(env, ctx.me.id, 'create', 'user', id, { name: b.name });
     return json({ id });
   }
 
+  /* --- Admin sửa được Trạng thái (khoá/mở), Đặt lại mật khẩu, và Vai trò/Chức danh (phân công
+     tổ chức) của nhân sự khác — nhưng KHÔNG được đụng tên/email/SĐT hay các trường hồ sơ cá nhân
+     (ngày sinh, CCCD, địa chỉ, trường học, liên hệ khẩn cấp) của người khác nữa. Hồ sơ cá nhân giờ
+     chỉ chính chủ tự sửa được qua trang "Hồ sơ nhân sự" (/api/account/profile) — kể cả Admin cũng
+     chỉ XEM được phần đó, không sửa được. --- */
   if ((p = match(ctx, 'PATCH', '/api/users/:id'))) {
-    need(ctx, ['admin']);
+    needAccountManage(ctx);
     const b = await readBody(ctx.request);
-    const u = await env.DB.prepare('SELECT * FROM nv_users WHERE id=?').bind(p.id).first();
     // Coi như "không tồn tại" nếu khác workspace — Admin demo không được sửa/khoá tài khoản
     // chính thức thật (và ngược lại), kể cả khi biết đúng mã nhân viên.
-    if (!u || wsBucket(u) !== wsBucket(ctx.me)) return json({ error: 'Không tìm thấy người dùng' }, 404);
-    // Mật khẩu: bỏ trống = giữ nguyên, có nhập mới = đặt lại (dùng cho cả cấp tài khoản chính thức lần đầu)
+    const u = await requireSameWorkspaceUser(env, ctx, p.id);
+    if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
+    // Mật khẩu: bỏ trống = giữ nguyên, có nhập mới = đặt lại
     const newPassword = vPassword(b.password, 'Mật khẩu', { required: false });
     const passwordHash = newPassword ? await hashPassword(newPassword) : u.password_hash;
-    await env.DB.prepare('UPDATE nv_users SET name=?,email=?,role=?,title=?,active=?,password_hash=? WHERE id=?')
-      .bind(b.name != null ? str(b.name, 80) : u.name, b.email != null ? str(b.email, 120) : u.email,
-        ['sales', 'manager', 'admin'].includes(b.role) ? b.role : u.role, b.title != null ? str(b.title, 80) : u.title,
-        b.active != null ? (b.active ? 1 : 0) : u.active, passwordHash, p.id).run();
+    const role = ['sales', 'manager', 'admin', 'hr'].includes(b.role) ? b.role : u.role;
+    const title = b.title != null ? str(b.title, 80) : u.title;
+    await env.DB.prepare('UPDATE nv_users SET active=?,password_hash=?,role=?,title=? WHERE id=?')
+      .bind(b.active != null ? (b.active ? 1 : 0) : u.active, passwordHash, role, title, p.id).run();
     await audit(env, ctx.me.id, 'update', 'user', p.id, { passwordReset: !!newPassword });
     return json({ ok: true });
+  }
+
+  /* --- Admin xem hồ sơ nhân sự (Thông tin cá nhân) của người khác — CHỈ ĐỌC, không có route
+     sửa nào cho Admin ở đây; sửa chỉ có ở /api/account/profile do chính chủ gọi. --- */
+  if ((p = match(ctx, 'GET', '/api/users/:id/profile'))) {
+    needAccountManage(ctx);
+    const u = await requireSameWorkspaceUser(env, ctx, p.id);
+    if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
+    const profile = await env.DB.prepare(
+      'SELECT id,name,email,role,title,phone,birth_date,id_number,id_expiry,address,school,emergency_contact FROM nv_users WHERE id=?')
+      .bind(p.id).first();
+    return json({ profile });
   }
 
   /* ---- Liên kết thiết lập mật khẩu (dùng 1 lần) ----
      Cùng cơ chế phục vụ cả cấp tài khoản lần đầu (purpose=invite) lẫn quên mật khẩu
      (purpose=reset). App chưa có hạ tầng gửi email nên Admin tự gửi link qua kênh nội bộ. */
   if ((p = match(ctx, 'POST', '/api/users/:id/setup-link'))) {
-    need(ctx, ['admin']);
-    const u = await env.DB.prepare('SELECT id, is_demo FROM nv_users WHERE id=?').bind(p.id).first();
+    needAccountManage(ctx);
     // QUAN TRỌNG: chặn Admin demo tạo link đặt mật khẩu cho tài khoản chính thức (và ngược lại) —
     // nếu không, Admin demo (mật khẩu công khai) có thể tự cấp mật khẩu mới để CHIẾM tài khoản thật.
-    if (!u || wsBucket(u) !== wsBucket(ctx.me)) return json({ error: 'Không tìm thấy người dùng' }, 404);
+    const u = await requireSameWorkspaceUser(env, ctx, p.id);
+    if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
     const b = await readBody(ctx.request);
     const purpose = b.purpose === 'reset' ? 'reset' : 'invite';
     const token = newSetupToken();
