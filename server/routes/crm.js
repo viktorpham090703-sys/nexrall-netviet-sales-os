@@ -1,6 +1,9 @@
-import { json, match, need, uid, now, DAY, readBody, scope, isLead, audit, num, str, startOfDay, wsScope, sameWorkspaceUser } from '../lib/util.js';
+import { json, match, need, uid, now, DAY, readBody, scope, audit, num, str, startOfDay, wsScope, resolveAssignableOwner, LEAD_ROLES } from '../lib/util.js';
 import { scoreLead } from '../lib/ai.js';
-import { vEmail, vPhone, vText, vPastTs, vCount } from '../lib/validate.js';
+import { vEmail, vPhone, vText, vPastTs, vCount, vEnum } from '../lib/validate.js';
+
+/* Nguồn khách hàng cố định (mục 3 quy trình vận hành PKD) — khớp src/const.js LEAD_SOURCES (client). */
+const LEAD_SOURCES = ['sale_tu_tim', 'cong_ty_cap', 'khach_cu_gioi_thieu', 'partner_pa1', 'partner_pa2'];
 
 /** Khoá chuẩn hoá để so trùng: bỏ dấu, bỏ ký tự thừa, thường hoá. Chuyển "đ"→"d" TRƯỚC khi
  * chuẩn hoá NFD vì "đ" (U+0111) không có phân rã NFD — để nguyên sẽ bị xoá luôn ở bước lọc
@@ -69,12 +72,16 @@ export async function crmRoutes(ctx) {
 
     // TP/Admin có thể gán khách cho nhân sự khác — nhưng chỉ nhân sự CÙNG workspace (demo/chính
     // thức) với người gán; id không hợp lệ/khác workspace thì coi như không gán, rơi về chính người tạo.
-    const owner = isLead(ctx.me) && b.ownerId ? await sameWorkspaceUser(env, ctx, b.ownerId) : null;
+    const owner = await resolveAssignableOwner(env, ctx, b.ownerId);
+    // partner_id chỉ có ý nghĩa khi nguồn là 1 trong 2 dòng Partner — không ép buộc, chỉ lưu nếu có.
+    const nguonKhachHang = vEnum(b.nguonKhachHang, LEAD_SOURCES, 'Nguồn khách hàng', null);
+    const partnerId = str(b.partnerId, 40) || null;
     const t = now(), id = uid('cs');
-    await env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,scale,phone,email,address,temp,source,note,services,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    await env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,scale,phone,email,address,temp,source,note,services,nguon_khach_hang,partner_id,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .bind(id, owner ? owner.id : ctx.me.id, name, str(b.industry, 60), str(b.scale, 40),
         phone, email, str(b.address, 200), ['hot', 'warm', 'cold'].includes(b.temp) ? b.temp : 'warm',
-        str(b.source, 60), str(b.note, 1000), JSON.stringify(Array.isArray(b.services) ? b.services.slice(0, 5) : []), t, t, t).run();
+        str(b.source, 60), str(b.note, 1000), JSON.stringify(Array.isArray(b.services) ? b.services.slice(0, 5) : []),
+        nguonKhachHang, partnerId, t, t, t).run();
     await audit(env, ctx.me.id, 'create', 'customer', id, { name: b.name });
     return json({ id });
   }
@@ -110,7 +117,7 @@ export async function crmRoutes(ctx) {
     const cur = await env.DB.prepare('SELECT * FROM nv_customers WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
     if (!cur) return json({ error: 'Không tìm thấy khách hàng' }, 404);
     const b = await readBody(ctx.request);
-    const newOwner = isLead(ctx.me) && b.ownerId ? await sameWorkspaceUser(env, ctx, b.ownerId) : null;
+    const newOwner = await resolveAssignableOwner(env, ctx, b.ownerId);
     const f = {
       name: b.name != null ? str(b.name, 160) : cur.name,
       industry: b.industry != null ? str(b.industry, 60) : cur.industry,
@@ -119,16 +126,18 @@ export async function crmRoutes(ctx) {
       temp: ['hot', 'warm', 'cold'].includes(b.temp) ? b.temp : cur.temp,
       note: b.note != null ? str(b.note, 1000) : cur.note,
       owner_id: newOwner ? newOwner.id : cur.owner_id,
+      nguon_khach_hang: b.nguonKhachHang !== undefined ? vEnum(b.nguonKhachHang, LEAD_SOURCES, 'Nguồn khách hàng', null) : cur.nguon_khach_hang,
+      partner_id: b.partnerId !== undefined ? (str(b.partnerId, 40) || null) : cur.partner_id,
     };
-    await env.DB.prepare('UPDATE nv_customers SET name=?,industry=?,phone=?,email=?,temp=?,note=?,owner_id=?,updated_at=? WHERE id=?')
-      .bind(f.name, f.industry, f.phone, f.email, f.temp, f.note, f.owner_id, now(), p.id).run();
+    await env.DB.prepare('UPDATE nv_customers SET name=?,industry=?,phone=?,email=?,temp=?,note=?,owner_id=?,nguon_khach_hang=?,partner_id=?,updated_at=? WHERE id=?')
+      .bind(f.name, f.industry, f.phone, f.email, f.temp, f.note, f.owner_id, f.nguon_khach_hang, f.partner_id, now(), p.id).run();
     await audit(env, ctx.me.id, 'update', 'customer', p.id, {});
     return json({ ok: true });
   }
 
   /** Xoá khách hàng — chỉ TP/Admin, chặn nếu còn deal gắn với khách. */
   if ((p = match(ctx, 'DELETE', '/api/customers/:id'))) {
-    need(ctx, ['manager', 'admin']);
+    need(ctx, LEAD_ROLES);
     const s = scope(ctx, 'owner_id');
     const cus = await env.DB.prepare('SELECT * FROM nv_customers WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
     if (!cus) return json({ error: 'Không tìm thấy khách hàng' }, 404);
@@ -224,6 +233,51 @@ export async function crmRoutes(ctx) {
     return json({ id });
   }
 
+  /* ================= Partner (đối tác hợp tác bán hàng) =================
+   * Không truy cập CRM trực tiếp — sale phụ trách nhập hộ dữ liệu. Quan hệ partner→sale phụ
+   * trách CỐ ĐỊNH, không phải trường tự do (mục 2 tài liệu). */
+  if ((p = match(ctx, 'GET', '/api/partners'))) {
+    need(ctx);
+    const s = scope(ctx, 'pt.sale_phu_trach_id');
+    const { results } = await env.DB.prepare(`SELECT pt.*, u.name sale_name FROM nv_partners pt
+      LEFT JOIN nv_users u ON u.id=pt.sale_phu_trach_id WHERE pt.active=1${s.sql} ORDER BY pt.name`).bind(...s.args).all();
+    return json({ items: results || [] });
+  }
+
+  if ((p = match(ctx, 'POST', '/api/partners'))) {
+    need(ctx);
+    const b = await readBody(ctx.request);
+    const name = vText(b.name, 'Tên partner', { max: 160, required: true, min: 2 });
+    const sale = await resolveAssignableOwner(env, ctx, b.saleId);
+    const id = uid('pn');
+    const t = now();
+    await env.DB.prepare('INSERT INTO nv_partners (id,name,phone,email,note,sale_phu_trach_id,active,created_at,updated_at) VALUES (?,?,?,?,?,?,1,?,?)')
+      .bind(id, name, vPhone(b.phone), vEmail(b.email), str(b.note, 500), sale ? sale.id : ctx.me.id, t, t).run();
+    await audit(env, ctx.me.id, 'create', 'partner', id, { name });
+    return json({ id });
+  }
+
+  if ((p = match(ctx, 'PATCH', '/api/partners/:id'))) {
+    need(ctx);
+    const s = scope(ctx, 'sale_phu_trach_id');
+    const cur = await env.DB.prepare('SELECT * FROM nv_partners WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
+    if (!cur) return json({ error: 'Không tìm thấy partner' }, 404);
+    const b = await readBody(ctx.request);
+    const newSale = await resolveAssignableOwner(env, ctx, b.saleId);
+    const f = {
+      name: b.name != null ? str(b.name, 160) : cur.name,
+      phone: b.phone != null ? vPhone(b.phone) : cur.phone,
+      email: b.email != null ? vEmail(b.email) : cur.email,
+      note: b.note != null ? str(b.note, 500) : cur.note,
+      sale_phu_trach_id: newSale ? newSale.id : cur.sale_phu_trach_id,
+      active: b.active != null ? (b.active ? 1 : 0) : cur.active,
+    };
+    await env.DB.prepare('UPDATE nv_partners SET name=?,phone=?,email=?,note=?,sale_phu_trach_id=?,active=?,updated_at=? WHERE id=?')
+      .bind(f.name, f.phone, f.email, f.note, f.sale_phu_trach_id, f.active, now(), p.id).run();
+    await audit(env, ctx.me.id, 'update', 'partner', p.id, {});
+    return json({ ok: true });
+  }
+
   /* ================= Lead ================= */
   if ((p = match(ctx, 'GET', '/api/leads'))) {
     need(ctx);
@@ -237,7 +291,7 @@ export async function crmRoutes(ctx) {
     const ldName = vText(b.name, 'Tên lead', { max: 80, required: true });
     const id = uid('ld');
     const score = scoreLead({ channel: b.channel, need: b.need, company: b.company });
-    const owner = isLead(ctx.me) && b.ownerId ? await sameWorkspaceUser(env, ctx, b.ownerId) : null;
+    const owner = await resolveAssignableOwner(env, ctx, b.ownerId);
     await env.DB.prepare('INSERT INTO nv_leads (id,owner_id,name,company,channel,phone,email,need,score,status,note,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
       .bind(id, owner ? owner.id : ctx.me.id, ldName, str(b.company, 120), str(b.channel, 40),
         vPhone(b.phone), vEmail(b.email), str(b.need, 300), score, 'new', 'AI chấm điểm tự động.', now()).run();
@@ -250,6 +304,15 @@ export async function crmRoutes(ctx) {
     const s = scope(ctx, 'owner_id');
     const lead = await env.DB.prepare('SELECT * FROM nv_leads WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
     if (!lead) return json({ error: 'Không tìm thấy lead' }, 404);
+    // Chống nhân đôi định mức (FR-M2 "Chính xác": chỉ tính lần tiếp cận ĐẦU TIÊN/khách).
+    // Không có chốt chặn này thì bấm "Tiếp cận" N lần trên cùng 1 lead sẽ sinh N khách hàng
+    // trùng + N liên hệ mới + N hoạt động, thổi phồng định mức ngày và điểm KPI "Chủ động".
+    if (lead.status === 'contacted') {
+      return json({
+        error: `Lead "${lead.name}" đã được tiếp cận trước đó — không tính thêm vào định mức khách mới.`,
+        alreadyApproached: true,
+      }, 409);
+    }
     const t = now();
     const cusId = uid('cs');
     await env.DB.batch([

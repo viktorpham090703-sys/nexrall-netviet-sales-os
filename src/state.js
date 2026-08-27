@@ -42,8 +42,16 @@ export async function logout() {
   await boot();
 }
 
-export const isLead = () => !!state.me && (state.me.role === 'manager' || state.me.role === 'admin');
+// Giám đốc (director) đã sáp nhập vào Admin/BGĐ. hr (HCNS) vẫn là vai trò duyệt vòng 2 hợp đồng
+// riêng — xếp chung nhóm "lead" với manager/admin để hưởng cùng quyền xem đội/nav (khớp
+// server/lib/util.js LEAD_ROLES).
+export const isLead = () => !!state.me && ['manager', 'admin', 'hr'].includes(state.me.role);
 export const isAdmin = () => state.me?.role === 'admin';
+// Không phải mọi Admin đều được thêm/khoá tài khoản hay đổi mật khẩu nhân sự khác — xem
+// can_manage_accounts (server/lib/db.js migration 32).
+export const canManageAccounts = () => isAdmin() && !!state.me?.can_manage_accounts;
 export const userName = (id) => (state.users.find(u => u.id === id) || {}).name || '—';
 export const salesUsers = () => state.users.filter(u => u.role === 'sales');
+/** Trường "Giao cho" trong modal tạo mới — chỉ hiện với TP/Admin, ẩn với sales. */
+export const assigneeField = (name) => ({ name, label: 'Giao cho', type: 'select', options: salesUsers().map(u => ({ v: u.id, n: u.name })) });
 export { sessionToken };

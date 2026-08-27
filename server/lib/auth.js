@@ -92,7 +92,7 @@ export async function resolveActor(request, env) {
   const token = readToken(request);
   if (!token) return null;
   const row = await env.DB.prepare(
-    `SELECT s.expires_at, u.id, u.name, u.email, u.role, u.title, u.created_at, u.is_demo, u.must_change_password
+    `SELECT s.expires_at, u.id, u.name, u.email, u.role, u.title, u.created_at, u.is_demo, u.must_change_password, u.can_manage_accounts
      FROM nv_sessions s JOIN nv_users u ON u.id = s.user_id
      WHERE s.token = ? AND u.active = 1`).bind(token).first();
   if (!row) return null;
@@ -108,7 +108,6 @@ export async function resolveActor(request, env) {
   // dữ liệu của TP/Admin trong scope(), không để dữ liệu mẫu demo lẫn vào dữ liệu thật và ngược lại.
   return {
     id: row.id, name: row.name, email: row.email, role: row.role, title: row.title, created_at: row.created_at,
-    is_demo: !!row.is_demo, must_change_password: !!row.must_change_password, _token: token,
+    is_demo: !!row.is_demo, must_change_password: !!row.must_change_password, can_manage_accounts: !!row.can_manage_accounts, _token: token,
   };
 }
-

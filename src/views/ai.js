@@ -1,6 +1,7 @@
 import { get } from '../api.js';
 import { esc, mount, empty, rel, toast } from '../ui.js';
 import { askAI, pickerHTML, bindPicker, providers } from '../aiPref.js';
+import { icon } from '../icons.js';
 
 const msgs = [];
 
@@ -15,7 +16,7 @@ export async function render(el) {
     const list = d.providers || [];
     const real = list.filter(p => p.key !== 'mock' && p.configured);
     return `<div class="page-head">
-    <div class="grow"><h2>🤖 AI Trợ lý bán hàng</h2>
+    <div class="grow"><h2>${icon('bot', 19, { style: 'margin-right:6px' })}AI Trợ lý bán hàng</h2>
       <p>Soạn email/proposal · xử lý từ chối · tra giá & hoa hồng · research khách hàng</p></div>
   </div>
 
@@ -28,8 +29,8 @@ export async function render(el) {
   <div class="seg mb">${d.tasks.map(t => `<button data-task="${esc(t.key)}">${esc(t.label)}</button>`).join('')}</div>
 
   <div class="card" data-chat style="min-height:180px">
-    ${msgs.length ? msgs.map(m => `<div class="ai-bubble ${m.me ? 'me' : ''} mb">${esc(m.text)}${m.src ? `<div class="xs mut mt">${esc(m.src)}</div>` : ''}</div>`).join('')
-      : empty('💬', 'Hỏi bất cứ điều gì: "báo giá TVC AI bao nhiêu?", "soạn email cho Sữa Việt Xanh", "khách chê giá cao thì trả lời sao?"')}
+    ${msgs.length ? msgs.map(m => `<div class="ai-bubble ${m.me ? 'me' : ''} mb">${m.err ? icon('triangleAlert', 14, { style: 'margin-right:4px' }) : ''}${esc(m.text)}${m.src ? `<div class="xs mut mt">${esc(m.src)}</div>` : ''}</div>`).join('')
+      : empty('messageSquare', 'Hỏi bất cứ điều gì: "báo giá TVC AI bao nhiêu?", "soạn email cho Sữa Việt Xanh", "khách chê giá cao thì trả lời sao?"')}
   </div>
 
   <div class="row mt" style="gap:8px">
@@ -39,9 +40,9 @@ export async function render(el) {
 
   <div class="sec-title">Lịch sử gần đây</div>
   <div class="card">${(d.history || []).length ? d.history.slice(0, 8).map(h => `<div class="item">
-      <div class="dot-i">🧠</div><div class="grow"><div class="t">${esc((h.prompt || h.kind).slice(0, 70))}</div>
+      <div class="dot-i">${icon('brain')}</div><div class="grow"><div class="t">${esc((h.prompt || h.kind).slice(0, 70))}</div>
       <div class="d xs">${esc(h.kind)} · ${rel(h.created_at)}</div></div>
-      <button class="btn sm" data-replay="${esc(h.id)}">Xem</button></div>`).join('') : empty('🗒️', 'Chưa có lượt hỏi nào.')}</div>`;
+      <button class="btn sm" data-replay="${esc(h.id)}">Xem</button></div>`).join('') : empty('notepadText', 'Chưa có lượt hỏi nào.')}</div>`;
   };
 
   const bind = (d) => {
@@ -55,7 +56,7 @@ export async function render(el) {
       btn.disabled = true;
       input.value = '';
       const chat = el.querySelector('[data-chat]');
-      if (chat) chat.insertAdjacentHTML('beforeend', '<div class="ai-bubble mb" data-typing>⏳ AI đang soạn nội dung…</div>');
+      if (chat) chat.insertAdjacentHTML('beforeend', `<div class="ai-bubble mb" data-typing>${icon('loaderCircle', 14, { class: 'spin' })} AI đang soạn nội dung…</div>`);
       try {
         const r = await askAI({ kind, prompt: text });
         msgs.push({
@@ -64,7 +65,7 @@ export async function render(el) {
         });
         if (r.notice) toast(r.notice, 'err');
       } catch (e) {
-        msgs.push({ me: false, text: '⚠️ ' + e.message });
+        msgs.push({ me: false, text: e.message, err: true });
       } finally {
         btn.disabled = false;
         render(el);

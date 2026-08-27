@@ -1,3 +1,6 @@
+import { icon } from './icons.js';
+import { initScrollFx } from './scrollFx.js';
+
 export const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
@@ -32,23 +35,26 @@ export const chip = (text, tone = '') => `<span class="chip ${tone}">${esc(text)
 export const bar = (val, max, cls = '') => `<div class="bar ${cls}"><i style="width:${Math.min(100, pct(val, max))}%"></i></div>`;
 
 export function stat(label, value, sub = '', tone = '') {
-  return `<div class="stat ${tone}"><div class="l">${esc(label)}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+  return `<div class="stat fade-in ${tone}"><div class="l">${esc(label)}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
 }
+
+// Số chạy đếm lên khi lướt vào tầm nhìn (dùng trong value truyền cho stat()).
+export const counterSpan = (n) => `<span data-counter="${Number(n) || 0}">0</span>`;
 
 export function ring(value, max, label) {
   const r = 32, c = 2 * Math.PI * r, p = Math.min(1, max ? value / max : 0);
   return `<div class="ring" style="width:84px;height:84px">
-    <svg width="84" height="84"><circle cx="42" cy="42" r="${r}" stroke="#3f3f46" stroke-width="8" fill="none"></circle>
+    <svg width="84" height="84"><circle cx="42" cy="42" r="${r}" stroke="#E5E7EB" stroke-width="8" fill="none"></circle>
     <circle cx="42" cy="42" r="${r}" stroke="url(#g1)" stroke-width="8" fill="none" stroke-linecap="round"
       stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p)}"></circle>
-    <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#B91C1C"/><stop offset="1" stop-color="#F59E0B"/></linearGradient></defs></svg>
+    <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#EF3B24"/><stop offset="1" stop-color="#F59E0B"/></linearGradient></defs></svg>
     <div class="lbl"><b>${value}${max === 100 ? '' : '/' + max}</b><small>${esc(label)}</small></div></div>`;
 }
 
-export const empty = (icon, text, action = '') =>
-  `<div class="empty"><span class="e">${icon}</span>${esc(text)}${action ? `<div class="mt">${action}</div>` : ''}</div>`;
+export const empty = (ic, text, action = '') =>
+  `<div class="empty"><span class="e">${icon(ic, 30)}</span>${esc(text)}${action ? `<div class="mt">${action}</div>` : ''}</div>`;
 export const loading = () => `<div class="boot" style="height:200px"><div class="spinner"></div></div>`;
-export const errBox = (msg) => `<div class="err-box">⚠️ ${esc(msg)} <button class="btn sm mt" data-retry>Thử lại</button></div>`;
+export const errBox = (msg) => `<div class="err-box">${icon('triangleAlert', 15)} ${esc(msg)} <button class="btn sm mt" data-retry>Thử lại</button></div>`;
 
 export function toast(msg, tone = '') {
   const root = document.getElementById('toast-root');
@@ -64,7 +70,7 @@ export function toast(msg, tone = '') {
  * Modal form. fields: [{name,label,type,value,options,placeholder,required,rows,hint}]
  * onSubmit(values) — trả về false để giữ modal mở.
  */
-export function modal({ title, fields = [], html = '', submitText = 'Lưu', onSubmit, wide }) {
+export function modal({ title, titleIcon = '', fields = [], html = '', submitText = 'Lưu', onSubmit, wide }) {
   const root = document.getElementById('modal-root');
   const body = fields.map(f => {
     const v = f.value == null ? '' : f.value;
@@ -83,7 +89,7 @@ export function modal({ title, fields = [], html = '', submitText = 'Lưu', onSu
   }).join('');
 
   root.innerHTML = `<div class="modal-scrim"><div class="modal" ${wide ? 'style="max-width:680px"' : ''}>
-    <h3>${esc(title)}</h3>
+    <h3>${titleIcon ? icon(titleIcon, 17, { style: 'margin-right:6px' }) : ''}${esc(title)}</h3>
     <form data-form>${body}${html}
       <div class="row mt" style="gap:8px">
         <button type="button" class="btn grow" data-cancel>Huỷ</button>
@@ -114,15 +120,35 @@ export function confirmDialog(title, text, onOk) {
   modal({ title, html: `<p class="sm mut">${esc(text)}</p>`, submitText: 'Xác nhận', onSubmit: onOk });
 }
 
+export const bindTabs = (el, setTab, render) =>
+  el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { setTab(b.dataset.tab); render(el); });
+
+// Đánh dấu lượt render hiện tại của 1 phần tử — cho phép mount() bỏ qua việc ghi
+// đè kết quả nếu người dùng đã điều hướng sang view khác trước khi loader() xong.
+const renderTokens = new WeakMap();
+export function beginRender(el) {
+  const token = (renderTokens.get(el) || 0) + 1;
+  renderTokens.set(el, token);
+  return token;
+}
+
 /** Bọc 1 view async: hiện loading → render → bắt lỗi + nút thử lại */
 export async function mount(el, loader, renderer, after) {
+  const token = beginRender(el);
   el.innerHTML = loading();
   try {
     const data = await loader();
+    if (renderTokens.get(el) !== token) return null;
     el.innerHTML = renderer(data);
+    // Vẽ lại xong luôn phải gắn lại quan sát scroll-fx cho các phần tử .fade-in/[data-counter] MỚI
+    // — innerHTML đã thay toàn bộ node cũ nên IntersectionObserver lần trước không còn theo dõi
+    // được nữa (nếu bỏ bước này thì mọi lần render lại trong cùng view, ví dụ sau khi tạo liên hệ
+    // mới ở Cockpit, các khối .fade-in sẽ kẹt ở opacity:0 vĩnh viễn vì chẳng ai kích hoạt .in-view).
+    initScrollFx(el);
     if (after) after(data);
     return data;
   } catch (e) {
+    if (renderTokens.get(el) !== token) return null;
     el.innerHTML = errBox(e.message || 'Không tải được dữ liệu');
     const b = el.querySelector('[data-retry]');
     if (b) b.onclick = () => mount(el, loader, renderer, after);

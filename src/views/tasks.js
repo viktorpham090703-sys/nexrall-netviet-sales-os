@@ -1,7 +1,8 @@
 import { get, post, patch } from '../api.js';
-import { isLead, salesUsers } from '../state.js';
+import { isLead, assigneeField } from '../state.js';
 import { esc, mount, chip, empty, fmtDT, toast, modal, stat } from '../ui.js';
 import { PRIO, TASK_STATUS } from '../const.js';
+import { icon } from '../icons.js';
 
 export async function render(el) {
   const load = async () => {
@@ -25,18 +26,18 @@ export async function render(el) {
       ${stat('Quá hạn / leo thang', late.length, late.length ? 'Cần xử lý' : 'Ổn định', late.length ? 'red' : '')}
     </div>
 
-    ${open.length ? `<div class="card">${open.map(t => row(t)).join('')}</div>` : empty('✅', 'Không còn việc tồn.')}
+    ${open.length ? `<div class="card">${open.map(t => row(t)).join('')}</div>` : empty('circleCheck', 'Không còn việc tồn.')}
 
     <div class="sec-title">Đã hoàn thành</div>
     <div class="card">${d.items.filter(x => x.status === 'done').slice(0, 10).map(t => `<div class="item">
-      <div class="dot-i">✅</div><div class="grow"><div class="t">${esc(t.title)}</div>
-      <div class="d">Hoàn thành ${fmtDT(t.done_at)}${isLead() ? ' · ' + esc(t.user_name || '') : ''}</div></div></div>`).join('') || empty('—', 'Chưa có việc hoàn thành.')}</div>`;
+      <div class="dot-i">${icon('circleCheck')}</div><div class="grow"><div class="t">${esc(t.title)}</div>
+      <div class="d">Hoàn thành ${fmtDT(t.done_at)}${isLead() ? ' · ' + esc(t.user_name || '') : ''}</div></div></div>`).join('') || empty('circleCheck', 'Chưa có việc hoàn thành.')}</div>`;
   };
 
   const row = (t) => `<div class="item">
-    <div class="dot-i">${t.assigner_id ? '📥' : '📝'}</div>
+    <div class="dot-i">${icon(t.assigner_id ? 'inbox' : 'notepadText')}</div>
     <div class="grow"><div class="t">${esc(t.title)}</div>
-      <div class="d">${t.deal_title ? '🎯 ' + esc(t.deal_title) + ' · ' : ''}Hạn ${fmtDT(t.due_at)}${t.assigner_name ? ' · giao bởi ' + esc(t.assigner_name) : ''}${isLead() && t.user_name ? ' → ' + esc(t.user_name) : ''}</div>
+      <div class="d">${t.deal_title ? icon('target', 12) + ' ' + esc(t.deal_title) + ' · ' : ''}Hạn ${fmtDT(t.due_at)}${t.assigner_name ? ' · giao bởi ' + esc(t.assigner_name) : ''}${isLead() && t.user_name ? ' → ' + esc(t.user_name) : ''}</div>
       ${t.detail ? `<div class="d xs">${esc(t.detail)}</div>` : ''}
       <div class="row wrap mt" style="gap:6px">
         ${chip(PRIO[t.priority]?.n || t.priority, PRIO[t.priority]?.c)}
@@ -64,7 +65,7 @@ export async function render(el) {
       fields: [
         { name: 'title', label: 'Tên công việc', required: true },
         { name: 'detail', label: 'Mô tả / yêu cầu', type: 'textarea', rows: 2 },
-        ...(isLead() ? [{ name: 'userId', label: 'Giao cho', type: 'select', options: salesUsers().map(u => ({ v: u.id, n: u.name })) }] : []),
+        ...(isLead() ? [assigneeField('userId')] : []),
         { name: 'dealId', label: 'Gắn với deal', type: 'select', options: [{ v: '', n: '— không —' }, ...d.deals.map(x => ({ v: x.id, n: x.title }))] },
         { name: 'priority', label: 'Ưu tiên', type: 'select', options: [{ v: 'high', n: 'Cao' }, { v: 'medium', n: 'Vừa' }, { v: 'low', n: 'Thấp' }] },
         { name: 'dueDate', label: 'Hạn hoàn thành', type: 'date' },

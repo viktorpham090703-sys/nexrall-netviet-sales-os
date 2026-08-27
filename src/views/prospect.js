@@ -1,8 +1,9 @@
 import { get, post, patch } from '../api.js';
 import { isLead } from '../state.js';
-import { esc, money, mount, chip, empty, fmtDate, toast, modal, stat } from '../ui.js';
+import { esc, money, mount, chip, empty, fmtDate, toast, modal, stat, bindTabs } from '../ui.js';
 import { CHANNELS } from '../const.js';
 import { aiModal } from '../aiPref.js';
+import { icon } from '../icons.js';
 
 let tab = 'tenders';
 
@@ -17,7 +18,7 @@ export async function render(el) {
     const soon = d.tenders.filter(x => x.status === 'new' && x.deadline_at < Date.now() / 1000 + 7 * 86400);
     return `<div class="page-head">
       <div class="grow"><h2>Tìm khách & Research thầu</h2><p>7 kênh nguồn khách · AI chấm điểm lead · quét cơ hội đấu thầu (mock)</p></div>
-      <button class="btn primary sm" data-scan>🔎 Quét thầu</button>
+      <button class="btn primary sm" data-scan>${icon('search', 14)} Quét thầu</button>
     </div>
 
     <div class="grid g3 mb">
@@ -33,7 +34,7 @@ export async function render(el) {
     </div>
 
     ${tab === 'tenders' ? (d.tenders.length ? `<div class="card">${d.tenders.map(t => `<div class="item">
-        <div class="dot-i">${t.score >= 75 ? '🔥' : '📑'}</div>
+        <div class="dot-i">${icon(t.score >= 75 ? 'flame' : 'files')}</div>
         <div class="grow"><div class="t">${esc(t.title)}</div>
           <div class="d">${esc(t.org || '')} · ${money(t.value)} · ${esc(t.service_tag || '')}</div>
           <div class="d xs">Hạn nộp ${fmtDate(t.deadline_at)} · nguồn ${esc(t.source || '')}</div>
@@ -44,32 +45,32 @@ export async function render(el) {
         <div class="right">
           ${t.status === 'new' ? `<button class="btn sm amber" data-conv="${esc(t.id)}">Chuyển deal</button>
             <div class="mt"><button class="btn sm" data-ign="${esc(t.id)}">Bỏ qua</button></div>` : ''}
-          <div class="mt"><button class="btn sm" data-aitender="${esc(t.id)}">🤖 Phân tích</button></div>
-        </div></div>`).join('')}</div>` : empty('📑', 'Chưa có cơ hội thầu nào.'))
+          <div class="mt"><button class="btn sm" data-aitender="${esc(t.id)}">${icon('bot', 14)} Phân tích</button></div>
+        </div></div>`).join('')}</div>` : empty('files', 'Chưa có cơ hội thầu nào.'))
       : tab === 'leads' ? `<button class="btn block mb" data-addlead>+ Thêm lead thủ công</button>
         ${d.leads.length ? `<div class="card">${d.leads.map(l => `<div class="item">
-          <div class="dot-i">${l.score >= 75 ? '⭐' : '👤'}</div>
+          <div class="dot-i">${icon(l.score >= 75 ? 'star' : 'user')}</div>
           <div class="grow"><div class="t">${esc(l.name)} — ${esc(l.company || '')}</div>
             <div class="d">${esc(l.channel || '')} · ${esc(l.phone || '')}</div>
             <div class="d xs">${esc(l.need || '')}</div></div>
           <div class="right">${chip('Score ' + l.score, l.score >= 75 ? 'green' : l.score >= 55 ? 'amber' : 'grey')}
             <div class="mt">${l.status === 'new' ? `<button class="btn sm amber" data-app="${esc(l.id)}">Tiếp cận</button>` : chip('Đã tiếp cận', 'blue')}</div>
-            <div class="mt"><button class="btn sm" data-ailead="${esc(l.id)}">🤖 Research</button></div></div>
-        </div>`).join('')}</div>` : empty('👤', 'Chưa có lead nào.')}`
+            <div class="mt"><button class="btn sm" data-ailead="${esc(l.id)}">${icon('bot', 14)} Research</button></div></div>
+        </div>`).join('')}</div>` : empty('user', 'Chưa có lead nào.')}`
       : `<div class="card">${CHANNELS.map(c => {
         const n = d.leads.filter(l => l.channel === c).length;
-        return `<div class="item"><div class="dot-i">📡</div>
+        return `<div class="item"><div class="dot-i">${icon('radio')}</div>
           <div class="grow"><div class="t">${esc(c)}</div><div class="d">${n} lead từ kênh này</div></div>
           <button class="btn sm" data-ch="${esc(c)}">+ Lead</button></div>`;
       }).join('')}</div>`}`;
   };
 
   const bind = (d) => {
-    el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(el); });
+    bindTabs(el, t => tab = t, render);
     el.querySelectorAll('[data-aitender]').forEach(b => b.onclick = () => {
       const t = d.tenders.find(x => x.id === b.dataset.aitender);
       aiModal({
-        title: '🤖 Phân tích cơ hội thầu',
+        title: 'Phân tích cơ hội thầu', titleIcon: 'bot',
         kind: 'coach',
         promptLabel: 'Yêu cầu phân tích',
         prompt: `Phân tích cơ hội thầu "${t.title}" của ${t.org || 'chủ đầu tư'}: nên theo hay bỏ, chiến lược làm hồ sơ và các bước trong 7 ngày tới.`,
@@ -79,7 +80,7 @@ export async function render(el) {
     el.querySelectorAll('[data-ailead]').forEach(b => b.onclick = () => {
       const l = d.leads.find(x => x.id === b.dataset.ailead);
       aiModal({
-        title: '🤖 Research khách hàng tiềm năng',
+        title: 'Research khách hàng tiềm năng', titleIcon: 'bot',
         kind: 'research',
         promptLabel: 'Thông tin lead',
         prompt: `${l.company || l.name}`,

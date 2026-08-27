@@ -106,6 +106,14 @@ export function vEnum(v, allowed, label, fallback) {
   return v;
 }
 
+/** Ngày dạng YYYY-MM-DD (input type=date phía client) — cho phép bỏ trống. */
+export function vDateStr(v, label = 'Ngày') {
+  if (v == null || String(v).trim() === '') return null;
+  const s = String(v).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) bad(`${label} không đúng định dạng`);
+  return s;
+}
+
 /** Kỳ báo cáo dạng YYYY-MM-DD hoặc YYYY-Www. */
 export function vPeriod(v, fallback) {
   if (v == null || v === '') return fallback;

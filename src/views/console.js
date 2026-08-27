@@ -1,7 +1,9 @@
 import { get, post, patch } from '../api.js';
 import { salesUsers } from '../state.js';
-import { esc, money, mount, chip, bar, empty, stat, toast, modal, fmtDate } from '../ui.js';
-import { stageName, STAGES } from '../const.js';
+import { esc, money, mount, chip, bar, empty, stat, toast, modal, fmtDate, bindTabs } from '../ui.js';
+import { stageName, STAGES, TERMINAL_STAGES, QUOTE_STATUS, CONTRACT_STATUS, roleLabel, PIP_STATUS, gradeTone } from '../const.js';
+import { icon } from '../icons.js';
+import { canDecide, canDecideContract, bindApprovalActions } from './saleskit.js';
 
 let tab = 'overview';
 
@@ -26,18 +28,25 @@ export async function render(el) {
     <button data-tab="funnel" class="${tab === 'funnel' ? 'on' : ''}">Phễu</button>
     <button data-tab="alerts" class="${tab === 'alerts' ? 'on' : ''}">Cảnh báo (${d.alerts.length})</button>
     <button data-tab="approve" class="${tab === 'approve' ? 'on' : ''}">Duyệt giá (${d.pendingQuotes.length})</button>
+    <button data-tab="approveContracts" class="${tab === 'approveContracts' ? 'on' : ''}">Duyệt hợp đồng (${d.pendingContracts.length})</button>
     <button data-tab="pip" class="${tab === 'pip' ? 'on' : ''}">KPI & PIP</button>
   </div>
 
-  ${tab === 'overview' ? `<div class="card">${d.members.map(m => `<div class="item">
-      <div class="dot-i">${m.kpi.total >= 80 ? '🌟' : m.kpi.total >= 60 ? '🙂' : '⚠️'}</div>
-      <div class="grow"><div class="t">${esc(m.name)} ${chip(m.kpi.grade, m.kpi.total >= 80 ? 'green' : m.kpi.total >= 60 ? 'amber' : 'red')}</div>
+  ${tab === 'overview' ? `<div class="card">${d.members.map(m => m.role === 'sales' ? `<div class="item">
+      <div class="dot-i">${icon(m.kpi.total >= 80 ? 'star' : m.kpi.total >= 60 ? 'smile' : 'triangleAlert')}</div>
+      <div class="grow"><div class="t">${esc(m.name)} ${chip(m.kpi.grade, gradeTone(m.kpi.total))}</div>
+        <div class="d xs mut">${esc(m.title || roleLabel(m))}</div>
         <div class="d">DT ${money(m.metrics.revenue)}/${money(m.metrics.target_revenue)} · pipeline ${money(m.pipeline)} · ${m.metrics.wonN} deal chốt</div>
         <div class="mt">${bar(m.metrics.newContacts, m.metrics.quota_contacts_month)}</div>
         <div class="d xs">Liên hệ mới ${m.metrics.newContacts}/${m.metrics.quota_contacts_month} · báo cáo ${m.metrics.reports} (${m.metrics.lateReports} trễ) · ${m.overdueDeals} deal quá SLA</div></div>
       <div class="right"><b>${m.kpi.total}</b>
         <div class="mt"><button class="btn sm" data-score="${esc(m.id)}">Chấm KPI</button></div>
         <div class="mt"><button class="btn sm" data-pip="${esc(m.id)}">PIP</button></div></div>
+    </div>` : `<div class="item">
+      <div class="dot-i">${icon(m.role === 'manager' ? 'award' : 'shieldCheck')}</div>
+      <div class="grow"><div class="t">${esc(m.name)} ${chip(roleLabel(m), 'blue')}</div>
+        <div class="d xs mut">${esc(m.title || roleLabel(m))}</div>
+        <div class="d">Hoạt động ${m.metrics.activities} lượt · ${m.metrics.activeDays}/${m.metrics.workdays} ngày có mặt · báo cáo ${m.metrics.reports} (${m.metrics.lateReports} trễ)</div></div>
     </div>`).join('')}</div>` : ''}
 
   ${tab === 'funnel' ? `<div class="card">${d.funnel.map(f => `<div class="mb">
@@ -46,32 +55,40 @@ export async function render(el) {
       <div class="xs mut">Tỷ lệ chuyển đổi Lead → Chốt: ${convRate(d.funnel)}%</div></div>` : ''}
 
   ${tab === 'alerts' ? (d.alerts.length ? `<div class="card">${d.alerts.map(a => `<div class="item">
-      <div class="dot-i">${a.level === 'danger' ? '🚨' : '⚠️'}</div>
+      <div class="dot-i">${icon(a.level === 'danger' ? 'siren' : 'triangleAlert')}</div>
       <div class="grow"><div class="t">${esc(a.text)}</div><div class="d xs">${esc(a.type)}</div></div>
-      <a class="btn sm" href="${esc(a.link)}">Xem</a></div>`).join('')}</div>` : empty('✅', 'Không có cảnh báo nào.')) : ''}
+      <a class="btn sm" href="${esc(a.link)}">Xem</a></div>`).join('')}</div>` : empty('circleCheck', 'Không có cảnh báo nào.')) : ''}
 
   ${tab === 'approve' ? (d.pendingQuotes.length ? `<div class="card">${d.pendingQuotes.map(q => `<div class="item">
-      <div class="dot-i">💸</div>
+      <div class="dot-i">${icon('banknote')}</div>
       <div class="grow"><div class="t">${esc(q.title)}</div>
         <div class="d">${esc(q.customer_name || '')} · ${esc(q.owner_name || '')} · CK ${q.discount_pct}%</div>
-        <div class="d xs">Gốc ${money(q.subtotal)} → ${money(q.total)}</div></div>
-      <div class="right"><button class="btn sm amber" data-ok="${esc(q.id)}">Duyệt</button>
-        <div class="mt"><button class="btn sm" data-no="${esc(q.id)}">Từ chối</button></div></div>
-    </div>`).join('')}</div>` : empty('✅', 'Không có báo giá chờ duyệt.')) : ''}
+        <div class="d xs">Gốc ${money(q.subtotal)} → ${money(q.total)} · ${esc(QUOTE_STATUS[q.status]?.n || q.status)}</div></div>
+      <div class="right">${canDecide(q) ? `<button class="btn sm amber" data-ok="${esc(q.id)}">Duyệt</button>
+        <div class="mt"><button class="btn sm" data-revise="${esc(q.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs mut">Chờ ${q.status === 'pending_v1' ? 'TPKD' : 'Giám đốc'} duyệt</span>`}</div>
+    </div>`).join('')}</div>` : empty('circleCheck', 'Không có báo giá chờ duyệt.')) : ''}
+
+  ${tab === 'approveContracts' ? (d.pendingContracts.length ? `<div class="card">${d.pendingContracts.map(c => `<div class="item">
+      <div class="dot-i">${icon('penLine')}</div>
+      <div class="grow"><div class="t">${esc(c.title)}</div>
+        <div class="d">${esc(c.owner_name || '')}</div>
+        <div class="d xs">Giá trị ${money(c.value)} · ${esc(CONTRACT_STATUS[c.status]?.n || c.status)}</div></div>
+      <div class="right">${canDecideContract(c) ? `<button class="btn sm amber" data-ok-contract="${esc(c.id)}">Duyệt</button>
+        <div class="mt"><button class="btn sm" data-revise-contract="${esc(c.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs mut">Chờ ${c.status === 'pending_v1' ? 'TPKD' : 'HCNS'} duyệt</span>`}</div>
+    </div>`).join('')}</div>` : empty('circleCheck', 'Không có hợp đồng chờ duyệt.')) : ''}
 
   ${tab === 'pip' ? `<button class="btn block mb" data-newpip>+ Mở PIP 30-60-90 ngày</button>
     ${d.pips.length ? `<div class="card">${d.pips.map(p => `<div class="item">
-      <div class="dot-i">📋</div>
+      <div class="dot-i">${icon('clipboardList')}</div>
       <div class="grow"><div class="t">${esc(p.user_name || '')} · PIP ${esc(p.phase)} ngày</div>
         <div class="d">${esc(p.goal)}</div>
         <div class="d xs">${fmtDate(p.start_at)} → ${fmtDate(p.end_at)} · ${esc(p.metric || '')}</div></div>
-      <div class="right">${chip(p.status === 'dat' ? 'Đạt' : p.status === 'khong_dat' ? 'Không đạt' : p.status === 'huy' ? 'Huỷ' : 'Đang chạy',
-        p.status === 'dat' ? 'green' : p.status === 'khong_dat' ? 'red' : 'amber')}
+      <div class="right">${chip(PIP_STATUS[p.status]?.n, PIP_STATUS[p.status]?.c)}
         <div class="mt"><button class="btn sm" data-pipst="${esc(p.id)}">Kết luận</button></div></div>
-    </div>`).join('')}</div>` : empty('📋', 'Chưa có PIP nào.')}` : ''}`;
+    </div>`).join('')}</div>` : empty('clipboardList', 'Chưa có PIP nào.')}` : ''}`;
 
   const bind = (d) => {
-    el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(el); });
+    bindTabs(el, t => tab = t, render);
     el.querySelectorAll('[data-score]').forEach(b => b.onclick = () => modal({
       title: 'Chấm KPI kỳ ' + d.period,
       fields: [{ name: 'note', label: 'Nhận xét của Trưởng phòng', type: 'textarea', rows: 3, required: true }],
@@ -87,21 +104,15 @@ export async function render(el) {
       { name: 'note', label: 'Ghi chú', type: 'textarea', rows: 2 }],
       submitText: 'Lưu', onSubmit: async (v) => { await patch('/pip/' + b.dataset.pipst, v); toast('Đã cập nhật PIP', 'ok'); render(el); },
     }));
-    el.querySelectorAll('[data-ok]').forEach(b => b.onclick = async () => {
-      try { await patch('/quotes/' + b.dataset.ok, { status: 'approved', note: 'Duyệt bởi TP' }); toast('Đã duyệt', 'ok'); render(el); } catch (e) { toast(e.message, 'err'); }
-    });
-    el.querySelectorAll('[data-no]').forEach(b => b.onclick = () => modal({
-      title: 'Từ chối báo giá', fields: [{ name: 'note', label: 'Lý do', required: true }], submitText: 'Từ chối',
-      onSubmit: async (v) => { await patch('/quotes/' + b.dataset.no, { status: 'rejected', note: v.note }); toast('Đã từ chối', 'ok'); render(el); },
-    }));
+    bindApprovalActions(el, 'quotes', () => render(el));
+    bindApprovalActions(el, 'contracts', () => render(el));
   };
 
   await mount(el, load, draw, bind);
 }
 
 const convRate = (f) => {
-  const first = f[0]?.count || 0;
-  const won = (f.find(x => x.stage === 'chot')?.count || 0) + (f.find(x => x.stage === 'trien_khai')?.count || 0);
+  const won = TERMINAL_STAGES.reduce((s, k) => s + (f.find(x => x.stage === k)?.count || 0), 0);
   const total = f.reduce((s, x) => s + x.count, 0) || 1;
   return Math.round(won / total * 100);
 };
