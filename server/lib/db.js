@@ -194,15 +194,27 @@ const MIGRATIONS = [
   `INSERT INTO nv_users (id,name,email,role,active,created_at,is_demo,can_manage_accounts) VALUES ('THUYDT','THUYDT','hr@netviet.com','hr',1,CAST(strftime('%s','now') AS INTEGER),0,0) ON CONFLICT(id) DO UPDATE SET role='hr', email='hr@netviet.com', can_manage_accounts=0`,
   // 45: sửa lỗi lẫn lộn demo/thật phát hiện sau khi lên production — người vận hành xác nhận lại
   // danh sách tài khoản THẬT chỉ còn đúng 6 mã: HAUNV, HUONGNT, THUYDT, DUCNH, PHUONGVH, HUONGLT
-  // (xem OFFICIAL_ACCOUNT_IDS đã sửa bên dưới, bỏ DUCHT). 6 tài khoản còn lại (DUCHT, Admin
-  // bootstrap ban đầu admin@netviet.vn, TPKD tpkd@netviet.vn, và 3 Sales trình diễn) bị xác nhận là
-  // DEMO nhưng trước đó lại nằm is_demo=0 chung workspace với 6 tài khoản thật, gây lẫn dữ liệu demo
-  // vào danh sách quản trị thật. Không đụng password_hash/role/can_manage_accounts — chỉ chuyển
-  // workspace (is_demo). Việc UPDATE thực tế đặt ở reclassifyConfirmedDemoAccounts() (định nghĩa
-  // cạnh assignThuydtPassword() bên dưới) thay vì viết thẳng SQL ở đây — hàm đó tự chạy lại và tự
-  // sửa mỗi lần migrate(), không phụ thuộc cơ chế theo dõi schema_version theo INDEX của mảng này
-  // (từng khiến 1 dòng UPDATE âm thầm không có hiệu lực ở lần đầu mà không ai biết cho tới khi kiểm
-  // tra lại danh sách người dùng).
+  // (xem OFFICIAL_ACCOUNT_IDS đã sửa bên dưới, bỏ DUCHT). Hai tài khoản sau bị xác nhận là DEMO
+  // (dùng để trình diễn nghiệp vụ, không phải nhân sự/Admin điều hành thật) nhưng trước đó lại nằm
+  // is_demo=0 chung workspace với 6 tài khoản thật ở trên, gây lẫn dữ liệu demo vào danh sách quản
+  // trị thật:
+  //  - DUCHT: từng bị coi là 1 trong 6 tài khoản chính thức ở migration 31/33 — nay xác nhận lại là demo.
+  //  - Tài khoản Admin bootstrap đầu tiên của production (tạo tự động lần chạy đầu qua secret
+  //    BOOTSTRAP_ADMIN_EMAIL/PASSWORD, xem bootstrapProductionAdmin() — id sinh ngẫu nhiên nên khớp
+  //    theo email cố định 'admin@netviet.vn' thay vì id): người vận hành xác nhận đây là tài khoản
+  //    demo dùng để trình diễn, không phải Admin điều hành thật (Admin điều hành thật là HAUNV).
+  // Không đụng password_hash/role/can_manage_accounts — chỉ chuyển workspace (is_demo) để 2 tài
+  // khoản này không còn thấy/lẫn với dữ liệu của 6 nhân sự thật, và ngược lại.
+  `UPDATE nv_users SET is_demo=1 WHERE id='DUCHT'`,
+  `UPDATE nv_users SET is_demo=1 WHERE email='admin@netviet.vn'`,
+  // 46: người vận hành xác nhận thêm 4 tài khoản NỮA cũng là demo (TPKD tpkd@netviet.vn, 3 Sales
+  // trình diễn tuan.le/anh.pham/nam.vo@netviet.vn) — vẫn is_demo=0 chung workspace với 6 tài khoản
+  // thật, y hệt tình huống migration 45 vừa sửa. Việc UPDATE thực tế đặt ở
+  // reclassifyConfirmedDemoAccounts() (định nghĩa cạnh assignThuydtPassword() bên dưới) thay vì viết
+  // thẳng SQL ở đây — hàm đó tự chạy lại và tự sửa mỗi lần migrate(), không phụ thuộc cơ chế theo
+  // dõi schema_version theo INDEX của mảng này (từng khiến 1 dòng UPDATE âm thầm không có hiệu lực
+  // ở lần đầu mà không ai biết cho tới khi kiểm tra lại danh sách người dùng, xem migration 45).
+  // Hàm đó cũng khớp lại DUCHT/admin@netviet.vn ở trên — vô hại vì đã is_demo=1 sẵn (no-op).
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
