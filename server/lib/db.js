@@ -186,6 +186,23 @@ const MIGRATIONS = [
   `ALTER TABLE nv_deals ADD COLUMN process_type TEXT NOT NULL DEFAULT 'thong_thuong'`,
   `ALTER TABLE nv_deals ADD COLUMN tender_id TEXT`,
   `ALTER TABLE nv_deals ADD COLUMN negotiation_round INTEGER NOT NULL DEFAULT 0`,
+  // 44: tài khoản HCNS chính thức mới (THUYDT) — theo yêu cầu trực tiếp của người vận hành, có
+  // email riêng (khác 6 tài khoản migration 31/33 vốn không có email, đăng nhập bằng mã nhân
+  // viên). can_manage_accounts phải set rõ =0 (cột có DEFAULT 1 ở migration 32) — HCNS không được
+  // quản lý tài khoản nhân sự khác. Mật khẩu gán riêng ở assignThuydtPassword() bên dưới vì cần
+  // hash (không làm được bằng SQL thuần trong mảng MIGRATIONS này).
+  `INSERT INTO nv_users (id,name,email,role,active,created_at,is_demo,can_manage_accounts) VALUES ('THUYDT','THUYDT','hr@netviet.com','hr',1,CAST(strftime('%s','now') AS INTEGER),0,0) ON CONFLICT(id) DO UPDATE SET role='hr', email='hr@netviet.com', can_manage_accounts=0`,
+  // 45: sửa lỗi lẫn lộn demo/thật phát hiện sau khi lên production — người vận hành xác nhận lại
+  // danh sách tài khoản THẬT chỉ còn đúng 6 mã: HAUNV, HUONGNT, THUYDT, DUCNH, PHUONGVH, HUONGLT
+  // (xem OFFICIAL_ACCOUNT_IDS đã sửa bên dưới, bỏ DUCHT). 6 tài khoản còn lại (DUCHT, Admin
+  // bootstrap ban đầu admin@netviet.vn, TPKD tpkd@netviet.vn, và 3 Sales trình diễn) bị xác nhận là
+  // DEMO nhưng trước đó lại nằm is_demo=0 chung workspace với 6 tài khoản thật, gây lẫn dữ liệu demo
+  // vào danh sách quản trị thật. Không đụng password_hash/role/can_manage_accounts — chỉ chuyển
+  // workspace (is_demo). Việc UPDATE thực tế đặt ở reclassifyConfirmedDemoAccounts() (định nghĩa
+  // cạnh assignThuydtPassword() bên dưới) thay vì viết thẳng SQL ở đây — hàm đó tự chạy lại và tự
+  // sửa mỗi lần migrate(), không phụ thuộc cơ chế theo dõi schema_version theo INDEX của mảng này
+  // (từng khiến 1 dòng UPDATE âm thầm không có hiệu lực ở lần đầu mà không ai biết cho tới khi kiểm
+  // tra lại danh sách người dùng).
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
@@ -197,13 +214,19 @@ export function appMode(env) {
 /** Mật khẩu demo dùng chung — chỉ có ý nghĩa ở chế độ demo, không tồn tại trong mã nguồn phía client. */
 export const DEMO_PASSWORD = 'Netviet@123';
 
-// 6 tài khoản nhân sự chính thức ở migration 31/33 (xem chú thích ở đó) — dùng lại ở đây để gán
-// mật khẩu khởi tạo, không lặp lại danh sách id bằng tay.
-const OFFICIAL_ACCOUNT_IDS = ['HAUNV', 'HUONGNT', 'DUCHT', 'DUCNH', 'PHUONGVH', 'HUONGLT'];
+// 5 tài khoản nhân sự chính thức (không tính THUYDT — có mật khẩu khởi tạo riêng ở
+// assignThuydtPassword() vì dùng email đăng nhập khác 5 tài khoản này). Từng có 6 mã gồm cả DUCHT ở
+// migration 31/33, nhưng migration 45 xác nhận lại DUCHT là tài khoản demo nên đã bỏ khỏi đây —
+// DUCHT không còn được gán/đổi theo mật khẩu khởi tạo dùng chung ở dưới.
+const OFFICIAL_ACCOUNT_IDS = ['HAUNV', 'HUONGNT', 'DUCNH', 'PHUONGVH', 'HUONGLT'];
 /** Mật khẩu khởi tạo dùng CHUNG cho 6 tài khoản nhân sự chính thức trên — theo yêu cầu trực tiếp
  * của người vận hành hệ thống (không phải lựa chọn mặc định của app). Trùng giá trị với
  * DEMO_PASSWORD là chủ ý của người vận hành, không phải nhầm lẫn. */
 const OFFICIAL_ACCOUNT_INITIAL_PASSWORD = 'Netviet@123';
+
+/** Mật khẩu khởi tạo riêng cho tài khoản HCNS mới THUYDT (email hr@netviet.com) — theo yêu cầu
+ * trực tiếp của người vận hành để demo & test vị trí HCNS, khác mật khẩu tạm dùng chung ở trên. */
+const THUYDT_INITIAL_PASSWORD = 'Netviet@2026';
 
 export async function migrate(env) {
   if (_migrated) return;
@@ -226,6 +249,8 @@ export async function migrate(env) {
   // Gán mật khẩu khởi tạo cho 6 tài khoản nhân sự chính thức — chạy ở CẢ 2 chế độ (các tài khoản
   // này là is_demo=0, độc lập với demo/production), TRƯỚC nhánh seed/bootstrap bên dưới.
   await assignOfficialAccountInitialPasswords(env);
+  await assignThuydtPassword(env);
+  await reclassifyConfirmedDemoAccounts(env);
   // Migration LUÔN chạy ở cả 2 chế độ (production cần đủ bảng); chỉ việc NẠP DỮ LIỆU là tách theo môi trường —
   // demo nạp đầy đủ dữ liệu mẫu, production chỉ khởi tạo đúng 1 tài khoản admin từ secret, không có gì khác.
   if (appMode(env) === 'demo') {
@@ -234,7 +259,14 @@ export async function migrate(env) {
     // vì seed() không chạy lại một khi đã có 'u_admin'.
     await ensureRoleExpansionDemoAccounts(env);
     await seed(env);
-  } else await bootstrapProductionAdmin(env);
+  } else {
+    // Production, vận hành Beta (2026-08-28): KHÔNG xoá dữ liệu demo — gộp vào 6 tài khoản chính
+    // thức để Beta có dữ liệu thật để test (xem mergeDemoAccountsIntoOfficial()), rồi đặt lại mật
+    // khẩu chung Netviet@123 cho cả 6 tài khoản (xem resetOfficialPasswordsForBeta()).
+    await mergeDemoAccountsIntoOfficial(env);
+    await resetOfficialPasswordsForBeta(env);
+    await bootstrapProductionAdmin(env);
+  }
 }
 
 /** Gán OFFICIAL_ACCOUNT_INITIAL_PASSWORD cho 6 tài khoản nhân sự chính thức — CHỈ cho tài khoản
@@ -253,6 +285,146 @@ async function assignOfficialAccountInitialPasswords(env) {
     await env.DB.prepare('UPDATE nv_users SET password_hash=?, must_change_password=1 WHERE id=?').bind(hash, row.id).run();
   }
   console.log('[migrate] Đã gán mật khẩu khởi tạo dùng chung cho ' + results.length + ' tài khoản nhân sự chính thức: ' + results.map(r => r.id).join(', '));
+}
+
+/** Gán THUYDT_INITIAL_PASSWORD riêng cho tài khoản HCNS mới THUYDT — cùng nguyên tắc idempotent
+ * với assignOfficialAccountInitialPasswords() ở trên (chỉ gán khi chưa có mật khẩu, không ghi đè),
+ * nhưng tách hàm riêng vì mật khẩu khác 6 tài khoản kia. */
+async function assignThuydtPassword(env) {
+  const row = await env.DB.prepare("SELECT id FROM nv_users WHERE id='THUYDT' AND (password_hash IS NULL OR password_hash = '')").first();
+  if (!row) return;
+  const hash = await hashPassword(THUYDT_INITIAL_PASSWORD);
+  await env.DB.prepare('UPDATE nv_users SET password_hash=?, must_change_password=1 WHERE id=?').bind(hash, 'THUYDT').run();
+  console.log('[migrate] Đã gán mật khẩu khởi tạo cho tài khoản HCNS mới: THUYDT.');
+}
+
+// Các tài khoản người vận hành xác nhận là DEMO (xem migration 45/46) — trình diễn nghiệp vụ, không
+// phải nhân sự/Admin điều hành thật. Khai báo lại ở đây (thay vì chỉ dựa vào 2 dòng UPDATE trong
+// mảng MIGRATIONS) để reclassifyConfirmedDemoAccounts() bên dưới tự SỬA LẠI mỗi lần migrate() chạy,
+// không phụ thuộc cơ chế theo dõi schema_version theo INDEX của mảng MIGRATIONS (chỉ chạy đúng 1 lần
+// và lỗi thì chỉ log rồi bỏ qua, rất khó phát hiện nếu 1 statement âm thầm không có hiệu lực).
+// Mỗi tài khoản khớp theo CẢ email lẫn (tên, role) — 1 lần chạy trước đó chỉ khớp email đã KHÔNG có
+// hiệu lực cho 4/6 tài khoản (nghi email lưu lệch khoảng trắng/hoa-thường so với chuỗi hard-code,
+// trình duyệt tự làm gọn khoảng trắng khi hiển thị nên nhìn giống hệt trên UI dù dữ liệu khác),
+// nên so khớp email đã chuẩn hoá TRIM+LOWER, và thêm khớp theo tên+role làm lưới an toàn thứ 2.
+const DEMO_ACCOUNTS = [
+  { id: 'DUCHT' },
+  { email: 'admin@netviet.vn' },
+  { email: 'tpkd@netviet.vn', name: 'Trần Thu Hà', role: 'manager' },
+  { email: 'tuan.le@netviet.vn', name: 'Lê Minh Tuấn', role: 'sales' },
+  { email: 'anh.pham@netviet.vn', name: 'Phạm Ngọc Anh', role: 'sales' },
+  { email: 'nam.vo@netviet.vn', name: 'Võ Hoàng Nam', role: 'sales' },
+];
+
+/** Tự sửa lại is_demo=1 cho đúng danh sách tài khoản demo đã xác nhận ở trên — CHỈ đụng dòng đang
+ * sai (is_demo=0), không ghi đè gì khác (role/mật khẩu/can_manage_accounts giữ nguyên). Chạy lại
+ * MỌI LẦN migrate() (không gate theo schema_version) nên tự chữa được nếu lần chạy trước vì lý do
+ * gì đó (deploy chưa restart hẳn, lệch dữ liệu email...) chưa có hiệu lực. Khớp từng tài khoản theo
+ * id HOẶC email đã chuẩn hoá HOẶC (tên+role) — chỉ cần khớp 1 trong 3 tiêu chí. */
+async function reclassifyConfirmedDemoAccounts(env) {
+  const clauses = [];
+  const args = [];
+  for (const a of DEMO_ACCOUNTS) {
+    const ors = [];
+    if (a.id) { ors.push('id=?'); args.push(a.id); }
+    if (a.email) { ors.push('LOWER(TRIM(email))=?'); args.push(a.email.toLowerCase()); }
+    if (a.name && a.role) { ors.push('(TRIM(name)=? AND role=?)'); args.push(a.name, a.role); }
+    clauses.push('(' + ors.join(' OR ') + ')');
+  }
+  const before = await env.DB.prepare(
+    `SELECT id,name,email FROM nv_users WHERE is_demo=0 AND (${clauses.join(' OR ')})`
+  ).bind(...args).all();
+  if (!before.results || !before.results.length) return;
+  await env.DB.prepare(
+    `UPDATE nv_users SET is_demo=1 WHERE is_demo=0 AND (${clauses.join(' OR ')})`
+  ).bind(...args).run();
+  console.log('[migrate] Đã chuyển ' + before.results.length + ' tài khoản sang workspace demo: '
+    + before.results.map(r => r.id + ' (' + r.name + (r.email ? ', ' + r.email : '') + ')').join('; '));
+}
+
+// Mọi cột (bảng, cột) tham chiếu tới id 1 nhân sự trong toàn bộ schema — dùng để gộp dữ liệu của 1
+// tài khoản demo VÀO 1 tài khoản chính thức (xem mergeDemoAccountsIntoOfficial() bên dưới), cùng
+// nguyên lý với dãy UPDATE gộp u_dir→u_admin ở migration 42, nhưng viết dạng bảng dữ liệu (không
+// hard-code từng câu SQL) vì giờ chạy trong hàm JS, không phải mảng MIGRATIONS thuần SQL.
+// nv_contacts KHÔNG có ở đây — không có cột chủ sở hữu riêng, chỉ có customer_id nên tự "theo"
+// khách hàng khi nv_customers.owner_id được gộp.
+const REASSIGN_OWNER_COLUMNS = [
+  ['nv_customers', 'owner_id'], ['nv_leads', 'owner_id'], ['nv_tender_leads', 'assigned_to'],
+  ['nv_deals', 'owner_id'],
+  ['nv_quotes', 'owner_id'], ['nv_quotes', 'approver_id'], ['nv_quotes', 'v1_approver_id'], ['nv_quotes', 'v2_approver_id'],
+  ['nv_contracts', 'owner_id'], ['nv_contracts', 'v1_approver_id'], ['nv_contracts', 'v2_approver_id'],
+  ['nv_documents', 'owner_id'],
+  ['nv_activities', 'user_id'], ['nv_daily_contacts', 'user_id'],
+  ['nv_tasks', 'user_id'], ['nv_tasks', 'assigner_id'],
+  ['nv_daily_reports', 'user_id'], ['nv_kpi_config', 'user_id'], ['nv_kpi_scores', 'user_id'], ['nv_commissions', 'user_id'],
+  ['nv_pip_records', 'user_id'], ['nv_pip_records', 'manager_id'],
+  ['nv_training_progress', 'user_id'], ['nv_training_progress', 'assigned_by'],
+  ['nv_notifications', 'user_id'], ['nv_ai_interactions', 'user_id'], ['nv_audit_logs', 'user_id'],
+  ['nv_password_setup_tokens', 'user_id'], ['nv_password_setup_tokens', 'created_by'],
+  ['nv_partners', 'sale_phu_trach_id'],
+];
+
+/** Ánh xạ 6 tài khoản demo đã xác nhận (DEMO_ACCOUNTS ở trên) sang tài khoản chính thức sẽ NHẬN dữ
+ * liệu của chúng — quyết định trực tiếp của người vận hành (2026-08-28) để vận hành Beta TRƯỚC với
+ * dữ liệu thật đã có, thay vì xoá trắng: DUCHT (admin không quản lý tài khoản) và admin@netviet.vn
+ * (admin bootstrap ban đầu) đều gộp vào HAUNV; TPKD tpkd@netviet.vn gộp vào DUCNH (manager chính
+ * thức duy nhất); 3 sales demo chia đều cho 2 sales chính thức: tuan.le & nam.vo → PHUONGVH,
+ * anh.pham → HUONGLT. Dùng lại tiêu chí khớp id/email/(tên+role) giống DEMO_ACCOUNTS/
+ * reclassifyConfirmedDemoAccounts() ở trên. */
+const DEMO_MERGE_TARGETS = [
+  { match: { id: 'DUCHT' }, into: 'HAUNV' },
+  { match: { email: 'admin@netviet.vn' }, into: 'HAUNV' },
+  { match: { email: 'tpkd@netviet.vn', name: 'Trần Thu Hà', role: 'manager' }, into: 'DUCNH' },
+  { match: { email: 'tuan.le@netviet.vn', name: 'Lê Minh Tuấn', role: 'sales' }, into: 'PHUONGVH' },
+  { match: { email: 'nam.vo@netviet.vn', name: 'Võ Hoàng Nam', role: 'sales' }, into: 'PHUONGVH' },
+  { match: { email: 'anh.pham@netviet.vn', name: 'Phạm Ngọc Anh', role: 'sales' }, into: 'HUONGLT' },
+];
+
+/** Gộp dữ liệu của từng tài khoản demo đã xác nhận (DEMO_MERGE_TARGETS ở trên) vào đúng tài khoản
+ * chính thức tương ứng, rồi xoá tài khoản demo — CHỈ gọi ở chế độ production (xem migrate() bên
+ * dưới). Khác reclassifyConfirmedDemoAccounts() (chỉ cô lập is_demo=1, còn nguyên tài khoản) — hàm
+ * này chuyển quyền sở hữu dữ liệu (owner_id/user_id/...) sang tài khoản chính thức RỒI xoá hẳn tài
+ * khoản demo, không thể hoàn tác. Tự chạy lại mọi lần migrate() — vô hại khi không còn khớp tài
+ * khoản demo nào nữa (SELECT rỗng thì bỏ qua entry đó). */
+async function mergeDemoAccountsIntoOfficial(env) {
+  for (const { match, into } of DEMO_MERGE_TARGETS) {
+    const ors = []; const args = [];
+    if (match.id) { ors.push('id=?'); args.push(match.id); }
+    if (match.email) { ors.push('LOWER(TRIM(email))=?'); args.push(match.email.toLowerCase()); }
+    if (match.name && match.role) { ors.push('(TRIM(name)=? AND role=?)'); args.push(match.name, match.role); }
+    const { results } = await env.DB.prepare(
+      `SELECT id,name,email FROM nv_users WHERE (${ors.join(' OR ')}) AND id != ?`
+    ).bind(...args, into).all();
+    for (const row of results || []) {
+      for (const [table, col] of REASSIGN_OWNER_COLUMNS) {
+        try { await env.DB.prepare(`UPDATE ${table} SET ${col}=? WHERE ${col}=?`).bind(into, row.id).run(); }
+        catch (e) { console.error('mergeDemoAccountsIntoOfficial', table, col, e.message); }
+      }
+      await env.DB.prepare('DELETE FROM nv_sessions WHERE user_id=?').bind(row.id).run();
+      await env.DB.prepare('DELETE FROM nv_users WHERE id=?').bind(row.id).run();
+      console.log('[migrate] Đã gộp dữ liệu tài khoản demo ' + row.id + ' (' + row.name
+        + (row.email ? ', ' + row.email : '') + ') vào ' + into + ' rồi xoá tài khoản demo.');
+    }
+  }
+}
+
+/** Đặt lại mật khẩu CHUNG Netviet@123 cho ĐỦ 6 tài khoản chính thức (kể cả THUYDT, vốn trước đó
+ * có mật khẩu khởi tạo riêng Netviet@2026 ở assignThuydtPassword() phía trên) — quyết định trực
+ * tiếp của người vận hành (2026-08-28) để đơn giản hoá đăng nhập trong giai đoạn vận hành Beta.
+ * Ghi đè mật khẩu HIỆN CÓ (khác assignOfficialAccountInitialPasswords()/assignThuydtPassword() ở
+ * trên vốn chỉ gán khi CHƯA có mật khẩu) nên phải gate bằng cờ 1 LẦN trong nv_meta — nếu không sẽ
+ * vô tình ghi đè mật khẩu nhân sự tự đổi ở mọi lần migrate() sau (mỗi lần Worker khởi động lại). */
+async function resetOfficialPasswordsForBeta(env) {
+  const FLAG = 'beta_shared_password_reset_v1';
+  const done = await env.DB.prepare('SELECT v FROM nv_meta WHERE k=?').bind(FLAG).first('v');
+  if (done) return;
+  const hash = await hashPassword(OFFICIAL_ACCOUNT_INITIAL_PASSWORD);
+  const ids = [...OFFICIAL_ACCOUNT_IDS, 'THUYDT'];
+  for (const id of ids) {
+    await env.DB.prepare('UPDATE nv_users SET password_hash=?, must_change_password=1 WHERE id=?').bind(hash, id).run();
+  }
+  await env.DB.prepare('INSERT INTO nv_meta (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').bind(FLAG, '1').run();
+  console.log('[migrate] Đã đặt lại mật khẩu chung ' + OFFICIAL_ACCOUNT_INITIAL_PASSWORD + ' cho 6 tài khoản chính thức (vận hành Beta): ' + ids.join(', '));
 }
 
 /** Bổ sung tài khoản demo mới (HCNS) cho CSDL demo đã seed từ trước — seed() ở dưới tự thoát sớm
