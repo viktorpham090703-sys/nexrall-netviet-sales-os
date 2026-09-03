@@ -18,7 +18,7 @@ database_id = "local-dev"
 
 [[kv_namespaces]]
 binding = "SHARED_KV"
-id = "local-dev"
+id = "3c09fbd8cbd24f0aa11150366b80892e"
 
 # R2 — lưu file gốc (báo giá/hợp đồng) do người dùng upload ở Sales Kit.
 # Trên Nexrall cần binding R2 tên "DOCS" tương ứng (nền tảng tự cấp, giống DB/SHARED_KV).
