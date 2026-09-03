@@ -13,8 +13,8 @@ not_found_handling = "single-page-application"
 # D1 — chạy --local nên DB nằm trong .wrangler/state, không cần tài khoản Cloudflare.
 [[d1_databases]]
 binding = "DB"
-database_name = "netviet-sales-os-local"
-database_id = "local-dev"
+database_name = "netviet-sales-os"
+database_id = "79b5d7cc-4121-499e-bab0-cbbdabc53221"
 
 [[kv_namespaces]]
 binding = "SHARED_KV"
