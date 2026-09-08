@@ -1,10 +1,8 @@
 import { boot, state, isLead } from './state.js';
 import { get, post, sessionToken } from './api.js';
-import { esc, initials, toast, modal, rel, empty, beginRender } from './ui.js';
-import { roleLabel } from './const.js';
+import { esc, avatar, toast, modal, rel, empty, beginRender } from './ui.js';
+import { roleLabel, BRAND_LOGO } from './const.js';
 import { icon, dot } from './icons.js';
-
-const BRAND_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAbYAAADMCAMAAAAoGXZRAAAAkFBMVEX927Lzo5z4nmznYV79xH798Nz9/f3YERz5jg7ZDhv6kBL66uraGCL6mC3cJivjRUj92rP3xsfkVVj52dnwlpbhNDb1uLjrdnf96tTtiYzoZmjzp6jgKy77p0/dNDb7t238x4/iExveRUjiPUHlXmHhGyP7oDr7nEHcPUL73uDe3d3eUlT2vsDhDhnufoD8sV3bhaB9AAAAMHRSTlP////////+///////////////////////////////////////////////////////unrsbAAAT1ElEQVR42u2diXbiOhJA83pmEPIGtrGNzRaSkHTe6+X//24sayttxiyZac6p6oXuYIzQVUm1STzNUB5QnrALEBsKYkNBbIgNBbGhIDbEhoLYUBAbCmJDbCiIDQWxITYUxIaC2BAbCmJDQWwoiA2xoSA2FMSG2FAQGwpiQ2woiA0FsaEgNsSGgthQEBtiQ0FsKIgNsaEgNhTEhoLYEBsKYkNBbIgNBbGhIDbEhoLYUBAbCmJDbCiIDQWxITYUxIaC2BAbCmJDQWwoN2CLB5l42ZQrL36j+JJ7u9fe2Kw73OB/jq38VSxevn//vmjy0evybjFc9/31taiva8um+OflpSi6VWzfum/Cyz8Fk6Y808GbruDyT9HxdtTdS9+0l5dzLw1L0zesf/umfhhsm4pI2bZj3fXaX0Epu46S4rohnRDK32lhjJBYN4E9Nzro4y4hvCH9rZKCXbvJ1Euv5LYSH4wkXfwY2OoMdlkzgld8sqHTvl/16XKi7pHBDs4zcG9CN6N6kfCL6ACuY7PFVrzuLPLgUCjoxEHzx2DLCOwx8iN4Yau7ll754XLwXo2BjT+RcB7d2ChLQGMJqYeGsRfxnyX5Vdj+oaplSf0I2OrEGOj0NQ5jG3SF/7kdG3yjeK9HRC/VyM07iO247a+MF7rP6bimBqUQndD//bN7BGwrExtJVqPYqOjZ27EZs2STgImaZmGViTMwxOigsj02xo0vunR1EzY2FKr44bCx7szHtY19tOuxBd6HLU+JHjthldnAptJkuHBBgLpdh+2Nqlsct+UjYiPdCDbVYVdiowFscQHtHVLEE+ZIdo/PAdvxZmwFpVSOyQfBRmx123wdtqBWN1CJzAnUkBfY0mQYYfFCzJi3YZvw5n8YNlPbQlaimiTJ/SdJ5oaAZiShWbJM4NLGbzGsbZwb/fnzapNEcXsUbLYkTQgb+TJtY+YgINKEJ2qAbc8b0bFl8cjkavMdYCOPii1glay0tt0fG7s7IBK4PXAUiPC12U/zus6lzK5f2x4dmz90xTr267D1gRKBbMSczaf6CVdpG310bN61paVEL253xzZEPNX9E39wdAPNXnrHMBTHxu/9oA4A0ymfyzkJW7wuyzKYABnB1kdzCbDCi7NLECHthYmZkYbxSVJo+qNi89sELZWBQD+2OF813SLLkqwqmmaVxz5sCfAzSi5rfmGZ6bsra8OyIzPo3GXK+oj5jUJM4nLVNMVrlmWvRfNt47uuoDqSkOXl+P3+YGyedUP7bb7gVr7KrOm2WuVj2OR8LP3Ewf3SUGv/HOkzWzbbI3/Nyqcn+aoa3jXppX849Q7OX6UnSiLDdsOl7Dd5sT/jer28UJ7Gn17fhI0Sl5yrTtABsJ/OWaTCluPxNT+LjagoaEu0NveJNE9bG9hS7Vgvhsxb4o3/lwURzw3gVCSo9GIzIw9b827r3Xwe9TIPSjT8UhdFkb68fxx+68dB3td3xubGBVv4mQxsInNJYGbH2/tebJno/1i8jr8288zCRqif5B6XbxtbebST76Ox23dOTNKOFlnYnn3EIvAQATH/Nya7+2Kj+3Kqu13vE92ZRM81w0NVB0wSrW3StCiScd8xB9F/ole/AZtsm5GcrquEBLBZ+fU331VGE549WiZBRnMbW+Rim7sXDdftrsXm/1hJN3GS3OhFTWPTSpeBuhE/tpWvKZ4EEszugAyNgQ2agbxWIYSNVD/GsRlRrnXq6pqlflrLNJ25w81Wynl0uB0bHRnvAWxmUYN7H5qtRrBRYH2UCeh/snDnSIhNT6I8lCxTOflstGEBs+eNetwgaM3ufGtaZGMEKCOognzZ06ucXvb6v9P1tRkANVZFD1Cf2eHHVlbknOiUglfbNADIhST2JG28Ey3MJc8tKThDjX3Kfe5mAPyxonXqmSHnkcMtioRZYi53BknTWOmxPd8aJcnqk/pMlFrzlHdt+3wN9ArshqoMYaPQ/TLb4kRq/jIiWy3EpiOKClu5H50D+L9VXs/F1vtAYFVeerHZKgftzMicOAMT7AB4dzO2Pg2pfTNqDngvthX1dYkRFu6fegtrG6zxK7OxPIQxR5JPf/JAYos7z0iysVFtDVnYqDZwvdjU1GfNlLZiRYJP5M6u+kfpzdhiFYgYPmQXTJoIbHlmhOSZ/8TKMY621VF7sfXXvhojw5hwKztEEpjADD9dvpM5RVLuRh5ds0S8fWdQ6/07WhkNc7VtxIGLLD6KcOCCm7FtmfkFuW3OYGuAI0UH84NFhvJ6QU2lW3hikps+zVKOxbVNk2hjgFj5sVGBLV5Y6i8a1mb+CgyIbWjYp9mwZepZxuYOD2sJOy/RXbSNDfACTnqwKs6DrTR7Qdv6cb3wqVt+JqkX78Oltk3IXvFNkrlpj2Stali7NZ8pHQfAF0o2sUVeQzJgX55hdi9s5RaEjMkvf3mrwNYlyrVmrzaKet5OwCgVo/ocNlGK4wtX95V2oN6jCCTGpbYVxjpo3Cg3DFJudsGq5AA2e1mzglecQgQNzGgKNvaKe0ySPZ4TkYWHFHaua5LA0v0+aP/pulk6iRVPwgbckX5igzesCQjmGFam4W5zbOY6aC5TliYuxHCZhi3yBTrmkTk/Rulut3uPpirczdjogO1zQbWtRXW0yMWmOmDoUdtg701wEDXbTMKmLSL2ytqYIwE2o2fB2kaFto17Eht3BYWT5HZc21g/p78Ph8MutQMgUsWWzNObvr6lt0ZJKjWwqesru9iM5cYN2bfQLRhcpLPYZh3whulbDNm4Fk7QJIFzpJtLiL9DbK00SegoNu1cRzvpHx/SCIY71Jp3Flt0D2y6/r3Staaqj1Si242S7AkZ2/EQV6Cn9wDbSLnIBvqAoAM/YVrQ1B/XAYgTOjo8DMe9cyzJcZPE8I4PMjCiVjcmAzZfvkCuZvfEpl2lOANlg8p5c7SthBH5zGMXNrbtZ+wB8GLjOW4xjk4ggAJaZKW+YUySY6uBmvtK+vvxpBv2Os2SVL28s3AqZdNBrBC2gJVyM7atW/2mE90tzHYxbIZLW3iz0eCC2pgkaQBb/Abtz9aLxtpI5ZokrWtzmPIvOJ7iSdqmVGMI/C4Ph7/WStt0vH8EW+TEv+6ObbaAAQYxuB2/bQP3LDXj9XF0QJAra6PvnR+zs7OkDlhnEM3Kh43q0dElZ7Y0NLZN0k00SSKeZhmWuvSwXL77smrG2qa9Bct9uAM2amOrE6o22sqQsqNtbQJ6uPr1q2HSdY2SQmcp+7hkLCZJ4ZkFqhzFzEtNjayTQEJFaKLOTdeDRQKG4r5xZW+n8adjG8wR+T9lS6bpx8fHu8zJaWzsqY/d7iPV1IZLjezd/bSNhZSpDtKXquAOrm1d4ov8U0qoLw2yiNUmYBooMoIV/cQI9XYjVWXKJKFyknwZyde4Lft1gQMgsRnJ0HQnanmWB45DYWNZmTWwaVgRwlJdemMoWfm3IHo7OF1mSLklVjF5kZALpIq1JUnD2PgWcUn3zZeFqb3YRGyn5vua6dRmcZMLuNt0ArZlqk1/I1/2PHDjaxsL/+/WwOhkr3/2VDncHCXZA6crkTEusEWaqPpThu0lmdYvOsWf66BzENtgxspuF/PhJgnUCjjaxloaj1SQuFmmwZgCiRs67m6LEoLnnbIhjSwngyNNElnfs+bsdsoMHX5wKzYQ8a98hwdQUaXcgvlvwLZP/Elj9WCUFilsYs0MYitgup17aN+g72EfQSGsTK1t57EZDe4DAezD0mnYdAnBQcyS74OWzdPfM6FkqcTGr+0B85+IR6aq/TO7O+Xb+r7aGzvOYPKlicXebRE5DmHTk6A5T1ETGw1j02eEKL8ifqHBfI5VSyKwTaPGP43Adl7buBmh/bb1s6iZ49GSdFDED4lNWp27SAI8yAd2o3T+NdgGK1lgYrG+uBXQNLZQT1Bg5xt2TT5lj3icgBTEMEvWMD/kuM9GBoBjo9Ox8bBbQaatbUy/DmtQ8QqN/w8xFUoHYHhccqvleZgWB2xOyvVOMUltiqtMAKUFw2Zu3eAhfuLUtMoDFYhRsLA3sNGRbU5vRJduDlc1QH2cOdJ0xQW2yaakOAXlTX+OADZQaCytQxUlESnTnVzBhEmSsp5fftt96+POnGC61AvjHbFtLc9XKhvrv6aFGCQ2UEc8MjNRsY3e0LbgwTUbkL0ZKkoKmAHMZzO/SUJllCTOxpoCSnD5XL4a/DbgBQWwaW7zVEeTudd2WK7X3PLYRdIkmduVdMtIzbDr5/SOtSRbx4UCMcQOqJXrt2XFuHSlnQEIbtctoS1Z8bQeDVSYWIkb7rfBRGiyP9OwVviFlJ7DZtRoCbO/X97S38uZUVAZxKYN0f4/79EXaVsfnDKPmrFCyTBvk7QXb0sMHxO1IDpl3terbk5An5sxbMLdLiac+xDeBBzGBsuxomiwHJ8iWVUszXyJTRidfJPO83P/Z8de9y632QDj9Fpsso+2Tvk2hYuXFdxanUBZaTMNWzIF2wZEIJO232cqVzrq+Nq+ta2fBvRYzFbTjkrTK3E1lrgB0ceUT3yp8gZ2lkkyYHtOnbDlh/bjvsAk4a5vYIEYMgAJMFIWF2ML77z+rMDgX4A6o96Q8YbDrOAWnAaOxaUnJWxHsDEzfycCWykPixxUwtQ0SSS+1N1lk+4E6S/CZuXvnXwb/LDxbXu3nVlSp5+Bi+Kbi91824aMOQzXYROaxmxBPmNyq/CQ/ls5Z5YlKQJhwrnjuEXwmftvX4fN3OJpYYPZVHKq74gN7t6iCUj/bPOAthmTZJlMfB/v2VEhbMOS9i4CwQfuBDylfGljU+FhbZokctNhb+73ludaREmWO+mY7+b3LLizrLptYHdYLOrtxo/qsg41nootziiFHrGa8Xw6bdRJ8rWvSs4djmO2a2rBncQG7cZUGCRr25Ls5Zt1cQouvdUkCToAblWpVQJkVmzXblFCsZDSXYato77CfXpsZ6PaRnkGgNUMAm55qGH9AcvFr8sK7qLdf2bGtuC5TgCsn6BJMiyA38z1EbgE64/5V2IrF0GTpHeoftLwbm9jgqX1bLLfZkzdkJv/OCygbRJbvQXTgHP8sbm3KxclQHRiLYmKkazlD5/lNb9Nk2SoF5I+Hc/FiTAJc7e/LEqiqwSoE2kQVclH+JR5nGBsbqHKbWzbMYcq95qw/tNQODYKdX6Ikyjelo7G5jY6hY2OHC4EK7f6f+2enw+wTvm9r5pUBQh23cH7YbhY/jQ9wNfeIZTsx8bTzf4OzLdg9ww5LuJQOb9QxRx6f92ojeCNJvqXqQWxsTGXMjigXuFTR12VLCN5viOQnK0bZ7aVRhfsCbi1TpJ6TBJ3G4Sx46Yz1p6kauQa31SmirbuRqkRf9s6pVVG1ALFXguiC81FueZnZe582q9Aw2Ac9bQRR1xTvTx6DiH1bEu8m0TprceAVv4j3EOWpL17qe+frGhXq3axtQwZsV78MHZNZN2KySaeNFaGLEQYm6ltfFOJ2bAVa5h55g2l3DRlJ5PrIoykWvGG/dHY1GkUIWx8hwb1aZtn06Yv/i+N8Jx4yoO8UUPXYaTGpjY74k0tezaupqTclPte6FSi16S8DFv0P8JGxyZJb6xELmN5NqF3VAfkVvY0dJSFb5YcqfUiwDevzx3c4f0Yna/YDPj2Z9a2/4+2qSV/G4r9hNY2duDV+Ryy0qfypycT5scWb6fZkWpts7zHuDmez21v5dWdTjkEsH0dNduFv0zbaFjbXJ0CXdicnyOVARh7lC2EzR0qgVi+U5TgsVTcCjwqK6XllktKLXRQu790bdtdf3gTHcXGMjhwVTJOuOuScWiwZL8ixDrdKviFES2xDy8IlXqpUDKlFGz8MbKrvkMzQZ1sTu2aJXNSds4lueOcmT5dfZwMhRul/IcUK7G/hiZuRms3SBMb1ZeUWLVBAWyl2dWBIybNogRKYYitfAnWRnKnBGyfe6HWOW/UXEt33t31/knvUmyzW8+TrMYyl7pIsn+AXR2vtsdjqN4mM76qjUWmqTFvhb+epbNu9ddsDJuozDS22ZVNEtY204DdEKc0yMC2Tt1NowG1uxBb4BCgc9hOVEf+qpHrtj9Bib91QmZenALFv4U1sxnRwlFt60OHR0J1FVgw3WmEks3dkfHmNVCalNkNa0+yllBjKz21Ww6Z6AIF9G15O1z3jVIn+VVo/VAdizdtBkWhffCYJs6hhXFt1bryvVCVe/JuWWVimFBRzhdMBeRZQuSXDiUj51l3usLMcRLiNgOHismDQLOFZ4vp9iRruYY3pYnp3aviLXnW5zzSh5PAswnhoWjzyN5uOjc3VYV07ez3t62qQfb7qmpGE8Flu+CXFt64Rt3ss9NJdU+SvbZ14DsqF/wN9+w9q5Hvyyzb1/6C/ozj/WIz0rRyke3FHauN5/2KTGZah3ZtF61/I+vq7fs+G9q079+y+mWPzWWf77yv7J7Xf8A3Aedtf8b1y/dFX17XrP6M873F4tv03336Wr2+sIb9Sd8bO8MvcJ7h926jIDYUxIbYUBAbCmJDQWyIDQWxoSA2xIaC2FAQG2JDQWwoiA0FsSE2FMSGgtgQGwpiQ0FsiA0FsaEgNhTEhthQEBsKYkNsKIgNBbEhNhTEhoLYUBAbYkNBbCiIDbGhIDYUxIbYUBAbCmJDQWyIDQWxoSA2xIaC2BAbCmJDQWwoiA0FsSE2FMSGgtgQGwpiQ0FsiA27ALGhIDaUEWwx9sEjYvsbuT2e/P0UI7eHk7h8ipHbw1GL46cZcnswaH8P2Bg3BPdY1Gb/BToFLQPdXfVZAAAAAElFTkSuQmCC';
 
 import * as VLogin from './views/login.js';
 import * as VSetPassword from './views/setPassword.js';
@@ -23,11 +21,13 @@ import * as VTraining from './views/training.js';
 import * as VAdmin from './views/admin.js';
 import * as VMore from './views/more.js';
 import * as VProfile from './views/profile.js';
+import * as VPlans from './views/plans.js';
 
 const VIEWS = {
   login: VLogin, cockpit: VCockpit, crm: VCrm, pipeline: VPipeline, activities: VActivity,
   tasks: VTasks, reports: VReports, kpi: VKpi, ai: VAi, prospect: VProspect,
   saleskit: VSaleskit, console: VConsole, training: VTraining, admin: VAdmin, more: VMore, profile: VProfile,
+  plans: VPlans,
 };
 
 const SALES_NAV = [
@@ -36,11 +36,11 @@ const SALES_NAV = [
 ];
 const SALES_SIDE_NAV = [
   { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
-  { sec: 'Khác', items: [['crm', icon('folderOpen'), 'CRM 360° Khách hàng'], ['ai', icon('bot'), 'AI Trợ lý'], ['activities', icon('calendarDays'), 'Lịch & Hoạt động'], ['reports', icon('clipboardList'), 'Báo cáo EOD & Tuần'], ['kpi', icon('trophy'), 'KPI & Hoa hồng'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá'], ['training', icon('graduationCap'), 'Đào tạo']] },
+  { sec: 'Khác', items: [['crm', icon('folderOpen'), 'CRM 360° Khách hàng'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['ai', icon('bot'), 'AI Trợ lý'], ['activities', icon('calendarDays'), 'Lịch & Hoạt động'], ['reports', icon('clipboardList'), 'Báo cáo EOD & Tuần'], ['kpi', icon('trophy'), 'KPI & Hoa hồng'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá'], ['training', icon('graduationCap'), 'Đào tạo']] },
 ];
 const LEAD_NAV = [
   { sec: 'Điều hành', items: [['console', icon('slidersHorizontal'), 'Console đội'], ['cockpit', icon('home'), 'Trang chủ cá nhân'], ['tasks', icon('inbox'), 'Giao việc & SLA']] },
-  { sec: 'Kinh doanh', items: [['pipeline', icon('barChart2'), 'Pipeline đội'], ['crm', icon('folderOpen'), 'CRM 360°'], ['prospect', icon('search'), 'Tìm khách & Thầu'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá']] },
+  { sec: 'Kinh doanh', items: [['pipeline', icon('barChart2'), 'Pipeline đội'], ['crm', icon('folderOpen'), 'CRM 360°'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['prospect', icon('search'), 'Tìm khách & Thầu'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá']] },
   { sec: 'Đo lường', items: [['reports', icon('clipboardList'), 'Báo cáo'], ['kpi', icon('trophy'), 'KPI · Hoa hồng · PIP'], ['activities', icon('calendarDays'), 'Hoạt động']] },
   { sec: 'Khác', items: [['training', icon('graduationCap'), 'Đào tạo'], ['ai', icon('bot'), 'AI Trợ lý'], ['admin', icon('usersRound'), 'Quản trị']] },
 ];
@@ -77,7 +77,7 @@ function shell(view) {
     <aside class="sidebar" id="sidebar">
       <div class="row mb"><a href="#/${homeView()}" class="brand-logo-link"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></a></div>
       <a href="#/profile" class="side-profile-btn ${view === 'profile' ? 'active' : ''}">
-        <div class="avatar">${esc(initials(me.name))}</div>
+        ${avatar(me)}
         <div class="side-profile-info">
           <div class="side-profile-name">${esc(me.name)}</div>
           <div class="side-profile-role">${esc(roleLabel(me))}</div>
@@ -92,7 +92,7 @@ function shell(view) {
         <div class="brand">NetViet Sales OS<span class="xs mut" style="font-weight:600"> · ${esc(roleLabel(me))}</span></div>
         <div class="grow"></div>
         <button class="icon-btn" data-noti>${notiBadge()}</button>
-        <div class="avatar" data-me>${esc(initials(me.name))}</div>
+        ${avatar(me, 'data-me')}
       </header>
       <main id="main"></main>
       ${!lead ? `<nav class="bottom-nav desktop-hide">${SALES_NAV.map(i => i[0] === 'more'

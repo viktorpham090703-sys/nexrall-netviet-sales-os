@@ -1,7 +1,7 @@
-import { json, match, need, uid, now, DAY, readBody, scope, isLead, audit, notify, num, str, todayKey, monthKey, periodParam, startOfDay, wsBucket, wsScope, sameWorkspaceUser, inSameWorkspace, resolveAssignableOwner, LEAD_ROLES } from '../lib/util.js';
+import { json, match, need, uid, now, DAY, TZ_OFFSET, readBody, scope, isLead, audit, notify, num, str, todayKey, monthKey, periodParam, startOfDay, wsBucket, wsScope, sameWorkspaceUser, inSameWorkspace, resolveAssignableOwner, LEAD_ROLES } from '../lib/util.js';
 import { computeKpi, saveKpi, getConfig, slaLimit } from '../lib/kpi.js';
 import { STAGES } from './deals.js';
-import { vCount, vMoney, vText, vFutureTs, vPeriod } from '../lib/validate.js';
+import { vCount, vText, vFutureTs, vPeriod } from '../lib/validate.js';
 
 /** Ai được xem lịch sử báo cáo của ai — theo cấp bậc: Admin/BGĐ thấy tất cả, TPKD thấy TPKD +
  * Sales (không thấy Admin), HCNS thấy HCNS + Sales. Sales KHÔNG nằm trong bảng này — sales chỉ
@@ -13,6 +13,74 @@ const REPORT_VISIBLE_ROLES = {
   manager: ['manager', 'sales'],
   hr: ['hr', 'sales'],
 };
+
+/**
+ * Số liệu báo cáo tự tổng hợp cho một khoảng thời gian.
+ *
+ * Đây là phần "tự động làm báo cáo ngày / tuần / tháng" — trước đây chỉ có số của HÔM NAY và báo
+ * cáo tuần đem đúng số hôm nay đi nộp (sai). Nay mọi kỳ đều đếm lại từ dữ liệu gốc: hoạt động đã
+ * ghi, khách thêm mới, deal chuyển giai đoạn, doanh thu ký, báo giá gửi đi.
+ *
+ * `customer_touches` = số lần tương tác có gắn khách hàng — chính là "cập nhật mới: tương tác với
+ * khách hàng" trong yêu cầu bổ sung; tách khỏi `activities` (gồm cả việc nội bộ không gắn khách).
+ */
+async function aggregateReport(env, userId, from, to) {
+  const D = env.DB;
+  const [act, dc, moved, won, quotes] = await Promise.all([
+    D.prepare(`SELECT COUNT(*) n,
+        SUM(CASE WHEN type='call' THEN 1 ELSE 0 END) c,
+        SUM(CASE WHEN type IN ('meeting','demo') THEN 1 ELSE 0 END) m,
+        SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) tch
+      FROM nv_activities WHERE user_id=? AND happened_at>=? AND happened_at<?`).bind(userId, from, to).first(),
+    D.prepare('SELECT COUNT(*) n FROM nv_daily_contacts WHERE user_id=? AND created_at>=? AND created_at<?').bind(userId, from, to).first(),
+    D.prepare('SELECT COUNT(*) n FROM nv_deals WHERE owner_id=? AND stage_changed_at>=? AND stage_changed_at<?').bind(userId, from, to).first(),
+    D.prepare("SELECT COUNT(*) n, COALESCE(SUM(value),0) v FROM nv_deals WHERE owner_id=? AND status='won' AND won_at>=? AND won_at<?").bind(userId, from, to).first(),
+    D.prepare('SELECT COUNT(*) n, COALESCE(SUM(total),0) v FROM nv_quotes WHERE owner_id=? AND created_at>=? AND created_at<?').bind(userId, from, to).first(),
+  ]);
+  return {
+    calls: Number(act?.c) || 0,
+    meetings: Number(act?.m) || 0,
+    new_contacts: Number(dc?.n) || 0,
+    deals_moved: Number(moved?.n) || 0,
+    revenue: Number(won?.v) || 0,
+    won_deals: Number(won?.n) || 0,
+    activities: Number(act?.n) || 0,
+    customer_touches: Number(act?.tch) || 0,
+    quotes_sent: Number(quotes?.n) || 0,
+    quotes_value: Number(quotes?.v) || 0,
+  };
+}
+
+/** Mốc 00:00 thứ Hai (giờ VN) của tuần chứa `ts`. getUTCDay() trên mốc đã cộng TZ_OFFSET chính là
+ * thứ trong tuần theo giờ VN; đổi Chủ nhật (0) thành 6 để tuần bắt đầu từ thứ Hai. */
+function startOfWeek(ts = now()) {
+  const sod = startOfDay(ts);
+  const dow = new Date((sod + TZ_OFFSET) * 1000).getUTCDay();
+  return sod - ((dow + 6) % 7) * DAY;
+}
+
+/** Mốc 00:00 ngày 1 (giờ VN) của tháng chứa `ts`. */
+function startOfMonth(ts = now()) {
+  const d = new Date((startOfDay(ts) + TZ_OFFSET) * 1000);
+  return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000) - TZ_OFFSET;
+}
+
+/** Nhãn kỳ tuần dạng YYYY-Www tính theo thứ Hai đầu tuần — khớp vPeriod() và cách client hiển thị. */
+function weekKey(ts = now()) {
+  const monday = startOfWeek(ts);
+  const d = new Date((monday + TZ_OFFSET) * 1000);
+  const jan1 = Date.UTC(d.getUTCFullYear(), 0, 1) / 1000 - TZ_OFFSET;
+  const w = Math.floor((monday - startOfWeek(jan1)) / (7 * DAY)) + 1;
+  return d.getUTCFullYear() + '-W' + String(w).padStart(2, '0');
+}
+
+/** Khoảng thời gian [from, to) của một loại báo cáo. */
+function reportRange(kind) {
+  const t = now();
+  if (kind === 'week') return { from: startOfWeek(t), to: t + 1, period: weekKey(t) };
+  if (kind === 'month') return { from: startOfMonth(t), to: t + 1, period: monthKey(t) };
+  return { from: startOfDay(t), to: t + 1, period: todayKey() };
+}
 
 /** true nếu `me` được phép xem lịch sử báo cáo của `target` (cùng workspace + đúng luật cấp bậc). */
 function canViewReports(me, target) {
@@ -121,15 +189,36 @@ export async function workRoutes(ctx) {
       return json({ userId: targetId, items: items || [], total, page, pageSize: REPORT_PAGE_SIZE });
     }
 
-    // Số liệu tự tổng hợp cho hôm nay (của chính người xem)
-    const sod = startOfDay(); // 00:00 giờ VN — khớp với mốc đếm định mức ở Cockpit
-    const a = await env.DB.prepare('SELECT COUNT(*) n, SUM(CASE WHEN type="call" THEN 1 ELSE 0 END) c, SUM(CASE WHEN type IN ("meeting","demo") THEN 1 ELSE 0 END) m FROM nv_activities WHERE user_id=? AND happened_at>=?').bind(ctx.me.id, sod).first();
-    const dc = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_daily_contacts WHERE user_id=? AND created_at>=?').bind(ctx.me.id, sod).first('n')) || 0;
-    const moved = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_deals WHERE owner_id=? AND stage_changed_at>=?').bind(ctx.me.id, sod).first('n')) || 0;
-    const rev = Number(await env.DB.prepare("SELECT COALESCE(SUM(value),0) v FROM nv_deals WHERE owner_id=? AND status='won' AND won_at>=?").bind(ctx.me.id, sod).first('v')) || 0;
+    // Số liệu tự tổng hợp cho CẢ BA kỳ (của chính người xem) — ngày, tuần đang chạy, tháng đang
+    // chạy. Trước đây chỉ có số của hôm nay nên báo cáo tuần đem số hôm nay đi nộp.
+    const dayR = reportRange('day'), weekR = reportRange('week'), monthR = reportRange('month');
+    const [dayAgg, weekAgg, monthAgg] = await Promise.all([
+      aggregateReport(env, ctx.me.id, dayR.from, dayR.to),
+      aggregateReport(env, ctx.me.id, weekR.from, weekR.to),
+      aggregateReport(env, ctx.me.id, monthR.from, monthR.to),
+    ]);
     const today = todayKey();
     const cfg = await getConfig(env, ctx.me.id);
     const submittedToday = !!(await env.DB.prepare("SELECT id FROM nv_daily_reports WHERE user_id=? AND kind='day' AND period=?").bind(ctx.me.id, today).first());
+    const submittedWeek = !!(await env.DB.prepare("SELECT id FROM nv_daily_reports WHERE user_id=? AND kind='week' AND period=?").bind(ctx.me.id, weekR.period).first());
+    const submittedMonth = !!(await env.DB.prepare("SELECT id FROM nv_daily_reports WHERE user_id=? AND kind='month' AND period=?").bind(ctx.me.id, monthR.period).first());
+
+    // Biểu đồ tương tác 7 ngày gần nhất — để báo cáo tuần nhìn ra nhịp làm việc chứ không chỉ là
+    // một cục tổng. Đếm nhẹ bằng 1 truy vấn gom nhóm theo ngày thay vì 7 lần gọi aggregateReport.
+    const { results: trendRows } = await env.DB.prepare(
+      `SELECT CAST((happened_at + ?) / 86400 AS INTEGER) d,
+              COUNT(*) n,
+              SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) tch
+       FROM nv_activities WHERE user_id=? AND happened_at>=? GROUP BY d ORDER BY d`)
+      .bind(TZ_OFFSET, ctx.me.id, startOfDay() - 6 * DAY).all();
+    const trendMap = new Map((trendRows || []).map(r => [Number(r.d), r]));
+    const trend = [];
+    for (let i = 6; i >= 0; i--) {
+      const sod = startOfDay() - i * DAY;
+      const key = Math.floor((sod + TZ_OFFSET) / 86400);
+      const row = trendMap.get(key);
+      trend.push({ date: new Date((sod + TZ_OFFSET) * 1000).toISOString().slice(0, 10), activities: Number(row?.n) || 0, touches: Number(row?.tch) || 0 });
+    }
 
     // Danh sách thành viên được xem lịch sử báo cáo — theo cấp bậc: Admin thấy tất cả, TPKD thấy
     // TPKD + Sales (không thấy Admin), Sales CHỈ thấy chính mình (không thấy sales khác/TPKD/Admin).
@@ -155,8 +244,13 @@ export async function workRoutes(ctx) {
     }
 
     return json({
-      draft: { period: today, calls: Number(a.c) || 0, meetings: Number(a.m) || 0, new_contacts: dc, deals_moved: moved, revenue: rev, activities: Number(a.n) || 0 },
-      submittedToday, deadlineHour: cfg.report_deadline_hour || 17.5,
+      draft: { period: today, ...dayAgg },
+      weekDraft: { period: weekR.period, ...weekAgg },
+      monthDraft: { period: monthR.period, ...monthAgg },
+      trend,
+      quota: { contacts_day: cfg.quota_daily_contacts || 8, calls_day: cfg.quota_calls || 25, meetings_day: cfg.quota_meetings || 2 },
+      submittedToday, submittedWeek, submittedMonth,
+      deadlineHour: cfg.report_deadline_hour || 17.5,
       sections,
     });
   }
@@ -164,8 +258,13 @@ export async function workRoutes(ctx) {
   if ((p = match(ctx, 'POST', '/api/reports'))) {
     need(ctx);
     const b = await readBody(ctx.request);
-    const kind = b.kind === 'week' ? 'week' : 'day';
-    const period = vPeriod(b.period, todayKey());
+    const kind = ['week', 'month'].includes(b.kind) ? b.kind : 'day';
+    // Kỳ và số liệu đều do SERVER quyết định, không nhận từ client nữa: đây là điểm cốt lõi của
+    // "tự động làm báo cáo" — người nộp chỉ bổ sung phần định tính (điểm nhấn, vướng mắc, kế
+    // hoạch), còn phần định lượng luôn khớp dữ liệu gốc và không sửa tay được.
+    const range = reportRange(kind);
+    const period = vPeriod(range.period, todayKey());
+    const agg = await aggregateReport(env, ctx.me.id, range.from, range.to);
     const cfg = await getConfig(env, ctx.me.id);
     // Giờ VN dạng thập phân để so được mốc 17h30 (17.5)
     const d0 = new Date();
@@ -177,10 +276,10 @@ export async function workRoutes(ctx) {
     // được cập nhật để chỉ tính bản MỚI NHẤT của mỗi ngày khi tính điểm kỷ luật, tránh đếm trùng.
     const id = uid('rp');
     await env.DB.prepare('INSERT INTO nv_daily_reports (id,user_id,kind,period,calls,meetings,new_contacts,deals_moved,revenue,highlight,blocker,plan,late,submitted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .bind(id, ctx.me.id, kind, period, vCount(b.calls, 'Số cuộc gọi'), vCount(b.meetings, 'Số buổi gặp'),
-        vCount(b.newContacts, 'Liên hệ mới'), vCount(b.dealsMoved, 'Deal chuyển giai đoạn'), vMoney(b.revenue, 'Doanh thu'),
+      .bind(id, ctx.me.id, kind, period, agg.calls, agg.meetings,
+        agg.new_contacts, agg.deals_moved, agg.revenue,
         str(b.highlight, 800), str(b.blocker, 800), str(b.plan, 800), late, now()).run();
-    return json({ id, late });
+    return json({ id, late, period, kind, ...agg });
   }
 
   /* ================= KPI ================= */
@@ -239,8 +338,9 @@ export async function workRoutes(ctx) {
   if ((p = match(ctx, 'GET', '/api/commissions'))) {
     need(ctx);
     const s = scope(ctx, 'c.user_id');
-    const { results } = await env.DB.prepare(`SELECT c.*, d.title deal_title, u.name user_name FROM nv_commissions c
-      LEFT JOIN nv_deals d ON d.id=c.deal_id LEFT JOIN nv_users u ON u.id=c.user_id WHERE 1=1${s.sql} ORDER BY c.created_at DESC LIMIT 100`).bind(...s.args).all();
+    const { results } = await env.DB.prepare(`SELECT c.*, d.title deal_title, u.name user_name, pt.name partner_name FROM nv_commissions c
+      LEFT JOIN nv_deals d ON d.id=c.deal_id LEFT JOIN nv_users u ON u.id=c.user_id
+      LEFT JOIN nv_partners pt ON pt.id=c.partner_id WHERE 1=1${s.sql} ORDER BY c.created_at DESC LIMIT 100`).bind(...s.args).all();
     return json({ items: results || [] });
   }
 

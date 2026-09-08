@@ -55,11 +55,16 @@ export function newSetupToken() {
   return toHex(b);
 }
 
-/** Băm token thiết lập mật khẩu bằng SHA-256 để lưu vào CSDL — token gốc không bao giờ chạm CSDL. */
-export async function hashSetupToken(token) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+/** SHA-256 → chuỗi hex. Dùng cho các bí mật SINH NGẪU NHIÊN 256-bit (token đặt mật khẩu, khoá
+ * API): với entropy đó thì không cần thêm salt/lặp như PBKDF2 của mật khẩu người dùng vốn có
+ * entropy thấp và bị dò được. */
+export async function sha256Hex(input) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
   return toHex(digest);
 }
+
+/** Băm token thiết lập mật khẩu bằng SHA-256 để lưu vào CSDL — token gốc không bao giờ chạm CSDL. */
+export const hashSetupToken = sha256Hex;
 
 /** Tạo phiên mới cho user, dọn luôn phiên hết hạn. */
 export async function createSession(env, userId, ua) {

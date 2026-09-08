@@ -1,7 +1,7 @@
 import { state, login } from '../state.js';
-import { esc, initials, toast } from '../ui.js';
-import { ROLE_NAME } from '../const.js';
+import { toast } from '../ui.js';
 import { icon } from '../icons.js';
+import { BRAND_LOGO } from '../const.js';
 
 export async function render(el) {
   const isDemo = state.mode === 'demo';
@@ -11,8 +11,7 @@ export async function render(el) {
 
   el.innerHTML = `<div class="login-wrap">
     <div class="login-card">
-      <div class="login-logo">NV</div>
-      <h1>NetViet <span class="accent">Sales OS</span></h1>
+      <img class="login-brand" src="${BRAND_LOGO}" alt="NetViet Sales OS">
       <p class="login-sub">Quản trị kinh doanh — TVC/Video AI · Booking Gameshow · Xây kênh triệu view</p>
 
       ${notInitialized ? `
@@ -31,12 +30,6 @@ export async function render(el) {
           <button type="submit" class="btn primary block login-submit mt">Đăng nhập</button>
         </form>
         <p class="xs mut mt" style="text-align:center">Quên mật khẩu? Liên hệ Admin/Trưởng phòng để được cấp liên kết đặt lại mật khẩu.</p>
-
-        ${isDemo ? `
-          <div class="sec-title mt">Tài khoản demo${state.demoHint ? ` · mật khẩu chung "${esc(state.demoHint)}"` : ''}</div>
-          <div data-demo-accts></div>
-          <p class="xs mut login-hint">Dùng thử đủ 3 vai trò: Admin/BGĐ, Trưởng phòng KD, Nhân viên KD. Tài khoản nhân sự chính thức sẽ do Admin cấp riêng tại mục Quản trị khi có danh sách nhân sự.</p>
-        ` : ''}
       `}
     </div>
   </div>`;
@@ -44,7 +37,6 @@ export async function render(el) {
   if (notInitialized) return;
 
   const form = el.querySelector('[data-login-form]');
-  const idInput = form.querySelector('input[name=identifier]');
   const pwInput = form.querySelector('input[name=password]');
   const toggle = form.querySelector('[data-toggle-pw]');
   const submitBtn = form.querySelector('.login-submit');
@@ -73,20 +65,4 @@ export async function render(el) {
       submitBtn.textContent = 'Đăng nhập';
     }
   };
-
-  if (!isDemo) return;
-
-  const demoWrap = el.querySelector('[data-demo-accts]');
-  demoWrap.innerHTML = state.users.map(u => `<button type="button" class="acct sm" data-id="${esc(u.id)}">
-      <div class="avatar" style="background:${u.role === 'admin' ? 'linear-gradient(135deg,#2563EB,#3B82F6)' : u.role === 'manager' ? 'linear-gradient(135deg,#EF3B24,#F59E0B)' : u.role === 'hr' ? 'linear-gradient(135deg,#0D9488,#2DD4BF)' : 'linear-gradient(135deg,#6B7280,#9CA3AF)'}">${esc(initials(u.name))}</div>
-      <div class="grow"><div class="b">${esc(u.name)}</div>
-        <div class="sm mut">${esc(ROLE_NAME[u.role] || u.role)} · mã: ${esc(u.id)}</div></div>
-      <span class="chip ${u.role === 'sales' ? 'grey' : u.role === 'manager' ? 'amber' : u.role === 'hr' ? 'green' : 'blue'}">${esc(u.role)}</span>
-    </button>`).join('');
-
-  demoWrap.querySelectorAll('.acct').forEach(b => b.onclick = () => {
-    idInput.value = b.dataset.id;
-    if (state.demoHint) pwInput.value = state.demoHint;
-    submitBtn.focus();
-  });
 }

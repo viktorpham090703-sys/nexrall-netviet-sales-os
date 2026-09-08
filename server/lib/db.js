@@ -215,6 +215,61 @@ const MIGRATIONS = [
   // dõi schema_version theo INDEX của mảng này (từng khiến 1 dòng UPDATE âm thầm không có hiệu lực
   // ở lần đầu mà không ai biết cho tới khi kiểm tra lại danh sách người dùng, xem migration 45).
   // Hàm đó cũng khớp lại DUCHT/admin@netviet.vn ở trên — vô hại vì đã is_demo=1 sẵn (no-op).
+  // 47: ảnh đại diện hồ sơ nhân sự — lưu THẲNG dạng data URL (base64) trong CSDL, không dùng R2
+  // như nv_documents. Lý do: ảnh đã được thu nhỏ ở client về 320px vuông (~20-40KB) nên đủ nhỏ để
+  // đi kèm /api/bootstrap, và thẻ <img> không gửi được header Authorization nên nếu để ở R2 sẽ phải
+  // mở thêm 1 route ảnh công khai (lộ ảnh nhân sự) hoặc ký URL tạm — phức tạp hơn nhiều so với lợi ích.
+  `ALTER TABLE nv_users ADD COLUMN avatar TEXT`,
+
+  // ===== Đợt cập nhật quy trình PKD 2026 (7 yêu cầu bổ sung của TPKD) =====
+  // 48-50: bỏ phân loại Nóng/Ấm/Nguội (cột `temp`), thay bằng TRẠNG THÁI THEO QUY TRÌNH và cho
+  // phép 1 khách mang NHIỀU trạng thái cùng lúc — ví dụ khách đã mua hàng nhưng đang được chào
+  // gói tiếp theo thì vừa "Đã mua hàng" vừa "Chào hàng". Vì là quan hệ nhiều-nhiều nhẹ và luôn
+  // đọc/ghi trọn bộ theo từng khách, lưu mảng JSON trên chính hàng khách hàng (như cột `services`
+  // đã có) thay vì tách bảng phụ — tránh thêm 1 JOIN vào truy vấn danh sách chạy ở mọi lần mở CRM.
+  // Cột `temp` GIỮ NGUYÊN trong bảng (không DROP) để không phá dữ liệu cũ và để migration 50 còn
+  // căn cứ suy ra trạng thái ban đầu; toàn bộ code đọc/ghi đã chuyển sang `statuses`.
+  `ALTER TABLE nv_customers ADD COLUMN statuses TEXT NOT NULL DEFAULT '[]'`,
+  // 49: ĐKKH (đăng ký khách hàng) — sale giữ quyền chăm sóc trong 1 tháng kể từ mốc này. Hết hạn
+  // mà chưa ký hợp đồng và sale không tái ĐKKH thì sale khác được phép nhận. `dkkh_count` đếm số
+  // lần đã tái đăng ký, phục vụ TPKD nhìn ra khách bị "giữ chỗ" nhiều kỳ mà không chốt được.
+  `ALTER TABLE nv_customers ADD COLUMN dkkh_at INTEGER`,
+  `ALTER TABLE nv_customers ADD COLUMN dkkh_count INTEGER NOT NULL DEFAULT 0`,
+  // 51: mốc ĐKKH ban đầu cho dữ liệu đã có = thời điểm tạo khách. Không dùng last_touch_at vì
+  // tương tác gần đây không đồng nghĩa với việc đăng ký lại quyền chăm sóc.
+  `UPDATE nv_customers SET dkkh_at=created_at WHERE dkkh_at IS NULL`,
+  // 52-54: suy trạng thái ban đầu từ `temp` cũ để danh sách CRM không trống trơn sau khi nâng cấp.
+  // Nóng → đang chào hàng, Ấm → đang chăm sóc, Nguội → khách mới (quay lại đầu phễu).
+  `UPDATE nv_customers SET statuses='["chao_hang"]' WHERE statuses='[]' AND temp='hot'`,
+  `UPDATE nv_customers SET statuses='["cham_soc"]' WHERE statuses='[]' AND temp='warm'`,
+  `UPDATE nv_customers SET statuses='["khach_moi"]' WHERE statuses='[]'`,
+
+  // 55-57: Phương án kinh doanh — sau khi làm báo giá / hợp đồng / nghiệm thu / thanh lý, kinh
+  // doanh nhập từng hạng mục vào đây để TPKD hoặc Giám đốc duyệt, và mọi phản hồi quay lại đúng
+  // luồng đã trình (thay vì trao đổi rời rạc qua Zalo). Tách 3 bảng: `plans` gắn khách/deal,
+  // `plan_items` là 4 hạng mục có trạng thái duyệt riêng, `plan_events` là nhật ký trao đổi.
+  `CREATE TABLE IF NOT EXISTS nv_business_plans (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, deal_id TEXT, owner_id TEXT NOT NULL, title TEXT NOT NULL, note TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS nv_plan_items (id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'todo', summary TEXT, value REAL DEFAULT 0, approver_role TEXT NOT NULL DEFAULT 'manager', approver_id TEXT, decision TEXT, decision_note TEXT, decided_at INTEGER, submitted_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS nv_plan_events (id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, item_id TEXT, user_id TEXT NOT NULL, kind TEXT NOT NULL, message TEXT, created_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS ix_plan_items_plan ON nv_plan_items (plan_id)`,
+  `CREATE INDEX IF NOT EXISTS ix_plan_events_plan ON nv_plan_events (plan_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS ix_plans_customer ON nv_business_plans (customer_id)`,
+
+  // 61-62: Cổng API — cho app ngoài (trước hết là app làm báo giá) đọc/ghi dữ liệu Sales OS.
+  // Chỉ lưu BĂM của khoá (SHA-256) đúng như cách nv_password_setup_tokens làm với token đặt mật
+  // khẩu: khoá gốc chỉ xuất hiện đúng 1 lần trong response lúc tạo, lộ CSDL không tái tạo được.
+  // `prefix` là 8 ký tự đầu để người dùng nhận ra khoá nào trong danh sách mà không cần lộ khoá.
+  `CREATE TABLE IF NOT EXISTS nv_api_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL, prefix TEXT NOT NULL, scopes TEXT NOT NULL DEFAULT '[]', acts_as TEXT NOT NULL, created_by TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, call_count INTEGER NOT NULL DEFAULT 0, last_used_at INTEGER, last_path TEXT, revoked_at INTEGER, created_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS ix_api_keys_hash ON nv_api_keys (key_hash)`,
+
+  // 63-66: hoa hồng khách hàng đến từ Partner. Bản ghi hoa hồng vẫn là MỘT hàng cho mỗi deal
+  // (nv_commissions.user_id = sale), thêm 4 cột để ghi kèm phần của partner thay vì tạo hàng
+  // thứ hai: partner không phải tài khoản người dùng nên không có user_id để đặt vào cột đó, và
+  // giữ 1 hàng/deal cũng giữ nguyên mọi truy vấn "hoa hồng của tôi" đang chạy đúng.
+  `ALTER TABLE nv_commissions ADD COLUMN scheme TEXT`,
+  `ALTER TABLE nv_commissions ADD COLUMN partner_id TEXT`,
+  `ALTER TABLE nv_commissions ADD COLUMN partner_rate REAL`,
+  `ALTER TABLE nv_commissions ADD COLUMN partner_amount REAL`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
@@ -505,8 +560,11 @@ async function seed(env) {
     ['u_hr', 'Ngô Thị Sự', 'demo-hr@example.com', 'hr', 'Chuyên viên Hành chính Nhân sự', '0901000007'],
   ];
   // is_demo=1 để tách khỏi nhân sự thật (thêm sau qua Quản trị), không lộ lên màn đăng nhập công khai.
+  // OR IGNORE: trên CSDL demo HOÀN TOÀN MỚI, ensureRoleExpansionDemoAccounts() chạy TRƯỚC seed()
+  // và đã tạo sẵn 'u_hr'; seed() vẫn chạy (nó chỉ thoát sớm khi đã có 'u_admin') nên hàng u_hr ở
+  // đây đụng UNIQUE trên nv_users.email, làm VỠ CẢ BATCH và không có tí dữ liệu mẫu nào được nạp.
   const demoHash = await hashPassword(DEMO_PASSWORD);
-  users.forEach(u => P('INSERT INTO nv_users (id,name,email,role,title,phone,active,created_at,password_hash,is_demo) VALUES (?,?,?,?,?,?,1,?,?,1)', ...u, T - 200 * DAY, demoHash));
+  users.forEach(u => P('INSERT OR IGNORE INTO nv_users (id,name,email,role,title,phone,active,created_at,password_hash,is_demo) VALUES (?,?,?,?,?,?,1,?,?,1)', ...u, T - 200 * DAY, demoHash));
   const SALES = ['u_s1', 'u_s2', 'u_s3'];
 
   /* ---------- Cấu hình KPI / định mức ---------- */
@@ -552,12 +610,32 @@ async function seed(env) {
     ['cs_11', 'u_s3', 'Nội thất Nhà Mới', 'Bán lẻ', 'cold', 'Game Viral'],
     ['cs_12', 'u_s3', 'Tập đoàn Nông nghiệp Đại Lộc', 'FMCG', 'warm', 'Giới thiệu'],
   ];
+  /* Trạng thái & mốc ĐKKH của dữ liệu mẫu — chọn tay (không random) để demo cho thấy đủ các tình
+   * huống thật: khách mang NHIỀU trạng thái cùng lúc (cs_01 vừa đã mua hàng vừa đang được chào
+   * gói tiếp theo), khách đang chạy quy trình đấu thầu, khách SẮP hết hạn ĐKKH và khách ĐÃ hết
+   * hạn để thấy được nút "Nhận khách" của sale khác. Số là số ngày trước đây đã ĐKKH. */
+  const demoStatus = [
+    [['da_mua_hang', 'chao_hang'], 6],   // cs_01 — đã mua, đang up-sale gói tiếp
+    [['bao_gia'], 12],                    // cs_02
+    [['thuong_thao', 'da_nop_ho_so'], 20],// cs_03 — ngân hàng, chạy quy trình thầu
+    [['cham_soc'], 34],                   // cs_04 — ĐÃ hết hạn ĐKKH
+    [['hop_dong'], 3],                    // cs_05
+    [['chao_hang'], 27],                  // cs_06 — sắp hết hạn (còn 3 ngày)
+    [['khach_moi'], 41],                  // cs_07 — ĐÃ hết hạn ĐKKH
+    [['cham_soc', 'chao_hang'], 9],       // cs_08
+    [['bao_gia'], 15],                    // cs_09
+    [['da_mua_hang', 'cham_soc'], 2],     // cs_10 — khách cũ đang được chăm lại
+    [['khach_moi'], 28],                  // cs_11 — sắp hết hạn (còn 2 ngày)
+    [['da_mua_hang', 'thuong_thao'], 5],  // cs_12 — Đại Lộc: đã mua + đang thương thảo gói thầu
+  ];
   customers.forEach((c, i) => {
-    P('INSERT INTO nv_customers (id,owner_id,name,industry,scale,phone,email,address,temp,source,note,services,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    const [sts, dkkhAgo] = demoStatus[i] || [['khach_moi'], 10];
+    P('INSERT INTO nv_customers (id,owner_id,name,industry,scale,phone,email,address,temp,source,note,services,statuses,dkkh_at,dkkh_count,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       c[0], c[1], c[2], c[3], pick(['SME', 'Doanh nghiệp lớn', 'Tập đoàn'], i), '028' + (3800000 + i * 137),
       'contact' + (i + 1) + '@' + c[0] + '.vn', pick(['TP.HCM', 'Hà Nội', 'Đà Nẵng'], i), c[4], c[5],
       'Khách quan tâm mảng ' + pick(['TVC AI', 'Gameshow', 'Xây kênh'], i) + '.',
       JSON.stringify([pick(['TVC/Video', 'Gameshow', 'Xây kênh'], i)]),
+      JSON.stringify(sts), T - dkkhAgo * DAY, i % 4 === 0 ? 1 : 0,
       T - (i % 9) * DAY, T - (60 - i) * DAY, T - (i % 9) * DAY);
     P('INSERT INTO nv_contacts (id,customer_id,name,title,phone,email,is_primary,created_at) VALUES (?,?,?,?,?,?,1,?)',
       uid('ct'), c[0], pick(['Chị Lan', 'Anh Hùng', 'Chị Mai', 'Anh Dũng', 'Chị Thảo'], i),

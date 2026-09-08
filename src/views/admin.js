@@ -1,6 +1,6 @@
-import { get, post, patch } from '../api.js';
+import { get, post, patch, del } from '../api.js';
 import { state, isAdmin, canManageAccounts, salesUsers } from '../state.js';
-import { esc, mount, chip, toast, modal, stat, bindTabs, confirmDialog } from '../ui.js';
+import { esc, mount, chip, toast, modal, stat, bindTabs, confirmDialog, fmtDT } from '../ui.js';
 import { roleLabel } from '../const.js';
 import { providers, testProvider, getProvider, setProvider, providerIconName } from '../aiPref.js';
 import { icon } from '../icons.js';
@@ -18,14 +18,25 @@ const CFG_LABELS = {
   report_deadline_hour: 'Giờ hạn nộp báo cáo EOD',
   task_accept_sla_min: 'SLA xác nhận nhận việc (phút)',
   sla_days: 'SLA theo giai đoạn (JSON)',
+  // Đợt cập nhật quy trình PKD 2026
+  dkkh_days: 'Thời hạn ĐKKH (ngày)',
+  dkkh_lock_when_signed: 'Khách đã ký HĐ giữ vĩnh viễn (1 = có, 0 = vẫn đếm ngược)',
+  partner_pa1_partner_rate: 'PA1 — % hoa hồng Partner',
+  partner_pa1_sale_rate: 'PA1 — % hoa hồng Sale',
+  partner_pa2_partner_rate: 'PA2 — % hoa hồng Partner',
+  partner_pa2_sale_rate: 'PA2 — % hoa hồng Sale',
 };
 
 export async function render(el) {
   const load = async () => {
-    const [u, c, ai] = await Promise.all([get('/users'), get('/config'), providers(true)]);
+    // Khoá API chỉ Admin quản lý tài khoản mới đọc được — người khác nhận 403, coi như danh sách rỗng.
+    const [u, c, ai, keys] = await Promise.all([
+      get('/users'), get('/config'), providers(true),
+      canManageAccounts() ? get('/api-keys').catch(() => ({ items: [], allowlist: [] })) : Promise.resolve({ items: [], allowlist: [] }),
+    ]);
     // HAUNV là TGĐ kiêm Admin toàn quyền — luôn ghim lên đầu danh sách người dùng.
     const users = (u.items || []).slice().sort((a, b) => (a.id === 'HAUNV' ? -1 : b.id === 'HAUNV' ? 1 : 0));
-    return { users, cfg: c, ai };
+    return { users, cfg: c, ai, keys: keys.items || [], allowlist: keys.allowlist || [] };
   };
 
   const draw = (d) => `<div class="page-head">
@@ -41,6 +52,7 @@ export async function render(el) {
     <button data-tab="users" class="${tab === 'users' ? 'on' : ''}">Người dùng</button>
     <button data-tab="config" class="${tab === 'config' ? 'on' : ''}">Ngưỡng & SLA</button>
     <button data-tab="ai" class="${tab === 'ai' ? 'on' : ''}">Kết nối AI</button>
+    ${canManageAccounts() ? `<button data-tab="apikeys" class="${tab === 'apikeys' ? 'on' : ''}">Cổng API (${d.keys.filter(k => k.active).length})</button>` : ''}
   </div>
 
   ${tab === 'ai' ? `<div class="card">${(d.ai.providers || []).map(p => `<div class="item">
@@ -80,7 +92,9 @@ export async function render(el) {
         <td>${r.user_id ? esc((state.users.find(u => u.id === r.user_id) || {}).name || r.user_id) : 'Toàn hệ thống'}</td>
         <td>${esc(String(r.value).slice(0, 40))}</td>
         <td><button class="btn sm" data-editcfg="${esc(r.ckey)}" data-user="${esc(r.user_id || '')}" data-val="${esc(r.value)}">Sửa</button></td></tr>`).join('')}
-    </table></div>` : ''}`;
+    </table></div>` : ''}
+
+  ${tab === 'apikeys' ? apiKeysTab(d) : ''}`;
 
   const bind = (d) => {
     bindTabs(el, t => tab = t, render);
@@ -172,6 +186,13 @@ export async function render(el) {
       );
     });
     el.querySelectorAll('[data-resetlink]').forEach(b => b.onclick = () => createSetupLink(b.dataset.resetlink, 'reset', b.dataset.name));
+    const ak = el.querySelector('[data-addkey]');
+    if (ak) ak.onclick = () => newKeyModal(d, () => render(el));
+    el.querySelectorAll('[data-revokekey]').forEach(b => b.onclick = () => confirmDialog(
+      'Thu hồi khoá API',
+      `Khoá "${b.dataset.name}" sẽ ngừng hoạt động ngay. App đang dùng khoá này sẽ nhận lỗi 401 cho tới khi được cấp khoá mới.`,
+      async () => { await del('/api-keys/' + b.dataset.revokekey); toast('Đã thu hồi khoá', 'ok'); render(el); },
+    ));
     const ac = el.querySelector('[data-addcfg]');
     if (ac) ac.onclick = () => cfgModal('', '', '', () => render(el));
     el.querySelectorAll('[data-editcfg]').forEach(b => b.onclick = () => cfgModal(b.dataset.editcfg, b.dataset.user, b.dataset.val, () => render(el)));
@@ -218,5 +239,73 @@ function cfgModal(key, userId, value, after) {
     ],
     submitText: 'Lưu cấu hình',
     onSubmit: async (v) => { await post('/config', v); toast('Đã cập nhật cấu hình', 'ok'); after(); },
+  });
+}
+
+/**
+ * Cổng API — nơi cấp và thu hồi khoá cho các app ngoài (app làm báo giá, app sản xuất, bảng tính
+ * của BGĐ). Khoá chạy DƯỚI DANH NGHĨA một tài khoản nhân sự, nên chỉ Admin có quyền quản lý tài
+ * khoản mới thấy tab này — cùng mức quyền với việc tạo/sửa tài khoản.
+ */
+function apiKeysTab(d) {
+  const active = d.keys.filter(k => k.active);
+  return `<div class="note mb">App ngoài gọi tới <code>${esc(location.origin)}/api/v1/…</code> kèm header
+    <code>Authorization: Bearer &lt;khoá&gt;</code>. Khoá chỉ chạm được đúng các đường dẫn trong danh sách bên dưới —
+    không đọc được người dùng, KPI, hoa hồng hay báo cáo nhân sự.</div>
+
+  <button class="btn block mb" data-addkey>+ Cấp khoá cho app mới</button>
+
+  <div class="card">
+    ${d.keys.length ? d.keys.map(k => `<div class="item">
+      <div class="dot-i">${icon('plug')}</div>
+      <div class="grow"><div class="t">${esc(k.name)} ${chip(k.active ? 'Đang hoạt động' : 'Đã thu hồi', k.active ? 'green' : 'red')}</div>
+        <div class="d"><code>${esc(k.prefix)}…</code> · chạy dưới danh nghĩa ${esc(k.acts_as_name || k.acts_as)}</div>
+        <div class="d xs">${k.call_count} lượt gọi${k.last_used_at ? ' · gần nhất ' + fmtDT(k.last_used_at) : ' · chưa dùng lần nào'}${k.last_path ? ' · ' + esc(k.last_path) : ''}</div></div>
+      ${k.active ? `<button class="btn sm" data-revokekey="${esc(k.id)}" data-name="${esc(k.name)}">Thu hồi</button>` : ''}
+    </div>`).join('') : '<div class="sm mut">Chưa cấp khoá nào.</div>'}
+  </div>
+
+  <div class="sec-title">Đường dẫn khoá API được phép gọi</div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:74px">Method</th><th>Đường dẫn</th></tr></thead>
+      <tbody>${d.allowlist.map(e => `<tr>
+        <td>${chip(e.method, e.method === 'GET' ? 'blue' : 'amber')}</td>
+        <td><code>${esc(e.path)}</code></td></tr>`).join('')}</tbody>
+    </table>
+  </div>
+  <div class="xs mut mt">Muốn mở thêm đường dẫn: sửa ALLOWLIST trong <code>server/routes/gateway.js</code> —
+    thêm route mới cho app không tự động mở ra ngoài Internet.</div>`;
+}
+
+/** Cấp khoá mới. Khoá gốc chỉ hiện ĐÚNG MỘT LẦN ở màn này — server chỉ lưu bản băm. */
+function newKeyModal(d, after) {
+  modal({
+    title: 'Cấp khoá API',
+    html: '<div class="sm mut mb">Khoá sẽ hiện đúng một lần sau khi tạo. Sao chép và dán vào app ngay — không xem lại được.</div>',
+    fields: [
+      { name: 'name', label: 'Tên app', required: true, placeholder: 'VD: App Báo giá NetViet' },
+      {
+        name: 'actsAs', label: 'Chạy dưới danh nghĩa', type: 'select', value: state.me.id,
+        options: d.users.filter(u => u.active).map(u => ({ v: u.id, n: u.name + ' — ' + roleLabel(u) })),
+        hint: 'Khoá nhìn thấy đúng phạm vi dữ liệu của người này.',
+      },
+    ],
+    submitText: 'Tạo khoá',
+    onSubmit: async (v) => {
+      const r = await post('/api-keys', v);
+      const { root } = modal({
+        title: 'Khoá API mới',
+        html: `<div class="note red mb">Sao chép ngay — khoá này không hiển thị lại lần nào nữa.</div>
+          <label class="f"><span>KHOÁ</span><input data-key type="text" readonly value="${esc(r.key)}"></label>
+          <button type="button" class="btn block mt" data-copy-key>${icon('copy', 14)} Copy khoá</button>`,
+        submitText: 'Tôi đã lưu khoá',
+        onSubmit: () => { after(); },
+      });
+      root.querySelector('[data-copy-key]').onclick = async () => {
+        try { await navigator.clipboard.writeText(r.key); toast('Đã sao chép', 'ok'); }
+        catch (e) { toast('Không sao chép được — hãy bôi đen và copy tay', 'err'); }
+      };
+    },
   });
 }

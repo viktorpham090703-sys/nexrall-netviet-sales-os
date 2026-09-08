@@ -48,6 +48,25 @@ function computeDealStatus(d, b, stage) {
 export const defaultCommissionRate = (service) => service === 'Gameshow' ? 4 : service === 'Xây kênh' ? 7 : 6;
 
 /**
+ * Cơ chế hoa hồng cho deal đến từ Partner — hai phương án hợp tác chia tiền khác hẳn nhau:
+ *   PA1 (partner giới thiệu, kinh doanh chốt): sale làm toàn bộ công đoạn nên hưởng đủ,
+ *        partner hưởng phí giới thiệu.
+ *   PA2 (partner tự chăm sóc và tự chốt): partner hưởng phần lớn, sale chỉ hưởng phần hỗ trợ
+ *        hồ sơ & đưa qua quy trình duyệt nội bộ.
+ * Tỉ lệ lấy từ cấu hình (Quản trị → Ngưỡng & SLA) chứ không cứng trong code — BGĐ chỉnh được
+ * mà không cần deploy lại. Trả null nếu deal không theo phương án partner nào.
+ */
+export function partnerScheme(cfg, pa) {
+  if (pa !== 'PA1' && pa !== 'PA2') return null;
+  const k = pa === 'PA1' ? 'pa1' : 'pa2';
+  return {
+    pa,
+    partnerRate: Number(cfg[`partner_${k}_partner_rate`]) || 0,
+    saleRate: Number(cfg[`partner_${k}_sale_rate`]) || 0,
+  };
+}
+
+/**
  * Tỉ lệ hoa hồng thực tế của 1 deal.
  * Ưu tiên lấy từ báo giá đã duyệt (bình quân gia quyền theo commission_rate của TỪNG gói),
  * chỉ khi không có báo giá mới rơi về tỉ lệ mặc định theo dòng dịch vụ.
@@ -110,7 +129,9 @@ export async function dealRoutes(ctx) {
   if ((p = match(ctx, 'GET', '/api/deals'))) {
     need(ctx);
     const s = scope(ctx, 'd.owner_id');
-    const { results } = await env.DB.prepare(`SELECT d.*, c.name customer_name, c.temp customer_temp, u.name owner_name
+    // c.statuses thay cho c.temp cũ — phân loại khách hàng nay là trạng thái theo quy trình và
+    // một khách mang được nhiều trạng thái (xem server/lib/customer.js).
+    const { results } = await env.DB.prepare(`SELECT d.*, c.name customer_name, c.statuses customer_statuses, c.partner_id customer_partner_id, u.name owner_name
       FROM nv_deals d LEFT JOIN nv_customers c ON c.id=d.customer_id LEFT JOIN nv_users u ON u.id=d.owner_id
       WHERE 1=1${s.sql} ORDER BY d.value DESC LIMIT 300`).bind(...s.args).all();
     const cfg = await getConfig(env, ctx.me.id);
@@ -183,18 +204,29 @@ export async function dealRoutes(ctx) {
     // Ghi hoa hồng khi chốt — mỗi deal chỉ có ĐÚNG 1 bản ghi hoa hồng.
     // Chốt lại nhiều lần chỉ cập nhật bản ghi cũ, không tạo thêm (chống nhân bản hoa hồng).
     if (status === 'won') {
-      const rate = await commissionRate(env, p.id, d.service);
+      // Deal đến từ Partner đi theo cơ chế hoa hồng RIÊNG (xem partnerScheme) thay vì tỉ lệ theo
+      // gói dịch vụ: PA1 partner chỉ giới thiệu nên sale hưởng đủ, PA2 partner tự chốt nên phần
+      // của sale nhỏ lại. Deal không gắn partner thì giữ nguyên cách tính cũ.
+      const cus = d.customer_id
+        ? await env.DB.prepare('SELECT partner_id FROM nv_customers WHERE id=?').bind(d.customer_id).first()
+        : null;
+      const cfg = await getConfig(env, d.owner_id);
+      const scheme = cus?.partner_id ? partnerScheme(cfg, pa) : null;
+      const rate = scheme ? scheme.saleRate : await commissionRate(env, p.id, d.service);
       const amount = Math.round(value * rate / 100);
+      const pAmount = scheme ? Math.round(value * scheme.partnerRate / 100) : null;
       const existed = await env.DB.prepare('SELECT id,status FROM nv_commissions WHERE deal_id=?').bind(p.id).first();
       if (!existed) {
-        await env.DB.prepare('INSERT INTO nv_commissions (id,user_id,deal_id,period,base,rate,amount,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-          .bind(uid('cm'), d.owner_id, p.id, monthKey(t), value, rate, amount, 'du_kien', t).run();
+        await env.DB.prepare('INSERT INTO nv_commissions (id,user_id,deal_id,period,base,rate,amount,status,scheme,partner_id,partner_rate,partner_amount,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+          .bind(uid('cm'), d.owner_id, p.id, monthKey(t), value, rate, amount, 'du_kien',
+            scheme ? scheme.pa : null, scheme ? cus.partner_id : null, scheme ? scheme.partnerRate : null, pAmount, t).run();
         await notify(env, d.owner_id, { type: 'deal', title: '🎉 Chúc mừng chốt deal!', body: d.title + ' – hoa hồng dự kiến đã được ghi nhận.', link: '#/kpi', level: 'info' });
       } else if (existed.status === 'du_kien' || existed.status === 'huy') {
         // Chưa chi (kể cả đã huỷ do kéo deal ra khỏi "chốt") → khôi phục & cập nhật theo giá trị mới.
         // Đã chi ('da_chi') thì giữ nguyên để không sửa lịch sử tiền.
-        await env.DB.prepare("UPDATE nv_commissions SET base=?,rate=?,amount=?,period=?,status='du_kien' WHERE id=?")
-          .bind(value, rate, amount, monthKey(t), existed.id).run();
+        await env.DB.prepare("UPDATE nv_commissions SET base=?,rate=?,amount=?,period=?,status='du_kien',scheme=?,partner_id=?,partner_rate=?,partner_amount=? WHERE id=?")
+          .bind(value, rate, amount, monthKey(t),
+            scheme ? scheme.pa : null, scheme ? cus.partner_id : null, scheme ? scheme.partnerRate : null, pAmount, existed.id).run();
       }
     } else if (d.status === 'won' && status !== 'won') {
       // Deal rời khỏi trạng thái chốt → huỷ hoa hồng dự kiến (chống "hoa hồng ma").
@@ -227,7 +259,12 @@ export async function dealRoutes(ctx) {
     need(ctx);
     const { results } = await env.DB.prepare('SELECT * FROM nv_products WHERE active=1 ORDER BY line, price').all();
     const cfg = await getConfig(env, ctx.me.id);
-    return json({ items: results || [], discountThreshold: cfg.discount_threshold ?? 15 });
+    // Kèm cơ chế hoa hồng Partner để Sales Kit vẽ được bảng tính % mà không phải gọi thêm 1 API
+    // cấu hình riêng — Sales Kit luôn load /api/products nên đây là chỗ rẻ nhất để gửi kèm.
+    return json({
+      items: results || [], discountThreshold: cfg.discount_threshold ?? 15,
+      partnerScheme: { PA1: partnerScheme(cfg, 'PA1'), PA2: partnerScheme(cfg, 'PA2') },
+    });
   }
   if ((p = match(ctx, 'POST', '/api/products'))) {
     need(ctx, ['admin']);
@@ -515,8 +552,10 @@ export async function dealRoutes(ctx) {
     // quan hệ trực tiếp) đều thuộc diện đấu thầu, đúng đối tượng tài liệu quy trình đấu thầu nhắm tới.
     const firstStage = TENDER_STAGES[0];
     await env.DB.batch([
-      env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,scale,temp,source,note,services,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-        .bind(cusId, owner, td.org || td.title, 'Khối nhà nước / Tập đoàn', 'Tập đoàn', 'warm', 'Đấu thầu', td.summary, JSON.stringify([td.service_tag]), t, t, t),
+      // Khách sinh từ cơ hội thầu vào thẳng trạng thái "Tiếp cận trước" của quy trình đấu thầu —
+      // không phải "Khách mới" của quy trình bán hàng thường.
+      env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,scale,temp,source,note,services,statuses,dkkh_at,dkkh_count,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(cusId, owner, td.org || td.title, 'Khối nhà nước / Tập đoàn', 'Tập đoàn', 'warm', 'Đấu thầu', td.summary, JSON.stringify([td.service_tag]), '["tiep_can_truoc"]', t, 0, t, t, t),
       env.DB.prepare('INSERT INTO nv_deals (id,owner_id,customer_id,title,service,value,stage,probability,status,source,expected_close_at,last_activity_at,stage_changed_at,note,process_type,tender_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
         .bind(dealId, owner, cusId, td.title, td.service_tag, td.value, firstStage, TENDER_PROB[firstStage], 'open', 'Đấu thầu', td.deadline_at, t, t, 'Nguồn: ' + (td.source || '') + ' – ' + (td.url || ''), 'dau_thau', td.id, t, t),
       env.DB.prepare("UPDATE nv_tender_leads SET status='converted', assigned_to=? WHERE id=?").bind(owner, p.id),

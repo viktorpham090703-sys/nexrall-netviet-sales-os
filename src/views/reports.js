@@ -14,6 +14,8 @@ const pageRange = (page, pageSize, total) => {
 // TPKD/Admin xem lịch sử báo cáo của NHIỀU nhân sự cùng lúc — trước đây xếp card chồng dọc từng
 // người phải cuộn rất dài. Nhớ nhân sự đang xem qua tab để chỉ hiện đúng 1 card tại 1 thời điểm.
 let activeReportUser = null;
+// Kỳ báo cáo đang xem (ngày · tuần · tháng) — cả 3 đều tự tổng hợp, nộp riêng từng kỳ.
+let rpTab = 'day';
 
 export async function render(el) {
   const load = () => get('/reports');
@@ -23,8 +25,8 @@ export async function render(el) {
     return `<div class="card mt">
       <div class="row"><div class="grow b">${esc(s.userName)}</div>${chip(roleLabel({ id: s.userId, role: s.role }))}</div>
       ${s.items.length ? s.items.map(r => `<div class="item">
-        <div class="dot-i">${icon(r.kind === 'week' ? 'calendar' : 'notepadText')}</div>
-        <div class="grow"><div class="t">${r.kind === 'week' ? 'Báo cáo tuần' : 'EOD'} ${esc(r.period)}</div>
+        <div class="dot-i">${icon(r.kind === 'week' ? 'calendar' : r.kind === 'month' ? 'calendarDays' : 'notepadText')}</div>
+        <div class="grow"><div class="t">${r.kind === 'week' ? 'Báo cáo tuần' : r.kind === 'month' ? 'Tổng hợp tháng' : 'EOD'} ${esc(r.period)}</div>
           <div class="d xs mut">Nộp lúc ${fmtDT(r.submitted_at)}</div>
           <div class="d">${r.calls} gọi · ${r.meetings} gặp · ${r.new_contacts} liên hệ mới · ${r.deals_moved} deal chuyển GĐ${r.revenue ? ' · DT ' + money(r.revenue) : ''}</div>
           ${r.highlight ? `<div class="d xs">${icon('lightbulb', 12)} ${esc(r.highlight)}</div>` : ''}
@@ -39,23 +41,56 @@ export async function render(el) {
     </div>`;
   };
 
+  /* Một khối số liệu tự tổng hợp — dùng chung cho cả 3 kỳ (ngày · tuần · tháng) để 3 tab không
+     trôi lệch nhau về cách trình bày và về việc mục nào được tính vào đâu. */
+  const draftCard = (label, dr, submitted, kind, deadlineHour, extra = '') => `<div class="card">
+    <div class="row wrap"><div class="grow b">${esc(label)} (${esc(dr.period)})</div>
+      ${chip('Tự tổng hợp', 'green')}
+      ${submitted ? chip('Đã nộp', 'green') : chip(kind === 'day' ? 'Chưa nộp · hạn ' + deadlineHour + 'h' : 'Chưa nộp', 'amber')}</div>
+    <div class="grid g4 mt">
+      ${stat('Cuộc gọi', dr.calls)}${stat('Gặp/Demo', dr.meetings)}
+      ${stat('Liên hệ mới', dr.new_contacts)}${stat('Tương tác với khách', dr.customer_touches)}
+    </div>
+    <div class="grid g4 mt">
+      ${stat('Deal chuyển GĐ', dr.deals_moved)}${stat('Deal chốt', dr.won_deals)}
+      ${stat('Báo giá gửi đi', dr.quotes_sent)}${stat('Doanh thu ký', money(dr.revenue))}
+    </div>
+    ${extra}
+    <button class="btn primary block mt" data-post="${kind}">${submitted ? 'Cập nhật báo cáo' : 'Xác nhận & nộp báo cáo'}</button>
+  </div>`;
+
+  /* Biểu đồ 7 ngày — cho thấy nhịp làm việc trong tuần chứ không chỉ một cục tổng. Cột cuối là
+     hôm nay, tô hổ phách để mắt bắt được ngay điểm hiện tại. */
+  const sparkline = (trend) => {
+    const max = Math.max(1, ...trend.map(x => x.activities));
+    return `<div class="spark mt">${trend.map((x, i) => `<div class="col${i === trend.length - 1 ? ' today' : ''}">
+      <div class="cv">${x.activities}</div>
+      <div class="bx" style="height:${Math.round(x.activities / max * 62)}px"></div>
+      <div class="cl">${esc(x.date.slice(8) + '/' + x.date.slice(5, 7))}</div>
+    </div>`).join('')}</div>
+    <div class="xs mut mt">Số hoạt động ghi nhận theo ngày · cột cuối là hôm nay</div>`;
+  };
+
   const draw = (d) => `
     <div class="page-head">
-      <div class="grow"><h2>Báo cáo EOD & Tuần</h2>
-        <p>Số liệu tự tổng hợp từ hoạt động — bạn chỉ bổ sung phần định tính, nộp 1 chạm</p></div>
+      <div class="grow"><h2>Báo cáo</h2>
+        <p>Ngày · tuần · tháng tự tổng hợp từ dữ liệu thêm mới và cập nhật — bạn chỉ bổ sung phần định tính</p></div>
     </div>
 
-    <div class="card">
-      <div class="row"><div class="grow b">Báo cáo hôm nay (${esc(d.draft.period)})</div>
-        ${d.submittedToday ? chip('Đã nộp', 'green') : chip('Chưa nộp · hạn ' + d.deadlineHour + 'h', 'amber')}</div>
-      <div class="grid g4 mt">
-        ${stat('Cuộc gọi', d.draft.calls)}${stat('Gặp/Demo', d.draft.meetings)}
-        ${stat('Liên hệ mới', d.draft.new_contacts)}${stat('Deal chuyển GĐ', d.draft.deals_moved)}
-      </div>
-      <div class="sm mut mt">Doanh thu ký hôm nay: <b>${money(d.draft.revenue)}</b> · tổng ${d.draft.activities} hoạt động</div>
-      <button class="btn primary block mt" data-submit>${d.submittedToday ? 'Cập nhật báo cáo hôm nay' : 'Nộp báo cáo cuối ngày (1 chạm)'}</button>
-      <button class="btn block mt" data-week>Nộp báo cáo tuần</button>
+    <div class="note mb">Toàn bộ số định lượng do hệ thống <b>tự đếm</b> từ hoạt động đã ghi, khách thêm mới,
+      deal chuyển giai đoạn và báo giá gửi đi — không sửa tay được, nên số trong báo cáo luôn khớp dữ liệu gốc.</div>
+
+    <div class="seg mb">
+      <button data-rp="day" class="${rpTab === 'day' ? 'on' : ''}">Báo cáo ngày</button>
+      <button data-rp="week" class="${rpTab === 'week' ? 'on' : ''}">Báo cáo tuần</button>
+      <button data-rp="month" class="${rpTab === 'month' ? 'on' : ''}">Tổng hợp tháng</button>
     </div>
+
+    ${rpTab === 'day' ? draftCard('Báo cáo hôm nay', d.draft, d.submittedToday, 'day', d.deadlineHour,
+      `<div class="sm mut mt">Định mức ngày: liên hệ mới ${d.draft.new_contacts}/${d.quota.contacts_day} ·
+        gọi ${d.draft.calls}/${d.quota.calls_day} · gặp ${d.draft.meetings}/${d.quota.meetings_day}</div>`)
+      : rpTab === 'week' ? draftCard('Báo cáo tuần', d.weekDraft, d.submittedWeek, 'week', d.deadlineHour, sparkline(d.trend || []))
+        : draftCard('Tổng hợp tháng', d.monthDraft, d.submittedMonth, 'month', d.deadlineHour)}
 
     <div class="sec-title">Lịch sử báo cáo</div>
     ${drawHistory(d)}`;
@@ -77,8 +112,8 @@ export async function render(el) {
   const redraw = (d) => { el.innerHTML = draw(d); initScrollFx(el); bind(d); };
 
   const bind = (d) => {
-    el.querySelector('[data-submit]').onclick = () => openForm(d, 'day', () => render(el));
-    el.querySelector('[data-week]').onclick = () => openForm(d, 'week', () => render(el));
+    el.querySelectorAll('[data-rp]').forEach(b => b.onclick = () => { rpTab = b.dataset.rp; redraw(d); });
+    el.querySelector('[data-post]').onclick = (e) => openForm(e.currentTarget.dataset.post, () => render(el));
     el.querySelectorAll('[data-report-tab]').forEach(btn => btn.onclick = () => {
       activeReportUser = btn.dataset.reportTab;
       redraw(d);
@@ -99,24 +134,24 @@ export async function render(el) {
   await mount(el, load, draw, bind);
 }
 
-function openForm(d, kind, after) {
-  const now = new Date();
-  const week = now.getUTCFullYear() + '-W' + String(Math.ceil(((now - new Date(Date.UTC(now.getUTCFullYear(), 0, 1))) / 86400000 + 1) / 7)).padStart(2, '0');
+/**
+ * Nộp báo cáo. Chỉ gửi lên phần ĐỊNH TÍNH — kỳ báo cáo và toàn bộ số liệu do server tự tổng hợp
+ * lại tại thời điểm nộp. Trước đây client gửi kèm số liệu, khiến báo cáo tuần đem đúng số của
+ * hôm nay đi nộp (sai kỳ) và về nguyên tắc còn sửa được số bằng cách gọi thẳng API.
+ */
+function openForm(kind, after) {
+  const label = kind === 'month' ? 'tháng' : kind === 'week' ? 'tuần' : 'ngày';
   modal({
-    title: kind === 'week' ? 'Báo cáo tuần' : 'Báo cáo cuối ngày (EOD)',
-    html: `<div class="sm mut mb">Số liệu định lượng đã tự tổng hợp từ hoạt động đã ghi — không cần nhập lại.</div>`,
+    title: kind === 'month' ? 'Tổng hợp tháng' : kind === 'week' ? 'Báo cáo tuần' : 'Báo cáo cuối ngày (EOD)',
+    html: `<div class="sm mut mb">Số liệu định lượng của kỳ này đã được hệ thống tự tổng hợp — không cần nhập lại.</div>`,
     fields: [
       { name: 'highlight', label: 'Điểm nổi bật / kết quả đạt được', type: 'textarea', rows: 2, required: true },
       { name: 'blocker', label: 'Khó khăn cần hỗ trợ', type: 'textarea', rows: 2 },
-      { name: 'plan', label: kind === 'week' ? 'Kế hoạch tuần tới' : 'Kế hoạch ngày mai', type: 'textarea', rows: 2 },
+      { name: 'plan', label: `Kế hoạch ${label} tới`, type: 'textarea', rows: 2 },
     ],
     submitText: 'Nộp báo cáo',
     onSubmit: async (v) => {
-      const r = await post('/reports', {
-        ...v, kind, period: kind === 'week' ? week : d.draft.period,
-        calls: d.draft.calls, meetings: d.draft.meetings, newContacts: d.draft.new_contacts,
-        dealsMoved: d.draft.deals_moved, revenue: d.draft.revenue,
-      });
+      const r = await post('/reports', { ...v, kind });
       toast(r.late ? 'Đã nộp — ghi nhận TRỄ HẠN' : 'Đã nộp báo cáo đúng hạn 🎉', r.late ? 'err' : 'ok');
       after();
     },

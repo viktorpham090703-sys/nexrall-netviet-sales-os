@@ -1,6 +1,8 @@
-import { json, match, need, uid, now, DAY, readBody, scope, audit, num, str, startOfDay, wsScope, resolveAssignableOwner, LEAD_ROLES } from '../lib/util.js';
+import { json, match, need, uid, now, DAY, readBody, scope, audit, notify, num, str, startOfDay, wsScope, wsBucket, resolveAssignableOwner, LEAD_ROLES } from '../lib/util.js';
 import { scoreLead } from '../lib/ai.js';
 import { vEmail, vPhone, vText, vPastTs, vCount, vEnum } from '../lib/validate.js';
+import { getConfig } from '../lib/kpi.js';
+import { ALL_STATUSES, DEFAULT_STATUS, normalizeStatuses, decorateCustomer, dkkhState } from '../lib/customer.js';
 
 /* Nguồn khách hàng cố định (mục 3 quy trình vận hành PKD) — khớp src/const.js LEAD_SOURCES (client). */
 const LEAD_SOURCES = ['sale_tu_tim', 'cong_ty_cap', 'khach_cu_gioi_thieu', 'partner_pa1', 'partner_pa2'];
@@ -33,21 +35,51 @@ export async function crmRoutes(ctx) {
   let p;
 
   /* ================= Khách hàng ================= */
+  /**
+   * Danh sách khách hàng + bộ lọc.
+   *
+   * `scope()` vẫn là lớp phân quyền như cũ (sales chỉ thấy khách của mình, TP/Admin thấy cả
+   * workspace, kèm ?userId= để lọc theo 1 sale). Các tham số lọc thêm bên dưới CHỈ thu hẹp
+   * kết quả trong phạm vi đó, không bao giờ nới ra.
+   *
+   * Ngoại lệ có chủ đích: `?claimable=1` cho phép SALES nhìn thấy khách của sale KHÁC khi khách
+   * đó đã hết hạn ĐKKH — đúng quy trình "sale khác được phép ĐKKH khách đó". Vẫn giới hạn trong
+   * cùng workspace (demo/chính thức) và vẫn không lộ ghi chú nội bộ, chỉ đủ thông tin để nhận.
+   */
   if ((p = match(ctx, 'GET', '/api/customers'))) {
     need(ctx);
-    const s = scope(ctx, 'c.owner_id');
+    const cfg = await getConfig(env, ctx.me.id);
+    const claimable = url.searchParams.get('claimable') === '1';
+    const s = claimable ? wsScope(ctx, 'c.owner_id') : scope(ctx, 'c.owner_id');
     const q = (url.searchParams.get('q') || '').trim();
-    const temp = url.searchParams.get('temp') || '';
     let sql = `SELECT c.*, u.name owner_name,
       (SELECT COUNT(*) FROM nv_deals d WHERE d.customer_id=c.id AND d.status='open') open_deals,
-      (SELECT COALESCE(SUM(d.value),0) FROM nv_deals d WHERE d.customer_id=c.id AND d.status='won') won_value
+      (SELECT COALESCE(SUM(d.value),0) FROM nv_deals d WHERE d.customer_id=c.id AND d.status='won') won_value,
+      (SELECT COUNT(*) FROM nv_deals d WHERE d.customer_id=c.id AND d.status='won') won_deals
       FROM nv_customers c LEFT JOIN nv_users u ON u.id=c.owner_id WHERE 1=1` + s.sql;
     const args = [...s.args];
-    if (q) { sql += ' AND (LOWER(c.name) LIKE ? OR LOWER(c.industry) LIKE ?)'; args.push('%' + q.toLowerCase() + '%', '%' + q.toLowerCase() + '%'); }
-    if (temp) { sql += ' AND c.temp=?'; args.push(temp); }
-    sql += ' ORDER BY c.last_touch_at DESC LIMIT 200';
+    if (q) { sql += ' AND (LOWER(c.name) LIKE ? OR LOWER(c.industry) LIKE ? OR c.phone LIKE ?)'; args.push('%' + q.toLowerCase() + '%', '%' + q.toLowerCase() + '%', '%' + q + '%'); }
+    // Lọc theo trường thông tin khách hàng — khớp chính xác, giá trị rỗng nghĩa là không lọc.
+    for (const [param, col] of [['industry', 'c.industry'], ['scale', 'c.scale'], ['source', 'c.nguon_khach_hang'], ['partnerId', 'c.partner_id']]) {
+      const v = (url.searchParams.get(param) || '').trim();
+      if (v) { sql += ` AND ${col}=?`; args.push(v); }
+    }
+    sql += ' ORDER BY c.last_touch_at DESC LIMIT 400';
     const { results } = await env.DB.prepare(sql).bind(...args).all();
-    return json({ items: results || [] });
+
+    // Trạng thái và ĐKKH tính ở tầng ứng dụng (JSON + mốc thời gian) nên lọc sau khi lấy hàng.
+    // Trần 400 hàng ở trên đủ rộng cho quy mô 1 phòng kinh doanh mà vẫn chặn truy vấn phình to.
+    const wantStatuses = (url.searchParams.get('status') || '').split(',').map(x => x.trim()).filter(x => ALL_STATUSES.includes(x));
+    const dkFilter = url.searchParams.get('dkkh') || '';
+    let items = (results || []).map(r => decorateCustomer(r, cfg, Number(r.won_deals) > 0));
+    if (wantStatuses.length) items = items.filter(c => c.statuses.some(k => wantStatuses.includes(k)));
+    if (dkFilter === 'expiring') items = items.filter(c => c.dkkh.kind === 'expiring');
+    if (dkFilter === 'expired') items = items.filter(c => c.dkkh.kind === 'expired');
+    if (dkFilter === 'mine') items = items.filter(c => c.owner_id === ctx.me.id);
+    // Ở chế độ "khách có thể nhận", chỉ trả về khách ĐÃ hết hạn và KHÔNG phải của chính mình —
+    // nếu không, màn "Khách có thể nhận" sẽ lẫn cả danh sách khách của bản thân.
+    if (claimable) items = items.filter(c => c.dkkh.claimable && c.owner_id !== ctx.me.id);
+    return json({ items });
   }
 
   if ((p = match(ctx, 'POST', '/api/customers'))) {
@@ -76,13 +108,17 @@ export async function crmRoutes(ctx) {
     // partner_id chỉ có ý nghĩa khi nguồn là 1 trong 2 dòng Partner — không ép buộc, chỉ lưu nếu có.
     const nguonKhachHang = vEnum(b.nguonKhachHang, LEAD_SOURCES, 'Nguồn khách hàng', null);
     const partnerId = str(b.partnerId, 40) || null;
+    const statuses = normalizeStatuses(b.statuses) || [DEFAULT_STATUS];
     const t = now(), id = uid('cs');
-    await env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,scale,phone,email,address,temp,source,note,services,nguon_khach_hang,partner_id,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    // `temp` vẫn được ghi 'warm' cố định để không vi phạm NOT NULL của cột cũ — phân loại thật
+    // nằm ở `statuses`, cột temp không còn được đọc ở bất kỳ đâu trong app.
+    // dkkh_at = thời điểm tạo: sale bắt đầu giữ quyền chăm sóc từ lúc đăng ký khách vào hệ thống.
+    await env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,scale,phone,email,address,temp,source,note,services,nguon_khach_hang,partner_id,statuses,dkkh_at,dkkh_count,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .bind(id, owner ? owner.id : ctx.me.id, name, str(b.industry, 60), str(b.scale, 40),
-        phone, email, str(b.address, 200), ['hot', 'warm', 'cold'].includes(b.temp) ? b.temp : 'warm',
+        phone, email, str(b.address, 200), 'warm',
         str(b.source, 60), str(b.note, 1000), JSON.stringify(Array.isArray(b.services) ? b.services.slice(0, 5) : []),
-        nguonKhachHang, partnerId, t, t, t).run();
-    await audit(env, ctx.me.id, 'create', 'customer', id, { name: b.name });
+        nguonKhachHang, partnerId, JSON.stringify(statuses), t, 0, t, t, t).run();
+    await audit(env, ctx.me.id, 'create', 'customer', id, { name: b.name, statuses });
     return json({ id });
   }
 
@@ -108,7 +144,13 @@ export async function crmRoutes(ctx) {
     if (wonOld.length) suggestions.unshift({ type: 're-sign', service: wonOld[0].service, text: `Hợp đồng "${wonOld[0].title}" đã hơn 2 tháng — thời điểm tốt để chào tái ký/gia hạn.` });
     if ((now() - (cus.last_touch_at || 0)) > 14 * DAY) suggestions.unshift({ type: 'warm-up', service: '', text: 'Đã hơn 14 ngày không tương tác — gửi bản tin case-study để hâm nóng.' });
 
-    return json({ customer: cus, contacts: contacts.results || [], deals: deals.results || [], activities: acts.results || [], quotes: quotes.results || [], suggestions });
+    const cfg = await getConfig(env, ctx.me.id);
+    const signed = (deals.results || []).some(d => d.status === 'won');
+    return json({
+      customer: decorateCustomer(cus, cfg, signed),
+      contacts: contacts.results || [], deals: deals.results || [], activities: acts.results || [],
+      quotes: quotes.results || [], suggestions,
+    });
   }
 
   if ((p = match(ctx, 'PATCH', '/api/customers/:id'))) {
@@ -124,15 +166,15 @@ export async function crmRoutes(ctx) {
       scale: b.scale != null ? str(b.scale, 40) : cur.scale,
       phone: b.phone != null ? vPhone(b.phone) : cur.phone,
       email: b.email != null ? vEmail(b.email) : cur.email,
-      temp: ['hot', 'warm', 'cold'].includes(b.temp) ? b.temp : cur.temp,
       note: b.note != null ? str(b.note, 1000) : cur.note,
       owner_id: newOwner ? newOwner.id : cur.owner_id,
       nguon_khach_hang: b.nguonKhachHang !== undefined ? vEnum(b.nguonKhachHang, LEAD_SOURCES, 'Nguồn khách hàng', null) : cur.nguon_khach_hang,
       partner_id: b.partnerId !== undefined ? (str(b.partnerId, 40) || null) : cur.partner_id,
+      statuses: b.statuses !== undefined ? JSON.stringify(normalizeStatuses(b.statuses) || [DEFAULT_STATUS]) : cur.statuses,
     };
-    await env.DB.prepare('UPDATE nv_customers SET name=?,industry=?,scale=?,phone=?,email=?,temp=?,note=?,owner_id=?,nguon_khach_hang=?,partner_id=?,updated_at=? WHERE id=?')
-      .bind(f.name, f.industry, f.scale, f.phone, f.email, f.temp, f.note, f.owner_id, f.nguon_khach_hang, f.partner_id, now(), p.id).run();
-    await audit(env, ctx.me.id, 'update', 'customer', p.id, {});
+    await env.DB.prepare('UPDATE nv_customers SET name=?,industry=?,scale=?,phone=?,email=?,note=?,owner_id=?,nguon_khach_hang=?,partner_id=?,statuses=?,updated_at=? WHERE id=?')
+      .bind(f.name, f.industry, f.scale, f.phone, f.email, f.note, f.owner_id, f.nguon_khach_hang, f.partner_id, f.statuses, now(), p.id).run();
+    await audit(env, ctx.me.id, 'update', 'customer', p.id, b.statuses !== undefined ? { statuses: JSON.parse(f.statuses) } : {});
     return json({ ok: true });
   }
 
@@ -150,6 +192,69 @@ export async function crmRoutes(ctx) {
       env.DB.prepare('DELETE FROM nv_customers WHERE id=?').bind(p.id),
     ]);
     await audit(env, ctx.me.id, 'delete', 'customer', p.id, { name: cus.name });
+    return json({ ok: true });
+  }
+
+  /**
+   * Tái ĐKKH — sale đang giữ khách gia hạn thêm 1 kỳ (mặc định 30 ngày).
+   *
+   * Chỉ chủ sở hữu hiện tại (hoặc TP/Admin thay mặt) mới gia hạn được: `scope()` đã lo phần này,
+   * sales chỉ lấy được khách của chính mình. Khách đã ký hợp đồng không cần gia hạn — chặn để
+   * không sinh thao tác vô nghĩa và không làm `dkkh_count` phình lên vô cớ.
+   */
+  if ((p = match(ctx, 'POST', '/api/customers/:id/dkkh/renew'))) {
+    need(ctx);
+    const s = scope(ctx, 'owner_id');
+    const cur = await env.DB.prepare('SELECT * FROM nv_customers WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
+    if (!cur) return json({ error: 'Không tìm thấy khách hàng' }, 404);
+    const cfg = await getConfig(env, ctx.me.id);
+    const won = Number(await env.DB.prepare("SELECT COUNT(*) n FROM nv_deals WHERE customer_id=? AND status='won'").bind(p.id).first('n')) || 0;
+    const st = dkkhState(cur, cfg, won > 0);
+    if (st.kind === 'locked') return json({ error: 'Khách đã ký hợp đồng — quyền chăm sóc được giữ vĩnh viễn, không cần gia hạn.' }, 409);
+    const t = now();
+    await env.DB.prepare('UPDATE nv_customers SET dkkh_at=?, dkkh_count=dkkh_count+1, updated_at=? WHERE id=?').bind(t, t, p.id).run();
+    await audit(env, ctx.me.id, 'dkkh_renew', 'customer', p.id, { name: cur.name, count: st.count + 1 });
+    return json({ ok: true, dkkh: dkkhState({ ...cur, dkkh_at: t, dkkh_count: st.count + 1 }, cfg, won > 0) });
+  }
+
+  /**
+   * Nhận khách đã hết hạn ĐKKH của sale khác.
+   *
+   * Đây là điểm DUY NHẤT trong app cho phép một sale lấy bản ghi của sale khác, nên không dùng
+   * scope() mà kiểm tra thủ công từng điều kiện: cùng workspace · thật sự đã hết hạn · chưa ký
+   * hợp đồng · không phải khách của chính mình. Chủ cũ được thông báo ngay để biết mất khách,
+   * và mọi lần chuyển đều có audit log (ai lấy của ai, lúc nào) để TPKD phân xử khi có tranh chấp.
+   */
+  if ((p = match(ctx, 'POST', '/api/customers/:id/dkkh/claim'))) {
+    need(ctx);
+    const cur = await env.DB.prepare(
+      'SELECT c.* FROM nv_customers c JOIN nv_users u ON u.id=c.owner_id WHERE c.id=? AND u.is_demo=?')
+      .bind(p.id, wsBucket(ctx.me)).first();
+    if (!cur) return json({ error: 'Không tìm thấy khách hàng' }, 404);
+    if (cur.owner_id === ctx.me.id) return json({ error: 'Khách này đang thuộc về bạn.' }, 409);
+    const cfg = await getConfig(env, ctx.me.id);
+    const won = Number(await env.DB.prepare("SELECT COUNT(*) n FROM nv_deals WHERE customer_id=? AND status='won'").bind(p.id).first('n')) || 0;
+    const st = dkkhState(cur, cfg, won > 0);
+    if (!st.claimable) {
+      return json({
+        error: st.kind === 'locked'
+          ? 'Khách đã ký hợp đồng — không thể nhận từ sale khác.'
+          : `Khách vẫn còn hạn ĐKKH (còn ${st.daysLeft} ngày). Chỉ nhận được sau khi hết hạn.`,
+      }, 409);
+    }
+    const prevOwner = cur.owner_id;
+    const t = now();
+    await env.DB.prepare('UPDATE nv_customers SET owner_id=?, dkkh_at=?, dkkh_count=0, updated_at=? WHERE id=?')
+      .bind(ctx.me.id, t, t, p.id).run();
+    await audit(env, ctx.me.id, 'dkkh_claim', 'customer', p.id, { name: cur.name, from: prevOwner, to: ctx.me.id });
+    if (prevOwner) {
+      await notify(env, prevOwner, {
+        type: 'customer', level: 'warn',
+        title: 'Khách hàng đã chuyển sang sale khác',
+        body: `"${cur.name}" hết hạn ĐKKH và chưa ký hợp đồng — ${ctx.me.name} đã nhận chăm sóc.`,
+        link: '#/crm',
+      });
+    }
     return json({ ok: true });
   }
 
@@ -317,8 +422,10 @@ export async function crmRoutes(ctx) {
     const t = now();
     const cusId = uid('cs');
     await env.DB.batch([
-      env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,phone,email,temp,source,note,services,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-        .bind(cusId, ctx.me.id, lead.company || lead.name, null, lead.phone, lead.email, 'warm', lead.channel, 'Chuyển từ lead: ' + lead.name, '[]', t, t, t),
+      // Lead vừa được tiếp cận → khách ở trạng thái "Chăm sóc" (đã có 1 lần liên hệ, chưa chào
+      // hàng). Mốc ĐKKH bắt đầu tính từ đây: sale giữ quyền chăm sóc 1 tháng kể từ lần tiếp cận.
+      env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,phone,email,temp,source,note,services,statuses,dkkh_at,dkkh_count,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(cusId, ctx.me.id, lead.company || lead.name, null, lead.phone, lead.email, 'warm', lead.channel, 'Chuyển từ lead: ' + lead.name, '[]', '["cham_soc"]', t, 0, t, t, t),
       env.DB.prepare('INSERT INTO nv_daily_contacts (id,user_id,name,company,channel,phone,customer_id,note,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .bind(uid('dc'), ctx.me.id, lead.name, lead.company, lead.channel, lead.phone, cusId, 'Tiếp cận từ danh sách lead', t),
       env.DB.prepare('INSERT INTO nv_activities (id,user_id,customer_id,deal_id,type,subject,note,outcome,duration,happened_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')

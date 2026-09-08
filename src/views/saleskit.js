@@ -52,8 +52,11 @@ export async function render(el) {
   if (isHR()) return renderHR(el);
 
   const load = async () => {
-    const [p, q, c, cus, d] = await Promise.all([get('/products'), get('/quotes'), get('/contracts'), get('/customers'), get('/deals')]);
-    return { products: p.items || [], threshold: p.discountThreshold, quotes: q.items || [], contracts: c.items || [], customers: cus.items || [], deals: d.items || [] };
+    const [p, q, c, cus, d, pt] = await Promise.all([get('/products'), get('/quotes'), get('/contracts'), get('/customers'), get('/deals'), get('/partners')]);
+    return {
+      products: p.items || [], threshold: p.discountThreshold, partnerScheme: p.partnerScheme || {},
+      quotes: q.items || [], contracts: c.items || [], customers: cus.items || [], deals: d.items || [], partners: pt.items || [],
+    };
   };
 
   const draw = (d) => `<div class="page-head">
@@ -69,6 +72,7 @@ export async function render(el) {
     ${isLead() ? `<button data-tab="approve" class="${tab === 'approve' ? 'on' : ''}">Chờ duyệt giá (${d.quotes.filter(canDecide).length})</button>` : ''}
     <button data-tab="contracts" class="${tab === 'contracts' ? 'on' : ''}">Hợp đồng (${d.contracts.length})</button>
     ${isLead() ? `<button data-tab="approveContracts" class="${tab === 'approveContracts' ? 'on' : ''}">Chờ duyệt HĐ (${d.contracts.filter(canDecideContract).length})</button>` : ''}
+    <button data-tab="partnerComm" class="${tab === 'partnerComm' ? 'on' : ''}">Hoa hồng Partner</button>
   </div>
 
   ${tab === 'catalog' ? ['TVC/Video', 'Gameshow', 'Xây kênh'].map(line => {
@@ -91,7 +95,9 @@ export async function render(el) {
   ${tab === 'contracts' || tab === 'approveContracts' ? (() => {
     const arr = tab === 'approveContracts' ? d.contracts.filter(canDecideContract) : d.contracts;
     return arr.length ? `<div class="card">${arr.map(c => contractItem(c)).join('')}</div>` : empty('penLine', 'Chưa có hợp đồng nào.');
-  })() : ''}`;
+  })() : ''}
+
+  ${tab === 'partnerComm' ? partnerCommissionTab(d) : ''}`;
 
   const bind = (d) => {
     bindTabs(el, t => tab = t, render);
@@ -397,4 +403,77 @@ function resubmitContractBuilder(c, after) {
       } catch (e) { toast(e.message, 'err'); return false; }
     },
   });
+}
+
+/**
+ * Hoa hồng khách hàng đến từ Partner — hai cơ chế chia tiền khác hẳn nhau, nên trình bày cạnh
+ * nhau trên cùng một giá trị hợp đồng để người đọc thấy ngay khác biệt thay vì phải tự nhẩm:
+ *   PA1 — Partner giới thiệu, kinh doanh chốt: sale làm toàn bộ nên hưởng đủ, partner hưởng phí giới thiệu.
+ *   PA2 — Partner tự chốt: partner hưởng phần lớn, sale chỉ hưởng phần hỗ trợ hồ sơ & quy trình duyệt.
+ * Tỉ lệ lấy từ cấu hình server (Quản trị → Ngưỡng & SLA), không cứng trong giao diện.
+ */
+function partnerCommissionTab(d) {
+  const sc = d.partnerScheme || {};
+  const pa1 = sc.PA1 || { partnerRate: 0, saleRate: 0 };
+  const pa2 = sc.PA2 || { partnerRate: 0, saleRate: 0 };
+  // Deal đang gắn phương án hợp tác — chỉ những deal này áp cơ chế partner khi chốt.
+  const paDeals = d.deals.filter(x => x.phuong_an_hop_tac === 'PA1' || x.phuong_an_hop_tac === 'PA2');
+  const partnerCustomers = d.customers.filter(c => c.partner_id);
+  const partnerName = (id) => (d.partners.find(p => p.id === id) || {}).name || '—';
+
+  const schemeCard = (key, s, title, who) => `<div class="card">
+    <div class="row wrap"><div class="grow b">${esc(title)}</div>${chip(key, key === 'PA1' ? 'blue' : 'amber')}</div>
+    <div class="sm mut">${esc(who)}</div>
+    <div class="grid g2 mt">
+      ${stat('Partner nhận', s.partnerRate + '%', 'Trên giá trị hợp đồng', 'amber')}
+      ${stat('Sale nhận', s.saleRate + '%', 'Trên giá trị hợp đồng', 'green')}
+    </div>
+    <div class="sm mut mt">Tổng chi hoa hồng: <b>${(s.partnerRate + s.saleRate).toFixed(1)}%</b></div>
+  </div>`;
+
+  // Bảng ví dụ trên một giá trị tròn để so sánh nhanh — không phải số của deal cụ thể nào.
+  const sample = 500000000;
+  return `<div class="note mb">Cơ chế áp dụng khi <b>deal được gắn phương án hợp tác</b> ở Pipeline và khách hàng có gắn Partner trong CRM.
+    Khi deal chuyển sang "đã chốt", hệ thống ghi hoa hồng theo đúng cơ chế tương ứng thay vì tỉ lệ theo gói dịch vụ.</div>
+
+  <div class="grid g2">
+    ${schemeCard('PA1', pa1, 'Partner giới thiệu — KD chốt', 'Kinh doanh làm toàn bộ công đoạn bán hàng; partner hưởng phí giới thiệu.')}
+    ${schemeCard('PA2', pa2, 'Partner tự chốt', 'Partner tự chăm sóc và chốt; sale hỗ trợ hồ sơ và đưa qua quy trình duyệt nội bộ.')}
+  </div>
+
+  <div class="sec-title">So sánh trên hợp đồng mẫu ${vnd(sample)}</div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Phương án</th><th>Ai làm phần lớn</th><th>Partner nhận</th><th>Sale nhận</th><th>Tổng chi</th><th>Còn lại cho công ty</th></tr></thead>
+      <tbody>
+        ${[['PA1', pa1, 'Kinh doanh'], ['PA2', pa2, 'Partner']].map(([k, s, who]) => {
+          const pAmt = sample * s.partnerRate / 100, sAmt = sample * s.saleRate / 100;
+          return `<tr>
+            <td><b>${esc(k)}</b></td><td class="sm">${esc(who)}</td>
+            <td class="b">${money(pAmt)}</td><td class="b">${money(sAmt)}</td>
+            <td>${money(pAmt + sAmt)}</td><td>${money(sample - pAmt - sAmt)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sec-title">Deal đang áp cơ chế Partner (${paDeals.length})</div>
+  <div class="card">${paDeals.length ? paDeals.map(x => {
+    const s = x.phuong_an_hop_tac === 'PA1' ? pa1 : pa2;
+    return `<div class="item">
+      <div class="dot-i">${icon('handshake')}</div>
+      <div class="grow"><div class="t">${esc(x.title)} ${chip(x.phuong_an_hop_tac, x.phuong_an_hop_tac === 'PA1' ? 'blue' : 'amber')}</div>
+        <div class="d">${esc(x.customer_name || '—')} · ${esc(x.owner_name || '')} · ${money(x.value)}</div>
+        <div class="d xs">Partner ${s.partnerRate}% = ${money(x.value * s.partnerRate / 100)} · sale ${s.saleRate}% = ${money(x.value * s.saleRate / 100)}</div></div>
+      ${chip(x.status === 'won' ? 'Đã chốt' : 'Đang mở', x.status === 'won' ? 'green' : 'grey')}
+    </div>`;
+  }).join('') : '<div class="sm mut">Chưa có deal nào gắn phương án hợp tác PA1/PA2.</div>'}</div>
+
+  <div class="sec-title">Khách hàng gắn Partner (${partnerCustomers.length})</div>
+  <div class="card">${partnerCustomers.length ? partnerCustomers.map(c => `<a class="item" href="#/crm/${esc(c.id)}">
+      <div class="dot-i">${icon('folderOpen')}</div>
+      <div class="grow"><div class="t">${esc(c.name)}</div>
+        <div class="d">${esc(partnerName(c.partner_id))} · ${esc(c.owner_name || '')}</div></div>
+    </a>`).join('') : '<div class="sm mut">Chưa có khách hàng nào gắn Partner trong CRM.</div>'}</div>`;
 }

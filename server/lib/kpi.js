@@ -5,6 +5,16 @@ const DEFAULTS = {
   target_revenue: 400000000, target_deals: 3, target_pipeline: 1200000000,
   discount_threshold: 15, discount_hard_cap: 30, report_deadline_hour: 17.5, task_accept_sla_min: 120,
   ramp_days: 30, pip_quota_ratio: 0.7, pip_window_days: 14,
+  // ĐKKH — sale giữ quyền chăm sóc 1 tháng; hết hạn mà chưa ký thì sale khác được nhận.
+  // `dkkh_lock_when_signed`=1 nghĩa là khách đã ký hợp đồng thì giữ vĩnh viễn, không đếm ngược nữa.
+  dkkh_days: 30, dkkh_lock_when_signed: 1,
+  // Hoa hồng khách hàng đến từ Partner — 2 cơ chế tách bạch theo phương án hợp tác ở cấp deal:
+  // PA1 partner chỉ giới thiệu còn kinh doanh chốt (sale làm toàn bộ nên hưởng đủ, partner hưởng
+  // phí giới thiệu); PA2 partner tự chăm và tự chốt (partner hưởng cao, sale chỉ hỗ trợ hồ sơ và
+  // quy trình duyệt). Đây là SỐ MẪU do chưa có quyết định chính thức của BGĐ — sửa trong Quản trị
+  // → Ngưỡng & SLA, không cần deploy lại.
+  partner_pa1_partner_rate: 5, partner_pa1_sale_rate: 6,
+  partner_pa2_partner_rate: 12, partner_pa2_sale_rate: 2,
   sla_days: {
     lead_moi: 2, tiep_can: 3, du_dieu_kien: 3, chao_hang: 4,
     cho_duyet_bg_v1: 1, cho_duyet_bg_v2: 1, da_gui_bao_gia: 3, dam_phan: 5,

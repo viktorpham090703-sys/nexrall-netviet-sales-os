@@ -1,6 +1,6 @@
-import { get, patch, post } from '../api.js';
+import { get, patch, post, del } from '../api.js';
 import { state, logout } from '../state.js';
-import { esc, initials, mount, modal, toast } from '../ui.js';
+import { esc, avatar, mount, modal, toast, confirmDialog, refreshShellAvatars } from '../ui.js';
 import { roleLabel } from '../const.js';
 import { icon } from '../icons.js';
 
@@ -22,7 +22,11 @@ export async function render(el) {
 
       <div class="card">
         <div class="row" style="gap:14px;align-items:flex-start">
-          <div class="avatar" style="width:56px;height:56px;font-size:19px">${esc(initials(p.name))}</div>
+          <div class="avatar-edit">
+            ${avatar(p, 'data-pick title="Đổi ảnh đại diện" style="width:72px;height:72px;font-size:24px"')}
+            <button type="button" class="avatar-cam" data-pick title="Đổi ảnh đại diện">${icon('camera', 14)}</button>
+            <input type="file" accept="image/png,image/jpeg,image/webp" hidden data-file>
+          </div>
           <div class="grow">
             <div class="row wrap" style="gap:6px">
               <span class="chip blue">${esc(p.id)}</span>
@@ -30,6 +34,11 @@ export async function render(el) {
             </div>
             <div class="b" style="font-size:19px;margin-top:6px">${esc(p.name)}</div>
             <div class="sm mut mt">${p.title ? esc(p.title) : '—'}</div>
+            <div class="row wrap mt" style="gap:6px">
+              <button class="btn sm" data-pick>${icon('camera', 13)}${p.avatar ? 'Đổi ảnh đại diện' : 'Tải ảnh đại diện'}</button>
+              ${p.avatar ? `<button class="btn sm" data-rm-avatar>${icon('trash2', 13)}Xoá ảnh</button>` : ''}
+            </div>
+            <div class="xs mut mt">Ảnh JPG, PNG hoặc WEBP — tối đa 8MB, hệ thống tự cắt vuông và thu nhỏ.</div>
           </div>
           <div class="right">
             <div class="row" style="gap:6px;justify-content:flex-end">
@@ -72,6 +81,27 @@ export async function render(el) {
   };
 
   const bind = (d) => {
+    const file = el.querySelector('[data-file]');
+    el.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => file.click());
+    file.onchange = async () => {
+      const f = file.files && file.files[0];
+      file.value = '';               // chọn lại đúng ảnh vừa huỷ vẫn phải kích hoạt được onchange
+      if (!f) return;
+      try {
+        const dataUrl = await squareThumb(f);
+        const r = await post('/account/avatar', { avatar: dataUrl });
+        applyAvatar(r.avatar);
+        toast('Đã cập nhật ảnh đại diện.', 'ok');
+        render(el);
+      } catch (e) { toast(e.message || 'Không xử lý được ảnh này.', 'err'); }
+    };
+    const rm = el.querySelector('[data-rm-avatar]');
+    if (rm) rm.onclick = () => confirmDialog('Xoá ảnh đại diện', 'Hồ sơ sẽ quay lại hiển thị chữ viết tắt tên bạn.', async () => {
+      await del('/account/avatar');
+      applyAvatar(null);
+      toast('Đã xoá ảnh đại diện.', 'ok');
+      render(el);
+    });
     el.querySelector('[data-edit]').onclick = () => editProfile(d.profile, () => render(el));
     el.querySelector('[data-change-pw]').onclick = changePasswordModal;
     el.querySelector('[data-logout]').onclick = async () => {
@@ -81,6 +111,41 @@ export async function render(el) {
     };
   };
   await mount(el, load, draw, bind);
+}
+
+/** Ghi ảnh mới vào phiên hiện tại để sidebar/topbar đổi theo ngay, không phải tải lại trang. */
+function applyAvatar(dataUrl) {
+  if (state.me) state.me.avatar = dataUrl || null;
+  refreshShellAvatars(state.me);
+}
+
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;  // trần ảnh GỐC người dùng chọn, trước khi thu nhỏ
+const THUMB_SIZE = 320;                    // đủ nét cho avatar 72px ở màn hình Retina
+
+/**
+ * Cắt vuông (giữa ảnh) + thu nhỏ về THUMB_SIZE rồi nén JPEG ngay tại trình duyệt. Làm ở client để
+ * ảnh máy ảnh 5-10MB không phải đi qua đường truyền và không phải nằm trong CSDL nguyên kích thước.
+ */
+function squareThumb(f) {
+  return new Promise((resolve, reject) => {
+    if (!/^image\/(png|jpeg|webp)$/.test(f.type)) return reject(new Error('Chỉ nhận ảnh JPG, PNG hoặc WEBP.'));
+    if (f.size > MAX_UPLOAD_BYTES) return reject(new Error('Ảnh vượt quá 8MB. Hãy chọn ảnh nhỏ hơn.'));
+    const url = URL.createObjectURL(f);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      try {
+        const side = Math.min(img.width, img.height);
+        const cv = document.createElement('canvas');
+        cv.width = cv.height = THUMB_SIZE;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, THUMB_SIZE, THUMB_SIZE);
+        resolve(cv.toDataURL('image/jpeg', 0.85));
+      } catch (e) { reject(new Error('Không xử lý được ảnh này.')); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Tệp không phải ảnh hợp lệ.')); };
+    img.src = url;
+  });
 }
 
 const info = (label, value) => `<div><div class="xs mut">${esc(label)}</div><div class="b" style="margin-top:2px">${value}</div></div>`;

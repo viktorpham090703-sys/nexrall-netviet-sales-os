@@ -7,7 +7,6 @@ export const state = {
   unread: 0,
   mode: 'production',
   initialized: true,
-  demoHint: null,
 };
 
 export async function boot() {
@@ -19,7 +18,6 @@ export async function boot() {
   state.unread = d.unread || 0;
   state.mode = d.mode || 'production';
   state.initialized = d.initialized !== false;
-  state.demoHint = d.demoHint || null;
   return state;
 }
 

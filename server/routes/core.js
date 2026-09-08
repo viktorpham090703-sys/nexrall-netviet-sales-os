@@ -1,9 +1,13 @@
 import { json, match, need, uid, now, DAY, readBody, audit, notify, isLead, startOfDay, todayKey, monthKey, wsScope, wsBucket, LEAD_ROLES } from '../lib/util.js';
 import { getConfig, computeKpi, slaLimit, businessDaysElapsed } from '../lib/kpi.js';
 import { createSession, destroySession, readToken, verifyPassword, hashPassword, DUMMY_PASSWORD_HASH } from '../lib/auth.js';
-import { appMode, DEMO_PASSWORD } from '../lib/db.js';
+import { appMode } from '../lib/db.js';
 import { vPassword, vText, vPhone, vDateStr, vEmail } from '../lib/validate.js';
 import { clientIp, loginRateLimited, recordLoginFailure, clearLoginAttempts } from '../lib/ratelimit.js';
+
+/** Trần dung lượng ảnh đại diện sau khi client đã thu nhỏ — 320px vuông JPEG chỉ tầm 20-40KB,
+ * 512KB là biên rộng rãi cho ảnh PNG/WEBP nhiều chi tiết mà vẫn không làm nặng /api/bootstrap. */
+const AVATAR_MAX_BYTES = 512 * 1024;
 
 export async function coreRoutes(ctx) {
   const { env, url } = ctx;
@@ -29,11 +33,13 @@ export async function coreRoutes(ctx) {
     const cfg = await getConfig(env, ctx.me?.id);
     let unread = 0;
     if (ctx.me) unread = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_notifications WHERE user_id=? AND read=0').bind(ctx.me.id).first('n')) || 0;
-    return json({
-      users, me: ctx.me || null, config: cfg, unread, mode, initialized,
-      // Gợi ý mật khẩu demo chỉ do MÁY CHỦ trả — mã nguồn client production không chứa chuỗi mật khẩu nào.
-      demoHint: (!ctx.me && mode === 'demo') ? DEMO_PASSWORD : undefined,
-    });
+    // Ảnh đại diện chỉ trả cho CHÍNH người đang đăng nhập (để sidebar/topbar vẽ được ngay), không
+    // kèm vào danh sách `users` ở trên — mỗi ảnh là data URL vài chục KB, nhân với cả phòng kinh
+    // doanh sẽ làm phình payload bootstrap vốn chạy ở mọi lần mở app.
+    const me = ctx.me
+      ? { ...ctx.me, avatar: (await env.DB.prepare('SELECT avatar FROM nv_users WHERE id=?').bind(ctx.me.id).first('avatar')) || null }
+      : null;
+    return json({ users, me, config: cfg, unread, mode, initialized });
   }
 
   /* --- Đăng nhập: xác thực mật khẩu rồi đổi lấy session token --- */
@@ -96,7 +102,7 @@ export async function coreRoutes(ctx) {
   if ((p = match(ctx, 'GET', '/api/account/profile'))) {
     need(ctx);
     const u = await env.DB.prepare(
-      'SELECT id,name,email,role,title,phone,birth_date,id_number,id_expiry,address,school,emergency_contact FROM nv_users WHERE id=?')
+      'SELECT id,name,email,role,title,phone,birth_date,id_number,id_expiry,address,school,emergency_contact,avatar FROM nv_users WHERE id=?')
       .bind(ctx.me.id).first();
     return json({ profile: u });
   }
@@ -126,6 +132,30 @@ export async function coreRoutes(ctx) {
       .bind(name, email, phone, birth_date, id_number, id_expiry, address, school, emergency_contact, ctx.me.id).run();
     await audit(env, ctx.me.id, 'profile_updated', 'user', ctx.me.id, {});
     return json({ ok: true });
+  }
+
+  /* --- Ảnh đại diện: tải lên / gỡ bỏ ảnh của CHÍNH mình. Client đã thu nhỏ ảnh về 320px vuông
+     trước khi gửi (xem src/views/profile.js), ở đây chỉ nhận data URL và kiểm lại định dạng + dung
+     lượng — không tin client đã cắt/nén đúng. --- */
+  if ((p = match(ctx, 'POST', '/api/account/avatar'))) {
+    need(ctx);
+    const b = await readBody(ctx.request);
+    const dataUrl = String(b.avatar || '').trim();
+    const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if (!m) return json({ error: 'Ảnh không hợp lệ. Chỉ nhận ảnh JPG, PNG hoặc WEBP.' }, 400);
+    // Độ dài base64 ≈ 4/3 số byte gốc — quy về byte để so với hạn mức cho dễ hiểu.
+    const bytes = Math.floor(m[2].length * 3 / 4);
+    if (bytes > AVATAR_MAX_BYTES) return json({ error: 'Ảnh đại diện vượt quá 512KB sau khi xử lý. Hãy chọn ảnh khác.' }, 400);
+    await env.DB.prepare('UPDATE nv_users SET avatar=? WHERE id=?').bind(dataUrl, ctx.me.id).run();
+    await audit(env, ctx.me.id, 'avatar_updated', 'user', ctx.me.id, { size: bytes });
+    return json({ ok: true, avatar: dataUrl });
+  }
+
+  if ((p = match(ctx, 'DELETE', '/api/account/avatar'))) {
+    need(ctx);
+    await env.DB.prepare('UPDATE nv_users SET avatar=NULL WHERE id=?').bind(ctx.me.id).run();
+    await audit(env, ctx.me.id, 'avatar_removed', 'user', ctx.me.id, {});
+    return json({ ok: true, avatar: null });
   }
 
   /* --- Đăng xuất: huỷ phiên --- */

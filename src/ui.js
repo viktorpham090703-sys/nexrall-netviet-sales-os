@@ -31,6 +31,26 @@ export function rel(ts) {
 }
 export const initials = (name) => String(name || '?').trim().split(/\s+/).slice(-2).map(x => x[0]).join('').toUpperCase();
 
+/** Vòng tròn đại diện: ảnh thật nếu người dùng đã tải lên, không thì viết tắt tên như trước.
+ * `u` là bản ghi người dùng bất kỳ có {name, avatar}; `attrs` để gắn thêm class/style/data-*. */
+export function avatar(u, attrs = '') {
+  const src = u && u.avatar ? String(u.avatar) : '';
+  const inner = src
+    ? `<img src="${esc(src)}" alt="${esc(u.name || '')}">`
+    : esc(initials(u && u.name));
+  return `<div class="avatar" ${attrs}>${inner}</div>`;
+}
+
+/** Vẽ lại các vòng tròn đại diện của CHÍNH mình đang nằm ngoài view hiện tại (sidebar + topbar)
+ * sau khi đổi ảnh — rẻ hơn nhiều so với dựng lại toàn bộ khung app chỉ để đổi 1 tấm ảnh. */
+export function refreshShellAvatars(me) {
+  document.querySelectorAll('.side-profile-btn .avatar, .topbar .avatar[data-me]').forEach(el => {
+    el.innerHTML = me && me.avatar
+      ? `<img src="${esc(me.avatar)}" alt="${esc(me.name || '')}">`
+      : esc(initials(me && me.name));
+  });
+}
+
 export const chip = (text, tone = '') => `<span class="chip ${tone}">${esc(text)}</span>`;
 export const bar = (val, max, cls = '') => `<div class="bar ${cls}"><i style="width:${Math.min(100, pct(val, max))}%"></i></div>`;
 

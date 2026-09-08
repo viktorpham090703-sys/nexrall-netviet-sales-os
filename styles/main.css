@@ -25,16 +25,24 @@ img{max-width:100%}
 .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;padding:10px 14px;
   background:var(--bg2);border-bottom:1px solid var(--line)}
 .topbar .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.3px}
-.brand-logo{height:34px;display:block}
-.sidebar a.brand-logo-link{display:inline-block;padding:0;border-radius:0;background:none;width:auto}
-.sidebar a.brand-logo-link:hover,.sidebar a.brand-logo-link:active,.sidebar a.brand-logo-link.active{background:none;box-shadow:none}
+.brand-logo{height:19px;display:block}
+.sidebar a.brand-logo-link{display:inline-block;padding:7px 10px;border-radius:10px;background:#fff;width:auto}
+.sidebar a.brand-logo-link:hover,.sidebar a.brand-logo-link:active,.sidebar a.brand-logo-link.active{background:#fff;box-shadow:none}
 .topbar .grow{flex:1}
 .icon-btn{background:var(--bg2);border:1px solid var(--line);color:var(--txt);width:36px;height:36px;border-radius:10px;
   display:grid;place-items:center;cursor:pointer;position:relative;font-size:16px}
 .icon-btn .dot{position:absolute;top:-4px;right:-4px;background:var(--red);color:#fff;font-size:10px;min-width:17px;height:17px;
   border-radius:9px;display:grid;place-items:center;padding:0 4px;font-weight:700}
 .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--blue),#3B82F6);
-  display:grid;place-items:center;font-weight:700;font-size:13px;cursor:pointer;flex:none;color:#fff}
+  display:grid;place-items:center;font-weight:700;font-size:13px;cursor:pointer;flex:none;color:#fff;overflow:hidden}
+.avatar img{width:100%;height:100%;object-fit:cover;display:block}
+/* ảnh đại diện có nút đổi ảnh (trang Hồ sơ nhân sự) */
+.avatar-edit{position:relative;flex:none}
+.avatar-edit .avatar{cursor:pointer}
+.avatar-cam{position:absolute;right:-2px;bottom:-2px;width:26px;height:26px;border-radius:50%;
+  background:var(--bg2);border:1px solid var(--line);color:var(--txt);display:grid;place-items:center;
+  cursor:pointer;padding:0;box-shadow:0 1px 3px rgba(15,23,42,.18)}
+.avatar-cam:hover{background:var(--bg3)}
 
 main{flex:1;padding:14px 14px calc(var(--nav-h) + 26px);max-width:1240px;width:100%;margin:0 auto}
 .page-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;flex-wrap:wrap}
@@ -218,10 +226,7 @@ textarea{min-height:74px;resize:vertical}
 .login-wrap .hero p{color:#93A5C0;font-size:13.5px;margin-top:6px}
 .login-card{width:100%;max-width:380px;background:#0E2A4D;border:1px solid #1E3A5F;border-radius:22px;
   padding:30px 26px 26px;text-align:center;box-shadow:0 20px 60px #0007}
-.login-logo{width:66px;height:66px;margin:0 auto 16px;border-radius:18px;background:linear-gradient(135deg,var(--red),var(--orange));
-  display:grid;place-items:center;font-size:22px;font-weight:900;color:#fff}
-.login-card h1{font-size:21px;color:#fff}
-.login-card h1 .accent{color:var(--orange)}
+.login-brand{display:block;width:min(216px,68%);margin:0 auto;padding:11px 15px;border-radius:14px;background:#fff}
 .login-card .login-sub{color:#93A5C0;font-size:12.5px;margin-top:6px;line-height:1.4}
 .login-card .mut{color:#93A5C0}
 .login-card form{text-align:left}
@@ -235,18 +240,46 @@ textarea{min-height:74px;resize:vertical}
   color:#93A5C0;cursor:pointer;font-size:15px;display:grid;place-items:center;border-radius:8px}
 .pw-toggle:hover{background:#16385F}
 .login-submit{padding:11px 13px;font-size:14px}
-.login-hint{margin-top:14px}
-.acct{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:var(--bg2);border:1px solid var(--line);
-  border-radius:14px;padding:11px 12px;margin-top:9px;cursor:pointer;color:var(--txt)}
-.acct:hover{border-color:var(--orange)}
-.acct.sm{padding:8px 10px;margin-top:7px;border-radius:12px}
-.acct.sm .avatar{width:28px;height:28px;font-size:11px}
-.acct.sm .b{font-size:13px}
-.login-card .acct{background:#16385F;border:1px solid #274A70;color:#fff}
-.login-card .acct.sm{background:#16385F}
 .empty{text-align:center;color:var(--mut);padding:26px 10px;font-size:13px}
 .empty .e{font-size:30px;display:block;margin-bottom:6px}
 .err-box{background:rgba(220,38,38,.08);border:1px solid var(--danger);border-radius:12px;padding:11px;font-size:13px}
 .ai-bubble{background:var(--bg3);border:1px solid var(--line);border-radius:13px;padding:11px 12px;white-space:pre-wrap;font-size:13.3px;line-height:1.5;color:var(--txt)}
 .ai-bubble.me{background:#DBEAFE;border-color:#93C5FD}
 .badge-line{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+
+/* ===== Đợt cập nhật quy trình PKD 2026 ===== */
+/* Khối ghi chú giải thích quy tắc nghiệp vụ (ĐKKH, luồng duyệt phương án, cổng API) — dùng viền
+   trái thay vì card đầy đủ để không cạnh tranh thị giác với các card dữ liệu xung quanh. */
+.note{border-left:3px solid var(--orange);background:rgba(245,158,11,.07);padding:9px 12px;
+  border-radius:0 10px 10px 0;font-size:12.5px;color:var(--txt)}
+.note.blue{border-left-color:var(--blue);background:rgba(29,78,216,.09)}
+.note.red{border-left-color:var(--danger);background:rgba(220,38,38,.09)}
+
+/* Bảng dữ liệu rộng (danh sách endpoint cổng API) — luôn tự cuộn ngang trong khung của nó để
+   thân trang không bao giờ bị cuộn ngang trên điện thoại. */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--bg2)}
+.tbl-wrap table{border-collapse:collapse;width:100%;min-width:560px}
+.tbl-wrap th{font-size:11px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;
+  text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);background:#1d1d22;white-space:nowrap}
+.tbl-wrap td{padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
+.tbl-wrap tr:last-child td{border-bottom:none}
+
+/* Luồng trình duyệt Phương án kinh doanh — cột mốc dọc nối 4 hạng mục theo đúng thứ tự vòng đời. */
+.flow-step{display:flex;gap:12px}
+.flow-rail{display:flex;flex-direction:column;align-items:center;flex:0 0 26px}
+.flow-dot{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11px;
+  font-weight:800;border:2px solid var(--line);background:var(--bg3);flex:0 0 26px}
+.flow-dot.approved{background:rgba(22,163,74,.2);border-color:#15803D;color:#86efac}
+.flow-dot.pending{background:rgba(245,158,11,.18);border-color:#78350f;color:#fcd34d}
+.flow-dot.revise{background:rgba(220,38,38,.18);border-color:#7f1d1d;color:#fca5a5}
+.flow-line{width:2px;flex:1;background:var(--line);min-height:12px}
+.flow-body{padding-bottom:14px;flex:1;min-width:0}
+
+/* Biểu đồ cột tương tác 7 ngày trong báo cáo tuần. */
+.spark{display:flex;align-items:flex-end;gap:6px;height:88px;padding-top:4px}
+.spark .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.spark .bx{width:100%;background:linear-gradient(180deg,#7c2d12,var(--red));border-radius:5px 5px 2px 2px;min-height:3px}
+.spark .col.today .bx{background:linear-gradient(180deg,var(--orange),#D97706)}
+.spark .cl{font-size:9.5px;color:var(--mut);white-space:nowrap}
+.spark .cv{font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.spark .col.today .cv{color:var(--orange)}

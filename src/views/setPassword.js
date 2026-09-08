@@ -2,6 +2,7 @@ import { get, post } from '../api.js';
 import { esc, toast } from '../ui.js';
 import { state } from '../state.js';
 import { icon } from '../icons.js';
+import { BRAND_LOGO } from '../const.js';
 
 /**
  * Đặt mật khẩu. Phục vụ 3 tình huống:
@@ -17,8 +18,7 @@ export async function render(el, { id } = {}) {
 
   el.innerHTML = `<div class="login-wrap">
     <div class="login-card">
-      <div class="login-logo">NV</div>
-      <h1>NetViet <span class="accent">Sales OS</span></h1>
+      <img class="login-brand" src="${BRAND_LOGO}" alt="NetViet Sales OS">
       <div data-body class="mt"><p class="sm mut">Đang kiểm tra…</p></div>
     </div>
   </div>`;
