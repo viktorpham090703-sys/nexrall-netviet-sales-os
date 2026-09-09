@@ -6,6 +6,7 @@
   "description": "NetViet Sales OS — lớp cấu hình chạy local (Cloudflare Worker + D1 + KV)",
   "scripts": {
     "assets": "node local/sync-assets.mjs",
+    "build": "node local/sync-assets.mjs --copy",
     "dev": "npm run assets && wrangler dev --local --port 8787",
     "start": "npm run dev",
     "clean": "rm -rf public .wrangler",

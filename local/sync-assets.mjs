@@ -1,7 +1,7 @@
 // Gom front-end tĩnh vào ./public để Wrangler phục vụ.
 // Dùng symlink nên sửa file trong src/ hoặc styles/ là refresh trình duyệt thấy ngay,
 // không cần chạy lại lệnh này.
-import { mkdir, rm, symlink, copyFile, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, copyFile, cp, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,14 +36,19 @@ await mkdir(pub, { recursive: true });
 // index.html copy (file lẻ, ít khi sửa)
 await copyFile(join(root, 'index.html'), join(pub, 'index.html'));
 
-// src/ và styles/ symlink để sửa là ăn ngay
+// Local: symlink để sửa file trong src/ hoặc styles/ là refresh trình duyệt thấy ngay.
+// CI: COPY thật. Symlink sinh ra ở đây là đường dẫn TUYỆT ĐỐI (vd /opt/buildhome/repo/src),
+// chỉ đúng trong đúng container đã tạo ra nó — copy thì artifact tự đứng được, không phụ
+// thuộc việc Cloudflare build và deploy có chạy chung một container hay không.
+const useCopy = process.argv.includes('--copy') || process.env.CI === 'true';
 for (const dir of ['src', 'styles']) {
   const target = join(root, dir);
   if (!existsSync(target)) {
     console.error(`[sync-assets] thiếu thư mục ${dir}/ — bỏ qua`);
     continue;
   }
-  await symlink(target, join(pub, dir), 'dir');
+  if (useCopy) await cp(target, join(pub, dir), { recursive: true });
+  else await symlink(target, join(pub, dir), 'dir');
 }
 
-console.log('[sync-assets] public/ sẵn sàng (index.html + src/ + styles/)');
+console.log(`[sync-assets] public/ sẵn sàng (index.html + src/ + styles/) — chế độ ${useCopy ? 'copy' : 'symlink'}`);
