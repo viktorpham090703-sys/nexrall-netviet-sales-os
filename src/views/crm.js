@@ -35,6 +35,14 @@ const statusChips = (c) => (c.statuses || []).map(k => chip(statusDef(k).n, stat
 /** Chip ĐKKH + số ngày còn lại. */
 const dkkhChip = (dk) => chip(dkkhLabel(dk), (DKKH_TONE[dk?.kind] || DKKH_TONE.locked).c);
 
+/** Nhãn thân thiện trong riêng bộ chọn Sale phụ trách. Giữ nguyên ID để lọc/gán dữ liệu không
+ * bị ảnh hưởng bởi việc hiển thị tên nhân sự. */
+const responsibleLabel = (u) => {
+  if (u.id === 'HUONGLT') return 'Lưu Thiên Hương';
+  if (u.id === 'PHUONGVH') return 'Vũ Hà Phương';
+  return u.name;
+};
+
 export async function render(el, params) {
   if (params && params.id) return detail(el, params.id);
 
@@ -46,7 +54,7 @@ export async function render(el, params) {
       // nghĩa với sales; TP/Admin đã nhìn thấy toàn đội nên không cần tab này.
       isLead() ? Promise.resolve({ items: [] }) : get('/customers?claimable=1'),
     ]);
-    return { items: cRes.items || [], partners: pRes.items || [], claimable: claimRes.items || [] };
+    return { items: cRes.items || [], sales: cRes.sales || [], partners: pRes.items || [], claimable: claimRes.items || [] };
   };
 
   const draw = (d) => {
@@ -86,11 +94,11 @@ export async function render(el, params) {
         ${nFilters ? `<button class="btn sm ghost" data-clearf>Xoá lọc (${nFilters})</button>` : ''}</div>
       <input placeholder="Tìm theo tên, ngành hoặc số điện thoại…" value="${esc(filter.q)}" data-q class="mb">
       <div class="grid g3">
-        ${isLead() ? sel('owner', 'Sale phụ trách', filter.owner, [{ v: '', n: '— Tất cả sale —' }, ...state.users.filter(u => u.role === 'sales').map(u => ({ v: u.id, n: u.name }))]) : ''}
-        ${sel('industry', 'Ngành hàng', filter.industry, [{ v: '', n: '— Tất cả ngành —' }, ...industries.map(i => ({ v: i, n: i }))])}
-        ${sel('scale', 'Quy mô', filter.scale, [{ v: '', n: '— Tất cả quy mô —' }, ...CUSTOMER_SCALE_OPTIONS.map(s => ({ v: s, n: s }))])}
-        ${sel('source', 'Nguồn khách hàng', filter.source, [{ v: '', n: '— Tất cả nguồn —' }, ...LEAD_SOURCES.map(s => ({ v: s.v, n: s.n }))])}
-        ${sel('dkkh', 'Tình trạng ĐKKH', filter.dkkh, [{ v: '', n: '— Tất cả —' }, { v: 'expiring', n: 'Sắp hết hạn (≤5 ngày)' }, { v: 'expired', n: 'Đã hết hạn' }, ...(isLead() ? [{ v: 'mine', n: 'Do tôi phụ trách' }] : [])])}
+        ${isLead() ? sel('owner', 'Sale phụ trách', filter.owner, [{ v: '', n: 'All' }, ...d.sales.map(u => ({ v: u.id, n: responsibleLabel(u) }))]) : ''}
+        ${sel('industry', 'Ngành hàng', filter.industry, [{ v: '', n: 'All' }, ...industries.map(i => ({ v: i, n: i }))])}
+        ${sel('scale', 'Quy mô', filter.scale, [{ v: '', n: 'All' }, ...CUSTOMER_SCALE_OPTIONS.map(s => ({ v: s, n: s }))])}
+        ${sel('source', 'Nguồn khách hàng', filter.source, [{ v: '', n: 'All' }, ...LEAD_SOURCES.map(s => ({ v: s.v, n: s.n }))])}
+        ${sel('dkkh', 'Tình trạng ĐKKH', filter.dkkh, [{ v: '', n: 'All' }, { v: 'expiring', n: 'Sắp hết hạn (≤5 ngày)' }, { v: 'expired', n: 'Đã hết hạn' }, ...(isLead() ? [{ v: 'mine', n: 'Do tôi phụ trách' }] : [])])}
       </div>
       <div class="sec-title" style="margin-top:12px">Trạng thái — quy trình bán hàng</div>
       <div class="row wrap" style="gap:5px">${saleStatuses().map(s => statusFilterBtn(s)).join('')}</div>
@@ -170,7 +178,8 @@ function customerRow(c) {
     <div class="grow" style="min-width:0">
       <a class="t" href="#/crm/${esc(c.id)}" style="display:block">${esc(c.name)}</a>
       <div class="d">${esc(c.industry || 'Chưa phân ngành')} · ${c.open_deals} deal mở · đã ký ${money(c.won_value)}</div>
-      <div class="d xs">Tương tác gần nhất: ${rel(c.last_touch_at)}${isLead() ? ' · phụ trách ' + esc(c.owner_name || '—') : ''}${c.nguon_khach_hang ? ' · ' + esc(leadSourceName(c.nguon_khach_hang)) : ''}</div>
+      <div class="d xs">Tương tác gần nhất: ${rel(c.last_touch_at)}${c.nguon_khach_hang ? ' · ' + esc(leadSourceName(c.nguon_khach_hang)) : ''}</div>
+      ${isLead() ? `<div class="d xs mt">Sales phụ trách: <b>${esc(c.owner_name || 'Chưa gán')}</b></div>` : ''}
       <div class="row wrap mt" style="gap:4px">${statusChips(c)}</div>
     </div>
     <div class="right">
@@ -355,7 +364,7 @@ function customerModal(c, d, after) {
       { name: 'status', label: 'Trạng thái ban đầu', type: 'select', options: CUSTOMER_STATUSES.map(s => ({ v: s.k, n: s.n })) },
       { name: 'nguonKhachHang', label: 'Nguồn khách hàng', type: 'select', options: [{ v: '', n: '— chưa rõ —' }, ...LEAD_SOURCES] },
       { name: 'partnerId', label: 'Partner (nếu nguồn là Partner)', type: 'select', options: [{ v: '', n: '— không —' }, ...d.partners.map(pt => ({ v: pt.id, n: pt.name }))] },
-      ...(isLead() ? [assigneeField('ownerId')] : []),
+      ...(isLead() ? [{ name: 'ownerId', label: 'Sale phụ trách', type: 'select', options: d.sales.map(u => ({ v: u.id, n: responsibleLabel(u) })) }] : []),
       { name: 'note', label: 'Ghi chú', type: 'textarea', rows: 2 },
     ],
     onSubmit: async (v) => {

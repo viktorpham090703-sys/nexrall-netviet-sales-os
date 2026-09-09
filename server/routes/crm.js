@@ -79,7 +79,20 @@ export async function crmRoutes(ctx) {
     // Ở chế độ "khách có thể nhận", chỉ trả về khách ĐÃ hết hạn và KHÔNG phải của chính mình —
     // nếu không, màn "Khách có thể nhận" sẽ lẫn cả danh sách khách của bản thân.
     if (claimable) items = items.filter(c => c.dkkh.claimable && c.owner_id !== ctx.me.id);
-    return json({ items });
+    // Panel TPKD cần danh sách người phụ trách độc lập với các hàng khách đang lọc: ví dụ một
+    // Sales (hoặc chính TPKD) chưa được gán khách nào vẫn phải xuất hiện trong bộ lọc để TPKD có
+    // cái nhìn đủ về cả đội. TPKD là người trực tiếp tham gia chăm sóc khách nên được phép là
+    // chủ sở hữu khách bên cạnh các Sales.
+    // Chỉ trả danh sách này cho nhóm quản lý; Sales thường không cần, cũng không được dùng nó để
+    // suy luận danh sách nhân sự ngoài phạm vi dữ liệu của mình.
+    let sales = [];
+    if (LEAD_ROLES.includes(ctx.me.role)) {
+      const { results: team } = await env.DB.prepare(
+        "SELECT id,name,title,role FROM nv_users WHERE active=1 AND role IN ('sales','manager') AND is_demo=? ORDER BY CASE role WHEN 'manager' THEN 0 ELSE 1 END, name"
+      ).bind(wsBucket(ctx.me)).all();
+      sales = team || [];
+    }
+    return json({ items, sales });
   }
 
   if ((p = match(ctx, 'POST', '/api/customers'))) {

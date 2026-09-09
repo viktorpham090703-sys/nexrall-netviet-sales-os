@@ -326,10 +326,15 @@ export async function migrate(env) {
     // vì seed() không chạy lại một khi đã có 'u_admin'.
     await ensureRoleExpansionDemoAccounts(env);
     await seed(env);
+    // Bổ sung tập dữ liệu CRM đủ lớn để demo bộ lọc, phân quyền sale phụ trách và luồng nguồn
+    // khách từ Partner. Hàm này có id cố định nên cả CSDL demo cũ lẫn CSDL mới đều chỉ nhận
+    // đúng một lần, không tạo bản ghi trùng mỗi khi Worker khởi động.
+    await ensureExpandedDemoCrmData(env);
   } else {
     // Production, vận hành Beta (2026-08-28): KHÔNG xoá dữ liệu demo — gộp vào 6 tài khoản chính
     // thức để Beta có dữ liệu thật để test (xem mergeDemoAccountsIntoOfficial()), rồi đặt lại mật
     // khẩu chung Netviet@123 cho cả 6 tài khoản (xem resetOfficialPasswordsForBeta()).
+    await moveExpandedDemoCrmDataToOfficialWorkspace(env);
     await mergeDemoAccountsIntoOfficial(env);
     await resetOfficialPasswordsForBeta(env);
     await bootstrapProductionAdmin(env);
@@ -533,6 +538,112 @@ async function bootstrapProductionAdmin(env) {
 }
 
 const pick = (arr, i) => arr[i % arr.length];
+
+/** 50 Partner và 50 khách hàng bổ sung cho môi trường demo.
+ *
+ * Không đặt trong seed() vì seed() cố ý thoát sớm ngay khi CSDL đã có u_admin. Tách thành bước
+ * nâng cấp idempotent giúp những workspace demo đã tồn tại cũng có ngay dữ liệu để test mà không
+ * cần reset D1. ID có tiền tố riêng, ổn định và không dùng uid() để lần chạy sau nhận diện chính
+ * xác từng bản ghi đã thêm.
+ */
+async function ensureExpandedDemoCrmData(env) {
+  const T = now();
+  const sales = ['u_s1', 'u_s2', 'u_s3'];
+  const partnerKinds = [
+    'Truyền thông', 'Digital', 'Sự kiện', 'Sáng tạo', 'Công nghệ',
+    'Nội dung', 'Thương mại', 'Giải pháp', 'Marketing', 'Kết nối',
+  ];
+  const partnerPlaces = [
+    'Sài Gòn', 'Hà Nội', 'Đà Nẵng', 'Cần Thơ', 'Hải Phòng',
+    'Nha Trang', 'Bình Dương', 'Đồng Nai', 'Quảng Ninh', 'Huế',
+  ];
+  const companyPrefixes = [
+    'An Khang', 'Minh Phát', 'Việt Thịnh', 'Hưng Gia', 'Đại Nam',
+    'Bảo Tín', 'Phúc Long', 'Thiên An', 'Khải Hoàn', 'Tân Thành',
+  ];
+  const companySuffixes = [
+    'Group', 'Holdings', 'Corporation', 'Media', 'Solutions',
+    'Retail', 'Technology', 'Investment', 'Distribution', 'Academy',
+  ];
+  const industries = ['FMCG', 'Bất động sản', 'Ngân hàng', 'Giáo dục', 'Dược phẩm', 'Ô tô', 'Bán lẻ', 'Công nghệ'];
+  const scales = ['SME', 'Doanh nghiệp lớn', 'Tập đoàn'];
+  const services = ['TVC/Video', 'Gameshow', 'Xây kênh'];
+  const statuses = ['khach_moi', 'cham_soc', 'chao_hang', 'bao_gia', 'hop_dong', 'da_mua_hang'];
+  const customerSources = ['sale_tu_tim', 'cong_ty_cap', 'khach_cu_gioi_thieu', 'partner_pa1', 'partner_pa2'];
+  const statements = [];
+
+  for (let i = 0; i < 50; i++) {
+    const n = String(i + 1).padStart(2, '0');
+    const id = `pn_demo_${n}`;
+    statements.push(env.DB.prepare(
+      'INSERT OR IGNORE INTO nv_partners (id,name,phone,email,note,sale_phu_trach_id,active,created_at,updated_at) VALUES (?,?,?,?,?,?,1,?,?)'
+    ).bind(
+      id,
+      `Đối tác ${pick(partnerKinds, i)} ${pick(partnerPlaces, i)} ${n}`,
+      '0908' + String(100000 + i).slice(-6),
+      `partner.demo.${n}@example.com`,
+      `Partner demo ${n} phục vụ kiểm thử phân công sale và nguồn khách hàng.`,
+      pick(sales, i), T - (50 - i) * DAY, T - (i % 12) * DAY,
+    ));
+  }
+
+  for (let i = 0; i < 50; i++) {
+    const n = String(i + 1).padStart(2, '0');
+    const source = pick(customerSources, i);
+    const partnerId = source.startsWith('partner_') ? `pn_demo_${String((i % 50) + 1).padStart(2, '0')}` : null;
+    const customerId = `cs_demo_${n}`;
+    const owner = pick(sales, i);
+    const status = pick(statuses, i);
+    statements.push(env.DB.prepare(
+      'INSERT OR IGNORE INTO nv_customers (id,owner_id,name,industry,scale,phone,email,address,temp,source,note,services,nguon_khach_hang,partner_id,statuses,dkkh_at,dkkh_count,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+    ).bind(
+      customerId, owner,
+      `Công ty ${pick(companyPrefixes, i)} ${pick(companySuffixes, Math.floor(i / 10))} ${n}`,
+      pick(industries, i), pick(scales, i), '028' + String(3900000 + i * 97),
+      `customer.demo.${n}@example.com`, pick(['TP.HCM', 'Hà Nội', 'Đà Nẵng'], i), 'warm',
+      partnerId ? 'Đối tác' : pick(['Website', 'Sự kiện', 'Giới thiệu'], i),
+      `Khách hàng demo ${n}; dùng để kiểm thử tìm kiếm, bộ lọc và ĐKKH.`,
+      JSON.stringify([pick(services, i)]), source, partnerId, JSON.stringify([status]),
+      T - (i % 38 + 1) * DAY, i % 5 === 0 ? 1 : 0, T - (i % 14) * DAY,
+      T - (90 - i) * DAY, T - (i % 14) * DAY,
+    ));
+  }
+
+  for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
+}
+
+/** Chuyển đúng tập 50 Partner + 50 khách `*_demo_*` sang workspace tài khoản chính.
+ *
+ * Partner không có cột is_demo riêng; workspace của Partner được suy ra từ sale_phu_trach_id.
+ * Vì vậy chỉ cần gán sale phụ trách từ 3 sales demo sang 2 sales chính thức. Chia đều 25/25 để
+ * cả PHUONGVH và HUONGLT đều có dữ liệu để vận hành/test. Điều kiện owner cũ là u_s1/u_s2/u_s3
+ * khiến thao tác idempotent và không ghi đè việc phân công đã chỉnh thủ công sau khi chuyển.
+ * Khách hàng được chuyển cùng Partner để TPKD nhìn thấy đầy đủ danh sách khách và các liên kết
+ * partner_id không bị vắt qua hai workspace. Không đụng dữ liệu không có tiền tố demo này.
+ */
+async function moveExpandedDemoCrmDataToOfficialWorkspace(env) {
+  const t = now();
+  const { results: partnerRows } = await env.DB.prepare(
+    "SELECT id FROM nv_partners WHERE id LIKE 'pn_demo_%' AND sale_phu_trach_id IN ('u_s1','u_s2','u_s3') ORDER BY id"
+  ).all();
+  const { results: customerRows } = await env.DB.prepare(
+    "SELECT id FROM nv_customers WHERE id LIKE 'cs_demo_%' AND owner_id IN ('u_s1','u_s2','u_s3') ORDER BY id"
+  ).all();
+  const partners = partnerRows || [];
+  const customers = customerRows || [];
+  const statements = [
+    ...partners.map((partner, i) => env.DB.prepare(
+      'UPDATE nv_partners SET sale_phu_trach_id=?, updated_at=? WHERE id=?'
+    ).bind(i < 25 ? 'PHUONGVH' : 'HUONGLT', t, partner.id)),
+    ...customers.map((customer, i) => env.DB.prepare(
+      'UPDATE nv_customers SET owner_id=?, updated_at=? WHERE id=?'
+    ).bind(i < 25 ? 'PHUONGVH' : 'HUONGLT', t, customer.id)),
+  ];
+  if (!statements.length) return;
+  for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
+  console.log('[migrate] Đã chuyển ' + partners.length + ' Partner và ' + customers.length
+    + ' khách demo sang workspace tài khoản chính (PHUONGVH/HUONGLT).');
+}
 
 async function seed(env) {
   // Không dùng COUNT(*) toàn bảng: 6 tài khoản nhân sự chính thức (HAUNV...) ở migration 33 luôn
