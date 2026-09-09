@@ -283,3 +283,19 @@ textarea{min-height:74px;resize:vertical}
 .spark .cl{font-size:9.5px;color:var(--mut);white-space:nowrap}
 .spark .cv{font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
 .spark .col.today .cv{color:var(--orange)}
+
+/* ===== PWA — CHỈ áp dụng khi app đã được cài lên màn hình chính =====
+   Trong trình duyệt (desktop lẫn mobile) không có quy tắc nào dưới đây chạy, nên giao diện
+   web hiện tại giữ nguyên 100%. Khi chạy standalone, app chiếm trọn màn hình iPhone nên
+   phải chừa lề cho thanh trạng thái / Dynamic Island (trên) và thanh Home (dưới).
+   Trên máy không có vùng khuyết, env(...) = 0 → không đổi gì. */
+@media (display-mode:standalone){
+  .topbar{padding-top:calc(10px + env(safe-area-inset-top,0px))}
+  .sidebar{padding-top:calc(12px + env(safe-area-inset-top,0px))}
+  .login-wrap{padding-top:calc(26px + env(safe-area-inset-top,0px));
+    padding-bottom:calc(26px + env(safe-area-inset-bottom,0px))}
+}
+@media (display-mode:standalone) and (max-width:899px){
+  /* thanh điều hướng dưới cao thêm đúng phần safe-area của nó → nội dung phải lùi tương ứng */
+  main{padding-bottom:calc(var(--nav-h) + 26px + env(safe-area-inset-bottom,0px))}
+}

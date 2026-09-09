@@ -41,6 +41,14 @@ await copyFile(join(root, 'index.html'), join(pub, 'index.html'));
 // chỉ đúng trong đúng container đã tạo ra nó — copy thì artifact tự đứng được, không phụ
 // thuộc việc Cloudflare build và deploy có chạy chung một container hay không.
 const useCopy = process.argv.includes('--copy') || process.env.CI === 'true';
+
+// static/ = tài nguyên PWA phục vụ ở GỐC tên miền: /manifest.webmanifest, /sw.js, /icons/*.
+// Bắt buộc copy (không symlink): service worker phải nằm đúng ở "/sw.js" thì scope mới là "/",
+// và đây là các tệp hầu như không sửa nên không cần live-reload như src/ hay styles/.
+const staticDir = join(root, 'static');
+if (existsSync(staticDir)) await cp(staticDir, pub, { recursive: true });
+else console.error('[sync-assets] thiếu thư mục static/ — PWA sẽ không có manifest/service worker');
+
 for (const dir of ['src', 'styles']) {
   const target = join(root, dir);
   if (!existsSync(target)) {
@@ -51,4 +59,4 @@ for (const dir of ['src', 'styles']) {
   else await symlink(target, join(pub, dir), 'dir');
 }
 
-console.log(`[sync-assets] public/ sẵn sàng (index.html + src/ + styles/) — chế độ ${useCopy ? 'copy' : 'symlink'}`);
+console.log(`[sync-assets] public/ sẵn sàng (index.html + static/ + src/ + styles/) — chế độ ${useCopy ? 'copy' : 'symlink'}`);

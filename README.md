@@ -15,6 +15,24 @@ Hành vi lần chạy đầu (CSDL rỗng) phụ thuộc secret **`APP_MODE`**:
 **Bản dùng thật để chấm KPI/hoa hồng luôn phải đặt `APP_MODE=production`** — dữ liệu demo không
 được phép lẫn vào doanh thu, leaderboard hay báo cáo thật. Xem thêm [LOCAL_DEV.md](LOCAL_DEV.md#deploy-thật-nexrall).
 
+## Cài lên màn hình chính điện thoại (PWA)
+App là một **Progressive Web App**: cài được thẳng từ trình duyệt, **không cần App Store /
+Google Play**, không có bản mobile riêng — vẫn đúng một front-end, một backend, một CSDL.
+
+**iPhone (Safari):** mở link app → nút **Chia sẻ** → **Thêm vào MH chính** → tên hiện sẵn là
+**Phòng Kinh Doanh** → **Thêm**. Chạm icon để mở app ở chế độ toàn màn hình (không có thanh
+địa chỉ Safari). *Lưu ý: phải là Safari — Chrome/Firefox trên iOS không có mục này.*
+
+**Android (Chrome):** menu ⋮ → **Cài đặt ứng dụng / Thêm vào màn hình chính**.
+
+Đăng nhập, phân quyền và dữ liệu **giống hệt bản web**: sửa ở máy tính thì mở app trên điện
+thoại thấy ngay và ngược lại. Mất mạng thì app vẫn mở được vỏ giao diện nhưng **không hiển thị
+dữ liệu cũ** — báo "Không thể kết nối máy chủ" để không ai đọc nhầm số liệu lỗi thời.
+
+Tài nguyên PWA nằm ở [static/](static/): `manifest.webmanifest`, `sw.js` (service worker) và
+`icons/`. Icon sinh từ logo chính thức bằng `node local/gen-pwa-icons.mjs` — chỉ chạy lại khi
+logo đổi. `npm run build` tự copy `static/` ra `public/`.
+
 ## Tài khoản trên bản đang chạy tại Nexrall
 CSDL của bản deploy này đã có sẵn 5 tài khoản (nhân sự + dữ liệu nghiệp vụ mẫu đầy đủ). Mật khẩu
 tạm cho cả 5: **`NetViet@2026`** — app **buộc đổi mật khẩu ngay lần đăng nhập đầu tiên**.
