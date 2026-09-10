@@ -9,12 +9,24 @@
 <!-- PWA: cài lên màn hình chính iPhone/Android (Safari → Chia sẻ → Thêm vào MH chính).
      Chỉ là lớp bổ sung — website vẫn chạy y hệt trên desktop/mobile browser. -->
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<!-- Favicon dạng tệp, đứng sau data URI ở trên: data URI luôn có sẵn kể cả khi /icons chưa được
+     deploy, còn các tệp này để trình duyệt chọn đúng kích thước và cho phần mềm khác lấy về. -->
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
+<!-- iOS/iPadOS. Ngoài thẻ này còn có bản dự phòng ở /apple-touch-icon.png (gốc tên miền) cho các
+     webview không đọc hết thẻ head — Zalo, Facebook, Messenger... -->
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
 <meta name="application-name" content="Phòng Kinh Doanh">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Phòng Kinh Doanh">
+<!-- Windows / Edge: ô tile khi ghim vào Start. msapplication-config="none" để Edge thôi đòi
+     /browserconfig.xml (nếu không sẽ có một request 404 mỗi lần mở trang). -->
+<meta name="msapplication-TileColor" content="#FFFFFF">
+<meta name="msapplication-TileImage" content="/icons/icon-192.png">
+<meta name="msapplication-config" content="none">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..900;1,14..32,300..900&display=swap">

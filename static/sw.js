@@ -17,7 +17,7 @@
  * lựa chọn bắt buộc: cache-first sẽ khiến người dùng chạy code cũ sau mỗi lần deploy.
  */
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `nv-static-${VERSION}`;
 
 /* Vỏ app: đủ để mở được giao diện khi mất mạng. Không có dữ liệu người dùng nào ở đây —
@@ -29,6 +29,8 @@ const SHELL = [
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/apple-touch-icon.png',
+  '/apple-touch-icon.png',
+  '/favicon.ico',
 ];
 
 const CACHEABLE = /\.(?:js|mjs|css|png|jpg|jpeg|svg|ico|webp|woff2?|webmanifest)$/i;

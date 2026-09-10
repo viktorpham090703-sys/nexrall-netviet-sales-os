@@ -1,6 +1,15 @@
-// Sinh icon PWA từ logo chính thức (BRAND_LOGO trong src/const.js) — không dùng thư viện ngoài.
-// KHÔNG nằm trong luồng build; chỉ chạy lại khi logo thương hiệu thay đổi.
-// Decode PNG (palette/RGBA) -> resize box-filter -> đặt giữa nền trắng -> encode PNG RGB.
+// Sinh TOÀN BỘ icon của app từ logo chính thức (BRAND_LOGO trong src/const.js) — không dùng thư
+// viện ngoài. KHÔNG nằm trong luồng build; chỉ chạy lại khi logo thương hiệu thay đổi.
+// Decode PNG (palette/RGBA) -> resize box-filter -> đặt giữa nền trắng -> encode PNG RGB (+ ICO).
+//
+// Phủ hết các hệ điều hành / trình duyệt, mỗi nơi đòi một đường dẫn khác nhau:
+//   iOS  : /icons/apple-touch-icon.png (theo thẻ <link>) VÀ /apple-touch-icon.png ở GỐC — iOS tự
+//          dò đường dẫn gốc khi không đọc được thẻ, ví dụ trong webview của Zalo/Facebook.
+//   Android/Chrome : /icons/icon-192.png, /icons/icon-512.png, và bản maskable để Android cắt theo
+//          hình khối của máy (tròn, squircle...) mà không phạm vào chữ.
+//   Windows/Edge   : dùng icon-192 làm ô tile qua thẻ msapplication-TileImage.
+//   Mọi trình duyệt: /favicon.ico ở GỐC — trình duyệt, trình đọc bookmark và webview đòi thẳng
+//          đường dẫn này mà không thèm đọc HTML, không có thì hiện icon trắng mặc định.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import zlib from 'node:zlib';
 import { dirname, join, resolve } from 'node:path';
@@ -159,6 +168,29 @@ function encodePNG(size, rgb) {
   ]);
 }
 
+/* ---------- encode ICO (nhiều kích thước, mỗi mục là 1 PNG) ---------- */
+/* ICO từ Windows Vista trở đi cho phép nhúng thẳng PNG thay vì bitmap thô, nên tái dùng luôn
+ * encodePNG() ở trên. Cấu trúc: ICONDIR (6 byte) + mỗi ảnh 1 ICONDIRENTRY (16 byte) + dữ liệu. */
+function encodeICO(entries) {
+  const dir = Buffer.alloc(6);
+  dir.writeUInt16LE(0, 0); dir.writeUInt16LE(1, 2); dir.writeUInt16LE(entries.length, 4);
+  let offset = 6 + entries.length * 16;
+  const heads = [], bodies = [];
+  for (const { size, png } of entries) {
+    const e = Buffer.alloc(16);
+    e[0] = size >= 256 ? 0 : size;   // 0 nghĩa là 256
+    e[1] = size >= 256 ? 0 : size;
+    e[2] = 0; e[3] = 0;
+    e.writeUInt16LE(1, 4);           // color planes
+    e.writeUInt16LE(24, 6);          // bit depth — khớp PNG RGB do encodePNG sinh ra
+    e.writeUInt32BE(0, 8); e.writeUInt32LE(png.length, 8);
+    e.writeUInt32LE(offset, 12);
+    heads.push(e); bodies.push(png);
+    offset += png.length;
+  }
+  return Buffer.concat([dir, ...heads, ...bodies]);
+}
+
 /* ---------- chạy ---------- */
 const src = decodePNG(Buffer.from(
   readFileSync(SRC_CONST, 'utf8').match(/BRAND_LOGO = 'data:image\/png;base64,([^']+)'/)[1], 'base64'));
@@ -176,12 +208,38 @@ const JOBS = [
   ['icon-512.png', 512, 0.92],
   ['icon-512-maskable.png', 512, 0.76],
   ['apple-touch-icon.png', 180, 0.92],
+  // Favicon: ở cỡ này chữ không còn đọc được, mục tiêu chỉ là ra đúng KHỐI MÀU đỏ thương hiệu
+  // thay vì ô trắng mặc định của trình duyệt. Kéo sát mép (0.96) để màu chiếm nhiều pixel nhất.
+  ['favicon-16.png', 16, 0.96],
+  ['favicon-32.png', 32, 0.96],
+  ['favicon-48.png', 48, 0.96],
 ];
-for (const [name, size, ratio] of JOBS) {
+
+/** Vẽ logo căn giữa trên nền trắng, trả về PNG đã encode. */
+function render(size, ratio) {
   const lw = Math.round(size * ratio);
   const lh = Math.max(1, Math.round(lw * src.h / src.w));
   const layer = resize(src, lw, lh);
-  const png = encodePNG(size, compose(size, layer, Math.round((size - lw) / 2), Math.round((size - lh) / 2)));
-  writeFileSync(join(OUT, name), png);
-  console.log(`  ${name}  ${size}x${size}  logo ${lw}x${lh}  ${(png.length / 1024).toFixed(1)}KB`);
+  return {
+    png: encodePNG(size, compose(size, layer, Math.round((size - lw) / 2), Math.round((size - lh) / 2))),
+    lw, lh,
+  };
 }
+
+const made = new Map();
+for (const [name, size, ratio] of JOBS) {
+  const { png, lw, lh } = render(size, ratio);
+  made.set(name, png);
+  writeFileSync(join(OUT, name), png);
+  console.log(`  icons/${name}  ${size}x${size}  logo ${lw}x${lh}  ${(png.length / 1024).toFixed(1)}KB`);
+}
+
+/* Hai tệp phải nằm ở GỐC tên miền, không phải trong /icons/ — trình duyệt và webview đòi đúng
+ * đường dẫn này mà không đọc HTML. static/ được build đổ thẳng ra gốc nên ghi vào static/. */
+const ROOT = resolve(OUT, '..');
+const ico = encodeICO([16, 32, 48].map(size => ({ size, png: made.get(`favicon-${size}.png`) })));
+writeFileSync(join(ROOT, 'favicon.ico'), ico);
+console.log(`  favicon.ico  16+32+48  ${(ico.length / 1024).toFixed(1)}KB`);
+
+writeFileSync(join(ROOT, 'apple-touch-icon.png'), made.get('apple-touch-icon.png'));
+console.log(`  apple-touch-icon.png  (bản dự phòng ở gốc tên miền)`);
