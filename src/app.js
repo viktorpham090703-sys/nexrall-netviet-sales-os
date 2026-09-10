@@ -36,23 +36,24 @@ const SALES_NAV = [
 ];
 const SALES_SIDE_NAV = [
   { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
-  { sec: 'Khác', items: [['crm', icon('folderOpen'), 'CRM 360° Khách hàng'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['ai', icon('bot'), 'AI Trợ lý'], ['activities', icon('calendarDays'), 'Lịch & Hoạt động'], ['reports', icon('clipboardList'), 'Báo cáo EOD & Tuần'], ['kpi', icon('trophy'), 'KPI & Hoa hồng'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá'], ['training', icon('graduationCap'), 'Đào tạo']] },
+  { sec: 'Khác', items: [['crm', icon('folderOpen'), 'CRM 360° Khách hàng'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['ai', icon('bot'), 'AI Trợ lý'], ['activities', icon('calendarDays'), 'Lịch & Hoạt động'], ['reports', icon('clipboardList'), 'Báo cáo EOD & Tuần'], ['kpi', icon('trophy'), 'KPI & Hoa hồng'], ['saleskit', icon('fileText'), 'Sales Kit'], ['training', icon('graduationCap'), 'Đào tạo']] },
 ];
 const LEAD_NAV = [
   { sec: 'Điều hành', items: [['console', icon('slidersHorizontal'), 'Console đội'], ['cockpit', icon('home'), 'Trang chủ cá nhân'], ['tasks', icon('inbox'), 'Giao việc & SLA']] },
-  { sec: 'Kinh doanh', items: [['pipeline', icon('barChart2'), 'Pipeline đội'], ['crm', icon('folderOpen'), 'CRM 360°'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['prospect', icon('search'), 'Tìm khách & Thầu'], ['saleskit', icon('fileText'), 'Sales Kit & Báo giá']] },
+  { sec: 'Kinh doanh', items: [['pipeline', icon('barChart2'), 'Pipeline đội'], ['crm', icon('folderOpen'), 'CRM 360°'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['prospect', icon('search'), 'Tìm khách & Thầu'], ['saleskit', icon('fileText'), 'Sales Kit']] },
   { sec: 'Đo lường', items: [['reports', icon('clipboardList'), 'Báo cáo'], ['kpi', icon('trophy'), 'KPI · Hoa hồng · PIP'], ['activities', icon('calendarDays'), 'Hoạt động']] },
   { sec: 'Khác', items: [['training', icon('graduationCap'), 'Đào tạo'], ['ai', icon('bot'), 'AI Trợ lý'], ['admin', icon('usersRound'), 'Quản trị']] },
 ];
 /* HCNS chỉ cần xem/xét duyệt — không có nhiệm vụ điều hành đội sales (Pipeline, CRM, Báo cáo,
- * KPI, Đào tạo...), nên menu chỉ còn đúng 5 mục. "console" giữ nguyên route (đã là trang duyệt
- * của HCNS) nhưng đổi nhãn/icon thành "Trang chủ" vì đây là màn hình chính của HCNS. */
+ * KPI, Đào tạo...), nên menu chỉ còn đúng 3 mục. "console" giữ nguyên route (đã là trang duyệt
+ * của HCNS) nhưng đổi nhãn/icon thành "Trang chủ" vì đây là màn hình chính của HCNS.
+ * Từng có thêm "Duyệt Báo giá" và "Duyệt Hợp đồng" trỏ vào route saleskit/activities của phòng
+ * kinh doanh — bỏ đi vì Console HCNS đã gộp sẵn báo giá + hợp đồng + hồ sơ thầu vào một danh
+ * sách duy nhất (mergedApproval ở views/console.js), hai mục kia chỉ là cùng dữ liệu tách đôi. */
 const HR_NAV = [
   { sec: 'Điều hành', items: [
     ['console', icon('home'), 'Trang chủ'],
     ['prospect', icon('search'), 'Duyệt Thầu'],
-    ['saleskit', icon('fileText'), 'Duyệt Báo giá'],
-    ['activities', icon('calendarDays'), 'Duyệt Hợp đồng'],
     ['admin', icon('usersRound'), 'Quản trị'],
   ] },
 ];
@@ -89,7 +90,10 @@ function shell(view) {
     <div class="grow" style="min-width:0;display:flex;flex-direction:column">
       <header class="topbar">
         <button class="icon-btn menu-btn" data-menu>${icon('menu', 18)}</button>
-        <div class="brand">NetViet Sales OS<span class="xs mut" style="font-weight:600"> · ${esc(roleLabel(me))}</span></div>
+        <div class="brand topbar-clock">
+          <span class="clock-date" data-clock-date>${clockDate(new Date())}</span>
+          <span class="clock-time"><span data-clock-time>${clockTime(new Date())}</span><span class="clock-zone" data-clock-zone>${clockZone(new Date())}</span></span>
+        </div>
         <div class="grow"></div>
         <button class="icon-btn" data-noti>${notiBadge()}</button>
         ${avatar(me, 'data-me')}
@@ -116,6 +120,48 @@ async function showNotifications() {
       onSubmit: async () => { await post('/notifications/read', {}); state.unread = 0; render(); },
     });
   } catch (e) { toast(e.message, 'err'); }
+}
+
+/* Đồng hồ trên thanh trên cùng — thay cho nhãn "NetViet Sales OS · <vai trò>" cũ (thương hiệu đã có
+ * logo ở sidebar, vai trò đã hiện ngay dưới tên ở thẻ hồ sơ nên nhắc lại là thừa).
+ *
+ * Hiển thị theo múi giờ CỦA CHÍNH THIẾT BỊ đang truy cập — không truyền `timeZone` thì trình duyệt
+ * tự lấy múi giờ của hệ điều hành, máy ở khu vực nào ra giờ khu vực đó. Nhãn GMT đi kèm để người
+ * dùng biết đang xem theo múi giờ nào: các mốc hạn nghiệp vụ (17h30 nộp báo cáo, cắt ngày định mức,
+ * kỳ KPI/hoa hồng) vẫn được máy chủ chốt theo giờ VN — UTC+7, xem TZ_OFFSET ở server/lib/util.js —
+ * nên thiết bị ở múi giờ khác sẽ thấy đồng hồ lệch so với các mốc đó, và nhãn GMT là chỗ nhận ra. */
+const clockDate = (d) => d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const clockTime = (d) => d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+/** Nhãn múi giờ thiết bị: GMT+7, GMT-5, GMT+5:30… Suy từ độ lệch thật của Date nên tự đúng cả với
+ * múi lẻ 30/45 phút và tự đổi theo giờ mùa hè (DST), không hard-code bảng múi giờ. */
+const clockZone = (d) => {
+  const off = -d.getTimezoneOffset();          // phút; dương = phía đông GMT
+  const h = Math.floor(Math.abs(off) / 60), m = Math.abs(off) % 60;
+  return `GMT${off < 0 ? '-' : '+'}${h}${m ? ':' + String(m).padStart(2, '0') : ''}`;
+};
+
+let clockTimer = null;
+/** Chạy đồng hồ theo từng giây. Gọi lại mỗi lần dựng lại shell — phải huỷ bộ đếm cũ, nếu không mỗi
+ * lần dựng lại sẽ chồng thêm 1 bộ đếm nữa ghi vào các node đã bị gỡ khỏi DOM. */
+function startClock() {
+  if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+  const app = document.getElementById('app');
+  const dEl = app.querySelector('[data-clock-date]');
+  const tEl = app.querySelector('[data-clock-time]');
+  const zEl = app.querySelector('[data-clock-zone]');
+  if (!dEl || !tEl) return;
+  const tick = () => {
+    // Shell đã bị thay (đăng xuất, đổi vai trò) → dừng hẳn thay vì ghi vào node mồ côi.
+    if (!tEl.isConnected) { clearInterval(clockTimer); clockTimer = null; return; }
+    const now = new Date();
+    const day = clockDate(now);
+    if (dEl.textContent !== day) dEl.textContent = day;   // chỉ đổi khi sang ngày mới
+    tEl.textContent = clockTime(now);
+    // Múi giờ đổi được ngay giữa phiên: vào/ra giờ mùa hè, hoặc người dùng chỉnh lại đồng hồ máy.
+    if (zEl) { const z = clockZone(now); if (zEl.textContent !== z) zEl.textContent = z; }
+  };
+  tick();
+  clockTimer = setInterval(tick, 1000);
 }
 
 let currentShellRole = null;
@@ -203,6 +249,7 @@ function bindShell() {
     e.preventDefault();
     document.getElementById('sidebar').classList.toggle('open');
   });
+  startClock();
 }
 
 window.addEventListener('hashchange', render);

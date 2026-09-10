@@ -1,6 +1,6 @@
 import { get, post, patch, del } from '../api.js';
-import { state, isAdmin, canManageAccounts, salesUsers } from '../state.js';
-import { esc, mount, chip, toast, modal, stat, bindTabs, confirmDialog, fmtDT } from '../ui.js';
+import { state, isAdmin, canManageAccounts, salesUsers, applyUserRole } from '../state.js';
+import { esc, mount, chip, toast, modal, stat, bindTabs, confirmDialog, fmtDT, refreshShellRole } from '../ui.js';
 import { roleLabel } from '../const.js';
 import { providers, testProvider, getProvider, setProvider, providerIconName } from '../aiPref.js';
 import { icon } from '../icons.js';
@@ -170,7 +170,16 @@ export async function render(el) {
           { name: 'title', label: 'Chức danh', value: u.title || '' },
         ],
         submitText: 'Lưu',
-        onSubmit: async (v) => { await patch('/users/' + u.id, v); toast('Đã cập nhật vai trò & chức danh', 'ok'); render(el); },
+        onSubmit: async (v) => {
+          await patch('/users/' + u.id, v);
+          // Đồng bộ ngay vào state trong bộ nhớ: chức danh mới là nhãn hiển thị (roleLabel) nên
+          // sidebar/các bộ chọn phải đổi theo mà không cần tải lại trang — kể cả khi Admin đang
+          // tự đổi chức danh của chính mình.
+          applyUserRole(u.id, v);
+          if (state.me && state.me.id === u.id) refreshShellRole(roleLabel(state.me));
+          toast('Đã cập nhật vai trò & chức danh', 'ok');
+          render(el);
+        },
       });
     });
     el.querySelectorAll('[data-togglestatus]').forEach(b => b.onclick = () => {

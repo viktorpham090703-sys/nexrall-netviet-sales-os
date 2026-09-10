@@ -95,6 +95,28 @@ export async function crmRoutes(ctx) {
     return json({ items, sales });
   }
 
+  /**
+   * Kiểm tra trùng khách hàng NGAY KHI GÕ, trước khi bấm Lưu.
+   * Dùng đúng findDuplicateCustomer() của nhánh tạo mới nên cảnh báo hiện lúc gõ và lỗi lúc lưu
+   * không bao giờ lệch nhau. Chỉ trả về đúng phần cần để vẽ cảnh báo (tên khách + tên sale đang
+   * giữ), không trả cả bản ghi — người gọi có thể chưa có quyền xem khách của sale khác.
+   */
+  if ((p = match(ctx, 'GET', '/api/customers/check-duplicate'))) {
+    need(ctx);
+    const name = (url.searchParams.get('name') || '').trim();
+    const phone = (url.searchParams.get('phone') || '').trim();
+    const excludeId = (url.searchParams.get('excludeId') || '').trim() || undefined;
+    const dup = (name || phone) ? await findDuplicateCustomer(env, ctx, name, phone, excludeId) : null;
+    if (!dup) return json({ duplicate: null });
+    return json({
+      duplicate: {
+        name: dup.name, ownerName: dup.owner_name || null,
+        mine: dup.owner_id === ctx.me.id,
+        matchedPhone: !!phone && normPhone(dup.phone) === normPhone(phone),
+      },
+    });
+  }
+
   if ((p = match(ctx, 'POST', '/api/customers'))) {
     need(ctx);
     const b = await readBody(ctx.request);

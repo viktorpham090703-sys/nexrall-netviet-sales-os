@@ -1,404 +1,148 @@
-import { get, post, patch } from '../api.js';
-import { state, isLead } from '../state.js';
-import { esc, money, vnd, mount, chip, empty, fmtDate, toast, modal, stat, bindTabs } from '../ui.js';
-import { QUOTE_STATUS, CONTRACT_STATUS, APPROVAL_TONE } from '../const.js';
-import { aiModal } from '../aiPref.js';
+import { get, post, patch, del } from '../api.js';
+import { isLead, isAdmin } from '../state.js';
+import { esc, money, vnd, mount, chip, stat, modal, toast, bindTabs, confirmDialog } from '../ui.js';
 import { icon } from '../icons.js';
+
+/**
+ * Sales Kit — thư viện tra cứu của phòng kinh doanh: bảng gói dịch vụ và cơ chế hoa hồng Partner.
+ *
+ * Báo giá, hợp đồng và AI soạn proposal đã chuyển sang "Phương án kinh doanh" (views/plans.js) để
+ * mỗi thương vụ chỉ còn MỘT luồng trình duyệt. Những gì ở lại đây đều là dữ liệu tra cứu — dùng
+ * được cả khi chưa có thương vụ nào — nên trang này không còn tạo bản ghi gì.
+ */
 
 let tab = 'catalog';
 
-/** true nếu người đang xem có quyền duyệt vòng của báo giá `q` (V1=TPKD/Admin, V2=Admin/BGĐ —
- * vai trò Giám đốc đã sáp nhập vào Admin, không còn tách riêng).
- * Export để console.js (Console đội) dùng chung, tránh lệch điều kiện giữa 2 nơi hiện nút duyệt. */
-export const canDecide = (q) => (q.status === 'pending_v1' && ['manager', 'admin'].includes(state.me.role))
-  || (q.status === 'pending_v2' && state.me.role === 'admin');
-/** Tương tự canDecide nhưng cho hợp đồng — vòng 2 là HCNS (hr) thay vì Giám đốc. */
-export const canDecideContract = (c) => (c.status === 'pending_v1' && ['manager', 'admin'].includes(state.me.role))
-  || (c.status === 'pending_v2' && ['hr', 'admin'].includes(state.me.role));
-/** true nếu vòng hiện tại của báo giá `q` đang bị yêu cầu điều chỉnh và người xem là chủ báo giá. */
-const needsResubmit = (q) => q.owner_id === state.me.id
-  && ((q.status === 'pending_v1' && q.v1_decision === 'revise') || (q.status === 'pending_v2' && q.v2_decision === 'revise'));
-const needsResubmitContract = needsResubmit; // cùng logic, khác tên cho rõ ngữ cảnh khi đọc code
-
-const isHR = () => state.me?.role === 'hr';
-
-/* HCNS chỉ xét duyệt báo giá — không có nhiệm vụ bảng gói dịch vụ/tạo báo giá/AI proposal của
- * phòng kinh doanh, nên trang "Duyệt Báo giá" của HCNS chỉ còn đúng 1 danh sách chờ duyệt. */
-async function renderHR(el) {
-  const load = async () => {
-    const q = await get('/quotes');
-    return { pending: (q.items || []).filter(x => ['pending_v1', 'pending_v2'].includes(x.status)) };
-  };
-  const draw = (d) => {
-    const t = APPROVAL_TONE.quote;
-    return `<div class="page-head">
-      <div class="grow"><h2>Duyệt Báo giá</h2><p>Báo giá chờ duyệt 2 vòng</p></div>
-    </div>
-    <div class="grid g4 mb">${stat('Báo giá chờ duyệt', d.pending.length, 'Cần TPKD/Admin xử lý các vòng khác', t.chip)}</div>
-    <div>${d.pending.length ? `<div class="card">${d.pending.map(q => `<div class="item">
-        <div class="dot-i" style="background:transparent;color:${t.color};border:1.5px solid ${t.color}">${icon('banknote')}</div>
-        <div class="grow"><div class="t">${esc(q.title)}</div>
-          <div class="d">${esc(q.customer_name || '')} · ${esc(q.owner_name || '')} · CK ${q.discount_pct}%</div>
-          <div class="d xs">Gốc ${money(q.subtotal)} → ${money(q.total)} · ${esc(QUOTE_STATUS[q.status]?.n || q.status)}</div></div>
-        <div class="right">${canDecide(q) ? `<button class="btn sm amber" data-ok="${esc(q.id)}">Duyệt</button>
-          <div class="mt"><button class="btn sm" data-revise="${esc(q.id)}">Yêu cầu điều chỉnh</button></div>` : `<span class="xs" style="color:${t.color}">Chờ ${q.status === 'pending_v1' ? 'TPKD' : 'Giám đốc'} duyệt</span>`}</div>
-      </div>`).join('')}</div>` : empty('circleCheck', 'Không có báo giá chờ duyệt.')}</div>`;
-  };
-  const bind = () => bindApprovalActions(el, 'quotes', () => render(el));
-  await mount(el, load, draw, bind);
-}
-
 export async function render(el) {
-  if (isHR()) return renderHR(el);
-
   const load = async () => {
-    const [p, q, c, cus, d, pt] = await Promise.all([get('/products'), get('/quotes'), get('/contracts'), get('/customers'), get('/deals'), get('/partners')]);
+    const [p, cus, d, pt] = await Promise.all([
+      get('/products' + (isAdmin() ? '?includeInactive=1' : '')),
+      get('/customers'), get('/deals'), get('/partners'),
+    ]);
     return {
       products: p.items || [], threshold: p.discountThreshold, partnerScheme: p.partnerScheme || {},
-      quotes: q.items || [], contracts: c.items || [], customers: cus.items || [], deals: d.items || [], partners: pt.items || [],
+      customers: cus.items || [], deals: d.items || [], partners: pt.items || [],
     };
   };
 
   const draw = (d) => `<div class="page-head">
-    <div class="grow"><h2>Sales Kit & Báo giá</h2><p>Bảng gói dịch vụ · tính giá + hoa hồng · proposal · duyệt 2 vòng (TPKD→Giám đốc/HCNS)</p></div>
-    <div class="right"><button class="btn primary sm" data-new>+ Báo giá</button>
-      <div class="mt"><button class="btn sm" data-newcontract>+ Hợp đồng</button></div>
-      <div class="mt"><button class="btn sm" data-aiprop>${icon('bot', 14)} AI soạn proposal</button></div></div>
+    <div class="grow"><h2>Sales Kit</h2><p>Bảng gói dịch vụ · công cụ nhẩm giá &amp; hoa hồng · cơ chế chia hoa hồng Partner</p></div>
   </div>
 
   <div class="seg mb">
     <button data-tab="catalog" class="${tab === 'catalog' ? 'on' : ''}">Gói dịch vụ</button>
-    <button data-tab="quotes" class="${tab === 'quotes' ? 'on' : ''}">Báo giá (${d.quotes.length})</button>
-    ${isLead() ? `<button data-tab="approve" class="${tab === 'approve' ? 'on' : ''}">Chờ duyệt giá (${d.quotes.filter(canDecide).length})</button>` : ''}
-    <button data-tab="contracts" class="${tab === 'contracts' ? 'on' : ''}">Hợp đồng (${d.contracts.length})</button>
-    ${isLead() ? `<button data-tab="approveContracts" class="${tab === 'approveContracts' ? 'on' : ''}">Chờ duyệt HĐ (${d.contracts.filter(canDecideContract).length})</button>` : ''}
     <button data-tab="partnerComm" class="${tab === 'partnerComm' ? 'on' : ''}">Hoa hồng Partner</button>
   </div>
 
-  ${tab === 'catalog' ? ['TVC/Video', 'Gameshow', 'Xây kênh'].map(line => {
-    const arr = d.products.filter(p => p.line === line);
-    if (!arr.length) return '';
-    return `<div class="sec-title">${esc(line)}</div><div class="card">${arr.map(p => `<div class="item">
-      <div class="dot-i">${icon(line === 'Gameshow' ? 'clapperboard' : line === 'Xây kênh' ? 'trendingUp' : 'video')}</div>
-      <div class="grow"><div class="t">${esc(p.name)}</div>
-        <div class="d">${esc(p.description || '')}</div>
-        <div class="row wrap mt" style="gap:6px">${chip(vnd(p.price) + '/' + p.unit, 'blue')}
-          ${chip('HH ' + p.commission_rate + '%', 'green')}${chip('CK tối đa ' + p.max_discount + '%', 'amber')}</div></div>
-      <button class="btn sm" data-calc="${esc(p.id)}">Tính giá</button></div>`).join('')}</div>`;
-  }).join('') : ''}
-
-  ${tab === 'quotes' || tab === 'approve' ? (() => {
-    const arr = tab === 'approve' ? d.quotes.filter(canDecide) : d.quotes;
-    return arr.length ? `<div class="card">${arr.map(q => quoteItem(q)).join('')}</div>` : empty('fileText', 'Chưa có báo giá nào.');
-  })() : ''}
-
-  ${tab === 'contracts' || tab === 'approveContracts' ? (() => {
-    const arr = tab === 'approveContracts' ? d.contracts.filter(canDecideContract) : d.contracts;
-    return arr.length ? `<div class="card">${arr.map(c => contractItem(c)).join('')}</div>` : empty('penLine', 'Chưa có hợp đồng nào.');
-  })() : ''}
+  ${tab === 'catalog' ? catalogTab(d) : ''}
 
   ${tab === 'partnerComm' ? partnerCommissionTab(d) : ''}`;
 
   const bind = (d) => {
     bindTabs(el, t => tab = t, render);
-    el.querySelector('[data-new]').onclick = () => builder(d, null, () => render(el));
-    el.querySelector('[data-newcontract]').onclick = () => contractBuilder(d, null, () => render(el));
-    el.querySelector('[data-aiprop]').onclick = () => aiModal({
-      title: 'AI soạn proposal', titleIcon: 'bot',
-      kind: 'proposal',
-      promptLabel: 'Mô tả khách hàng & ngân sách',
-      prompt: 'Khách hàng ngành FMCG, ngân sách 300 triệu, muốn TVC AI + chuỗi video viền TikTok cho Q4.',
+    el.querySelectorAll('[data-calc]').forEach(b => b.onclick = () => estimateModal(d, b.dataset.calc));
+    el.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => rateModal(
+      b.dataset.rate, Number(b.dataset.partner) || 0, Number(b.dataset.sale) || 0, () => render(el)));
+
+    const addBtn = el.querySelector('[data-addproduct]');
+    if (addBtn) addBtn.onclick = () => productModal(d, null, () => render(el));
+    el.querySelectorAll('[data-editproduct]').forEach(b => b.onclick = () => productModal(
+      d, d.products.find(x => x.id === b.dataset.editproduct), () => render(el)));
+    el.querySelectorAll('[data-stopproduct]').forEach(b => b.onclick = () => {
+      const pr = d.products.find(x => x.id === b.dataset.stopproduct);
+      confirmDialog('Ngừng bán gói dịch vụ',
+        `"${pr.name}" sẽ không còn xuất hiện khi lập báo giá. Báo giá và hoa hồng đã ghi nhận giữ nguyên, và bạn bán lại được bất cứ lúc nào.`,
+        async () => {
+          try { await del('/products/' + pr.id); toast('Đã ngừng bán ' + pr.name, 'ok'); render(el); }
+          catch (e) { toast(e.message, 'err'); return false; }
+        });
     });
-    el.querySelectorAll('[data-aiq]').forEach(b => b.onclick = () => {
-      const q = d.quotes.find(x => x.id === b.dataset.aiq);
-      aiModal({
-        title: 'AI thuyết minh báo giá', titleIcon: 'bot',
-        kind: 'proposal',
-        promptLabel: 'Yêu cầu',
-        prompt: `Viết phần thuyết minh giá trị cho báo giá "${q.title}" gửi ${q.customer_name || 'khách hàng'}.`,
-        extra: `Tạm tính ${q.subtotal}đ, chiết khấu ${q.discount_pct}%, thành tiền ${q.total}đ.`,
-      });
-    });
-    el.querySelectorAll('[data-calc]').forEach(b => b.onclick = () => builder(d, b.dataset.calc, () => render(el)));
-    el.querySelectorAll('[data-docs]').forEach(b => b.onclick = () => {
-      const q = d.quotes.find(x => x.id === b.dataset.docs);
-      documentsModal('quote', b.dataset.docs, q?.title || 'Báo giá');
-    });
-    el.querySelectorAll('[data-docs-contract]').forEach(b => b.onclick = () => {
-      const c = d.contracts.find(x => x.id === b.dataset.docsContract);
-      documentsModal('contract', b.dataset.docsContract, c?.title || 'Hợp đồng');
-    });
-    el.querySelectorAll('[data-resubmit]').forEach(b => b.onclick = () => {
-      const q = d.quotes.find(x => x.id === b.dataset.resubmit);
-      resubmitBuilder(d, q, () => render(el));
-    });
-    el.querySelectorAll('[data-resubmit-contract]').forEach(b => b.onclick = () => {
-      const c = d.contracts.find(x => x.id === b.dataset.resubmitContract);
-      resubmitContractBuilder(c, () => render(el));
-    });
-    bindApprovalActions(el, 'quotes', () => render(el));
-    bindApprovalActions(el, 'contracts', () => render(el));
-    el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => {
-      const q = d.quotes.find(x => x.id === b.dataset.view);
-      let items = [];
-      try { items = JSON.parse(q.items || '[]'); } catch (e) { items = []; }
-      modal({
-        title: q.title, submitText: 'Đóng', onSubmit: () => true,
-        html: `<div class="sm mut mb">${esc(q.customer_name || '')} · ${fmtDate(q.created_at)}</div>
-          <table class="tbl"><tr><th>Hạng mục</th><th class="right">SL</th><th class="right">Đơn giá</th></tr>
-          ${items.map(i => `<tr><td>${esc(i.name)}</td><td class="right">${i.qty}</td><td class="right">${vnd(i.price)}</td></tr>`).join('')}
-          </table>
-          <div class="mt sm">Tạm tính: <b>${vnd(q.subtotal)}</b></div>
-          <div class="sm">Chiết khấu: <b>${q.discount_pct}%</b></div>
-          <div class="sm">Thành tiền: <b style="color:#F59E0B">${vnd(q.total)}</b></div>
-          <div class="sm">Hoa hồng dự kiến: <b>${vnd(q.commission)}</b></div>
-          ${q.v1_note ? `<div class="sm mt">Ghi chú V1: ${esc(q.v1_note)}</div>` : ''}
-          ${q.v2_note ? `<div class="sm mt">Ghi chú V2: ${esc(q.v2_note)}</div>` : ''}`,
-      });
-    });
-    el.querySelectorAll('[data-view-contract]').forEach(b => b.onclick = () => {
-      const c = d.contracts.find(x => x.id === b.dataset.viewContract);
-      modal({
-        title: c.title, submitText: 'Đóng', onSubmit: () => true,
-        html: `<div class="sm mut mb">${esc(c.customer_name || '')}${c.deal_title ? ' · ' + esc(c.deal_title) : ''} · ${fmtDate(c.created_at)}</div>
-          <div class="sm">Giá trị hợp đồng: <b style="color:#F59E0B">${vnd(c.value)}</b></div>
-          ${c.payment_schedule ? `<div class="sm mt">Tiến độ thanh toán: ${esc(c.payment_schedule)}</div>` : ''}
-          ${c.penalty_terms ? `<div class="sm mt">Điều khoản phạt vi phạm: ${esc(c.penalty_terms)}</div>` : ''}
-          ${c.note ? `<div class="sm mt">Ghi chú: ${esc(c.note)}</div>` : ''}
-          ${c.v1_note ? `<div class="sm mt">Ghi chú V1: ${esc(c.v1_note)}</div>` : ''}
-          ${c.v2_note ? `<div class="sm mt">Ghi chú V2: ${esc(c.v2_note)}</div>` : ''}`,
-      });
+    el.querySelectorAll('[data-resellproduct]').forEach(b => b.onclick = async () => {
+      try { await patch('/products/' + b.dataset.resellproduct, { active: 1 }); toast('Đã bán lại gói này', 'ok'); render(el); }
+      catch (e) { toast(e.message, 'err'); }
     });
   };
 
   await mount(el, load, draw, bind);
 }
 
-function quoteItem(q) {
-  const revise = needsResubmit(q);
-  return `<div class="item">
-      <div class="dot-i">${icon('fileText')}</div>
-      <div class="grow"><div class="t">${esc(q.title)}</div>
-        <div class="d">${esc(q.customer_name || '')}${q.owner_name ? ' · ' + esc(q.owner_name) : ''} · ${fmtDate(q.created_at)}</div>
-        <div class="d xs">Gốc ${money(q.subtotal)} → CK ${q.discount_pct}% → <b>${vnd(q.total)}</b> · HH ${vnd(q.commission)}</div>
-        <div class="row wrap mt" style="gap:6px">${chip(QUOTE_STATUS[q.status]?.n, QUOTE_STATUS[q.status]?.c)}</div>
-        ${revise ? `<div class="sm mt" style="color:var(--red)">✏️ ${esc((q.status === 'pending_v1' ? q.v1_note : q.v2_note) || 'Cần điều chỉnh lại báo giá.')}</div>` : ''}
-      </div>
-      <div class="right">
-        <button class="btn sm" data-view="${esc(q.id)}">Xem</button>
-        <div class="mt"><button class="btn sm" data-aiq="${esc(q.id)}">${icon('bot', 14)} AI</button></div>
-        <div class="mt"><button class="btn sm" data-docs="${esc(q.id)}">${icon('fileText', 14)} Tài liệu</button></div>
-        ${revise ? `<div class="mt"><button class="btn sm amber" data-resubmit="${esc(q.id)}">Sửa & gửi lại</button></div>` : ''}
-        ${canDecide(q) ? `<div class="mt"><button class="btn sm amber" data-ok="${esc(q.id)}">Duyệt</button></div>
-          <div class="mt"><button class="btn sm" data-revise="${esc(q.id)}">Yêu cầu điều chỉnh</button></div>` : ''}
-      </div></div>`;
+/* Ba dòng dịch vụ chuẩn của công ty, giữ đúng thứ tự này khi hiển thị. KHÔNG dùng làm danh sách
+ * đóng: catalogTab() gom thêm mọi dòng lạ có trong dữ liệu và xếp sau, để một gói đặt sai dòng
+ * không âm thầm biến mất khỏi bảng giá — trước đây bảng chỉ lặp đúng 3 tên cứng nên gói thuộc
+ * dòng khác thì không hiện ở đâu cả. */
+const LINES = ['TVC/Video', 'Gameshow', 'Xây kênh'];
+const lineIcon = (line) => line === 'Gameshow' ? 'clapperboard' : line === 'Xây kênh' ? 'trendingUp'
+  : line === 'TVC/Video' ? 'video' : 'files';
+
+/** Bảng gói dịch vụ. Admin thêm/sửa/ngừng bán ngay tại đây; vai trò khác chỉ tra cứu và nhẩm giá. */
+function catalogTab(d) {
+  const admin = isAdmin();
+  const known = new Set(LINES);
+  const extra = [...new Set(d.products.map(p => p.line).filter(l => l && !known.has(l)))].sort();
+  const groups = [...LINES, ...extra, ...(d.products.some(p => !p.line) ? [''] : [])];
+
+  const row = (p) => `<div class="item"${p.active ? '' : ' style="opacity:.55"'}>
+    <div class="dot-i">${icon(lineIcon(p.line))}</div>
+    <div class="grow"><div class="t">${esc(p.name)} ${p.active ? '' : chip('Ngừng bán', 'grey')}</div>
+      <div class="d">${esc(p.description || '')}</div>
+      <div class="row wrap mt" style="gap:6px">${chip(vnd(p.price) + '/' + esc(p.unit || 'gói'), 'blue')}
+        ${chip('HH ' + p.commission_rate + '%', 'green')}${chip('CK tối đa ' + p.max_discount + '%', 'amber')}</div></div>
+    <div class="right">
+      ${p.active ? `<button class="btn sm" data-calc="${esc(p.id)}">Tính giá</button>` : ''}
+      ${admin ? `<div class="mt"><button class="btn sm" data-editproduct="${esc(p.id)}">Sửa</button></div>
+        <div class="mt">${p.active
+          ? `<button class="btn sm" data-stopproduct="${esc(p.id)}">Ngừng bán</button>`
+          : `<button class="btn sm amber" data-resellproduct="${esc(p.id)}">Bán lại</button>`}</div>` : ''}
+    </div></div>`;
+
+  return `${admin
+    ? '<button class="btn block mb" data-addproduct>+ Thêm gói dịch vụ</button>'
+    : '<div class="note mb">Bảng giá do Ban Giám đốc quản lý. Cần thêm hoặc sửa gói, đề nghị Admin/BGĐ cập nhật tại đây.</div>'}
+  ${groups.map(line => {
+    const arr = d.products.filter(p => (p.line || '') === line);
+    if (!arr.length) return '';
+    return `<div class="sec-title">${esc(line || 'Chưa phân dòng')}</div>
+      <div class="card">${arr.map(row).join('')}</div>`;
+  }).join('')}
+  ${d.products.length ? '' : '<div class="note">Chưa có gói dịch vụ nào trong bảng giá.</div>'}`;
 }
 
-function contractItem(c) {
-  const revise = needsResubmitContract(c);
-  return `<div class="item">
-      <div class="dot-i">${icon('penLine')}</div>
-      <div class="grow"><div class="t">${esc(c.title)}</div>
-        <div class="d">${esc(c.customer_name || '')}${c.owner_name ? ' · ' + esc(c.owner_name) : ''} · ${fmtDate(c.created_at)}</div>
-        <div class="d xs">Giá trị: <b>${vnd(c.value)}</b></div>
-        <div class="row wrap mt" style="gap:6px">${chip(CONTRACT_STATUS[c.status]?.n, CONTRACT_STATUS[c.status]?.c)}</div>
-        ${revise ? `<div class="sm mt" style="color:var(--red)">✏️ ${esc((c.status === 'pending_v1' ? c.v1_note : c.v2_note) || 'Cần điều chỉnh lại hợp đồng.')}</div>` : ''}
-      </div>
-      <div class="right">
-        <button class="btn sm" data-view-contract="${esc(c.id)}">Xem</button>
-        <div class="mt"><button class="btn sm" data-docs-contract="${esc(c.id)}">${icon('fileText', 14)} Tài liệu</button></div>
-        ${revise ? `<div class="mt"><button class="btn sm amber" data-resubmit-contract="${esc(c.id)}">Sửa & gửi lại</button></div>` : ''}
-        ${canDecideContract(c) ? `<div class="mt"><button class="btn sm amber" data-ok-contract="${esc(c.id)}">Duyệt</button></div>
-          <div class="mt"><button class="btn sm" data-revise-contract="${esc(c.id)}">Yêu cầu điều chỉnh</button></div>` : ''}
-      </div></div>`;
-}
-
-/** Wire nút Duyệt/Yêu cầu điều chỉnh — dùng chung cho báo giá & hợp đồng, và cho cả saleskit.js lẫn
- * console.js (Console đội), tránh lặp lại nhiều bản logic giống hệt nhau. `path` là 'quotes' hoặc
- * 'contracts' — 2 loại nút dùng ATTRIBUTE RIÊNG ([data-ok]/[data-revise] cho báo giá,
- * [data-ok-contract]/[data-revise-contract] cho hợp đồng, khớp quy ước data-view/data-view-contract
- * đã dùng ở trên) để 2 lần gọi hàm này (1 cho mỗi path) không tranh nhau ghi đè onclick của cùng 1
- * nút — trước đây cả 2 loại cùng dùng [data-ok], lần gọi 'contracts' luôn ghi đè lần gọi 'quotes'
- * khiến nút Duyệt báo giá lại gọi nhầm PATCH /api/contracts/:id (404 "Không tìm thấy hợp đồng"). */
-export function bindApprovalActions(el, path, after) {
-  const label = path === 'contracts' ? 'hợp đồng' : 'báo giá';
-  const okAttr = path === 'contracts' ? 'ok-contract' : 'ok';
-  const reviseAttr = path === 'contracts' ? 'revise-contract' : 'revise';
-  el.querySelectorAll(`[data-${okAttr}]`).forEach(b => b.onclick = async () => {
-    try { await patch(`/${path}/` + b.dataset[path === 'contracts' ? 'okContract' : 'ok'], { decision: 'approved' }); toast('Đã duyệt ' + label, 'ok'); after(); }
-    catch (e) { toast(e.message, 'err'); }
-  });
-  el.querySelectorAll(`[data-${reviseAttr}]`).forEach(b => b.onclick = () => modal({
-    title: 'Yêu cầu điều chỉnh ' + label, fields: [{ name: 'note', label: 'Ghi chú cho sale', required: true }],
-    submitText: 'Gửi yêu cầu điều chỉnh',
+/**
+ * Thêm mới hoặc sửa 1 gói dịch vụ. `product` null = thêm mới.
+ * Đổi giá KHÔNG hồi tố — báo giá đã lập lưu đơn giá vào chính nó tại thời điểm tạo, nên bảng giá
+ * đổi hôm nay không làm lệch báo giá cũ hay hoa hồng đã ghi nhận. Nói rõ trong modal để người sửa
+ * không ngại đụng vào giá.
+ */
+function productModal(d, product, after) {
+  const edit = !!product;
+  const lines = [...new Set([...LINES, ...d.products.map(p => p.line).filter(Boolean)])];
+  modal({
+    title: edit ? 'Sửa gói: ' + product.name : 'Thêm gói dịch vụ',
+    wide: true,
+    html: `<div class="note mb">${edit
+      ? 'Đổi giá chỉ áp dụng cho báo giá lập <b>từ giờ trở đi</b> — báo giá cũ giữ nguyên đơn giá và hoa hồng đã chốt.'
+      : 'Gói mới xuất hiện ngay trong công cụ tính giá và khi lập báo giá ở Phương án kinh doanh.'}</div>`,
+    fields: [
+      { name: 'name', label: 'Tên gói', required: true, value: product?.name || '' },
+      { name: 'line', label: 'Dòng dịch vụ', type: 'select', value: product?.line || LINES[0], options: lines.map(l => ({ v: l, n: l })) },
+      { name: 'unit', label: 'Đơn vị tính', value: product?.unit || 'gói', placeholder: 'gói · số · mùa · video' },
+      { name: 'price', label: 'Đơn giá (đ)', type: 'number', required: true, value: product?.price ?? 0 },
+      { name: 'commissionRate', label: 'Tỉ lệ hoa hồng (%)', type: 'number', value: product?.commission_rate ?? 5, hint: 'Tối đa 50%' },
+      { name: 'maxDiscount', label: 'Chiết khấu tối đa (%)', type: 'number', value: product?.max_discount ?? 10, hint: 'Vượt mức này sẽ được nêu rõ cho người duyệt báo giá' },
+      { name: 'description', label: 'Mô tả', type: 'textarea', rows: 2, value: product?.description || '' },
+    ],
+    submitText: edit ? 'Lưu thay đổi' : 'Thêm gói',
     onSubmit: async (v) => {
+      const body = {
+        name: v.name, line: v.line, unit: v.unit, description: v.description,
+        price: Number(v.price) || 0,
+        commissionRate: Number(v.commissionRate) || 0,
+        maxDiscount: Number(v.maxDiscount) || 0,
+      };
       try {
-        const id = b.dataset[path === 'contracts' ? 'reviseContract' : 'revise'];
-        await patch(`/${path}/` + id, { decision: 'revise', note: v.note }); toast('Đã gửi yêu cầu điều chỉnh', 'ok'); after();
-      } catch (e) { toast(e.message, 'err'); return false; }
-    },
-  }));
-}
-
-/** Modal xem/tải lên tài liệu đính kèm (báo giá/hợp đồng) — sau khi tải lên, AI đọc file và liệt
- * kê thông tin chính ngay trong danh sách, không cần rời màn hình. `kind` là 'quote' hoặc
- * 'contract' — dùng để ghép đúng tham số quoteId/contractId khi gọi API. */
-async function documentsModal(kind, id, label) {
-  const paramKey = kind + 'Id';
-  const load = async () => { try { return (await get(`/documents?${paramKey}=${id}`)).items || []; } catch (e) { return []; } };
-
-  const listHTML = (items) => items.length ? items.map(doc => `<div class="item">
-      <div class="dot-i">${icon('fileText')}</div>
-      <div class="grow"><div class="t">${esc(doc.filename)}</div>
-        <div class="d xs">${fmtDate(doc.created_at)} · ${Math.round((doc.size || 0) / 1024)} KB${doc.status === 'mock' ? ' · <span style="color:var(--red)">chưa phân tích được (thiếu API key AI)</span>' : ''}</div>
-        ${doc.ai_summary ? `<div class="ai-bubble mt xs">${esc(doc.ai_summary)}</div>` : ''}
-      </div>
-      <a class="btn sm" href="/api/documents/${esc(doc.id)}/file" target="_blank" rel="noopener">Xem file</a>
-    </div>`).join('') : empty('fileText', 'Chưa có tài liệu nào được đính kèm.');
-
-  const { root } = modal({
-    title: 'Tài liệu đính kèm — ' + label, titleIcon: 'fileText', wide: true,
-    submitText: 'Đóng', onSubmit: () => true,
-    html: `<div data-doclist>${await load().then(listHTML)}</div>
-      <div class="row mt" style="gap:8px">
-        <input type="file" data-docfile accept=".pdf,image/png,image/jpeg,image/webp" class="grow">
-        <button type="button" class="btn primary sm" data-docupload>${icon('bot', 14)} Tải lên & AI phân tích</button>
-      </div>
-      <div class="xs mut mt">Chỉ nhận file PDF hoặc ảnh (PNG/JPG/WEBP), tối đa 8MB.</div>`,
-  });
-
-  root.querySelector('[data-docupload]').onclick = async () => {
-    const input = root.querySelector('[data-docfile]');
-    const file = input.files[0];
-    if (!file) { toast('Chọn file trước đã', 'err'); return; }
-    if (!['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { toast('Chỉ hỗ trợ PDF hoặc ảnh PNG/JPG/WEBP', 'err'); return; }
-    if (file.size > 8 * 1024 * 1024) { toast('File vượt quá 8MB', 'err'); return; }
-    const btn = root.querySelector('[data-docupload]');
-    btn.disabled = true;
-    btn.innerHTML = `${icon('loaderCircle', 14, { class: 'spin' })} Đang tải lên & AI phân tích…`;
-    try {
-      const dataBase64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(String(r.result).split(',')[1] || '');
-        r.onerror = () => rej(new Error('Không đọc được file'));
-        r.readAsDataURL(file);
-      });
-      const body = { filename: file.name, mime: file.type, dataBase64 };
-      body[paramKey] = id;
-      const r2 = await post('/documents', body);
-      toast(r2.notice || 'Đã tải lên & phân tích tài liệu', r2.notice ? 'err' : 'ok');
-      root.querySelector('[data-doclist]').innerHTML = listHTML(await load());
-      input.value = '';
-    } catch (e) {
-      toast(e.message, 'err');
-    } finally {
-      btn.disabled = false;
-      btn.innerHTML = `${icon('bot', 14)} Tải lên & AI phân tích`;
-    }
-  };
-}
-
-function builder(d, presetProduct, after) {
-  const opts = d.products.map(p => ({ v: p.id, n: p.name + ' — ' + money(p.price) }));
-  modal({
-    title: 'Công cụ tính giá & tạo báo giá',
-    wide: true,
-    fields: [
-      { name: 'title', label: 'Tiêu đề báo giá', value: 'Báo giá dịch vụ NetViet' },
-      { name: 'customerId', label: 'Khách hàng', type: 'select', options: [{ v: '', n: '— chọn —' }, ...d.customers.map(c => ({ v: c.id, n: c.name }))] },
-      { name: 'dealId', label: 'Gắn deal', type: 'select', options: [{ v: '', n: '— không —' }, ...d.deals.map(x => ({ v: x.id, n: x.title }))] },
-      { name: 'productId', label: 'Gói dịch vụ', type: 'select', value: presetProduct || '', options: opts },
-      { name: 'qty', label: 'Số lượng', type: 'number', value: 1 },
-      { name: 'productId2', label: 'Gói thứ hai (tuỳ chọn)', type: 'select', options: [{ v: '', n: '— không —' }, ...opts] },
-      { name: 'discountPct', label: 'Chiết khấu (%)', type: 'number', value: 0, hint: 'Vượt ' + d.threshold + '% sẽ tự đẩy TPKD duyệt (vòng 1)' },
-    ],
-    submitText: 'Tạo báo giá',
-    onSubmit: async (v) => {
-      const items = [{ productId: v.productId, qty: Number(v.qty) || 1 }];
-      if (v.productId2) items.push({ productId: v.productId2, qty: 1 });
-      const r = await post('/quotes', { title: v.title, customerId: v.customerId, dealId: v.dealId, discountPct: Number(v.discountPct) || 0, items });
-      toast(r.status === 'pending_v1'
-        ? `Chiết khấu vượt ngưỡng ${r.threshold}% → đã gửi TPKD duyệt (V1)`
-        : `Đã tạo báo giá ${vnd(r.total)} · hoa hồng ${vnd(r.commission)}`, r.status === 'pending_v1' ? 'err' : 'ok');
-      tab = 'quotes';
-      after();
-    },
-  });
-}
-
-/** Sửa & trình lại báo giá bị yêu cầu điều chỉnh — chỉ sửa gói/chiết khấu, giữ nguyên khách
- * hàng/deal đã gắn (không đổi được ở bước này). */
-function resubmitBuilder(d, q, after) {
-  let items = [];
-  try { items = JSON.parse(q.items || '[]'); } catch (e) { items = []; }
-  const opts = d.products.map(p => ({ v: p.id, n: p.name + ' — ' + money(p.price) }));
-  modal({
-    title: 'Sửa & trình lại: ' + q.title,
-    wide: true,
-    fields: [
-      { name: 'title', label: 'Tiêu đề báo giá', value: q.title },
-      { name: 'productId', label: 'Gói dịch vụ', type: 'select', value: items[0]?.productId || '', options: opts },
-      { name: 'qty', label: 'Số lượng', type: 'number', value: items[0]?.qty || 1 },
-      { name: 'productId2', label: 'Gói thứ hai (tuỳ chọn)', type: 'select', value: items[1]?.productId || '', options: [{ v: '', n: '— không —' }, ...opts] },
-      { name: 'discountPct', label: 'Chiết khấu (%)', type: 'number', value: q.discount_pct },
-    ],
-    submitText: 'Gửi lại',
-    onSubmit: async (v) => {
-      const newItems = [{ productId: v.productId, qty: Number(v.qty) || 1 }];
-      if (v.productId2) newItems.push({ productId: v.productId2, qty: 1 });
-      try {
-        await patch('/quotes/' + q.id, { title: v.title, discountPct: Number(v.discountPct) || 0, items: newItems });
-        toast('Đã gửi lại báo giá để duyệt.', 'ok');
-        after();
-      } catch (e) { toast(e.message, 'err'); return false; }
-    },
-  });
-}
-
-/** Tạo hợp đồng sản xuất — bắt buộc qua đủ 2 vòng duyệt (TPKD→HCNS), không có ngưỡng bỏ qua như
- * báo giá. Có thể gắn deal/báo giá đã duyệt để tham chiếu, nhưng không bắt buộc. */
-function contractBuilder(d, presetDealId, after) {
-  const approvedQuotes = d.quotes.filter(q => q.status === 'approved');
-  modal({
-    title: 'Lập hợp đồng sản xuất',
-    wide: true,
-    fields: [
-      { name: 'title', label: 'Tên hợp đồng', value: 'Hợp đồng dịch vụ NetViet' },
-      { name: 'customerId', label: 'Khách hàng', type: 'select', options: [{ v: '', n: '— chọn —' }, ...d.customers.map(c => ({ v: c.id, n: c.name }))] },
-      { name: 'dealId', label: 'Gắn deal', type: 'select', value: presetDealId || '', options: [{ v: '', n: '— không —' }, ...d.deals.map(x => ({ v: x.id, n: x.title }))] },
-      { name: 'quoteId', label: 'Dựa trên báo giá đã duyệt', type: 'select', options: [{ v: '', n: '— không —' }, ...approvedQuotes.map(q => ({ v: q.id, n: q.title + ' — ' + vnd(q.total) }))] },
-      { name: 'value', label: 'Giá trị hợp đồng (đ)', type: 'number', value: 50000000 },
-      { name: 'paymentSchedule', label: 'Tiến độ thanh toán', type: 'textarea', rows: 2, placeholder: 'VD: 50% tạm ứng, 50% sau nghiệm thu' },
-      { name: 'penaltyTerms', label: 'Điều khoản phạt vi phạm', type: 'textarea', rows: 2, placeholder: 'VD: Phạt 0.1%/ngày chậm tiến độ, tối đa 8%' },
-      { name: 'note', label: 'Ghi chú', type: 'textarea', rows: 2 },
-    ],
-    submitText: 'Gửi TPKD duyệt (V1)',
-    onSubmit: async (v) => {
-      await post('/contracts', { ...v, value: Number(v.value) || 0 });
-      toast('Đã lập hợp đồng — gửi TPKD duyệt (V1)', 'ok');
-      tab = 'contracts';
-      after();
-    },
-  });
-}
-
-/** Sửa & trình lại hợp đồng bị yêu cầu điều chỉnh — giữ nguyên khách hàng/deal/báo giá đã gắn. */
-function resubmitContractBuilder(c, after) {
-  modal({
-    title: 'Sửa & trình lại: ' + c.title,
-    wide: true,
-    fields: [
-      { name: 'title', label: 'Tên hợp đồng', value: c.title },
-      { name: 'value', label: 'Giá trị hợp đồng (đ)', type: 'number', value: c.value },
-      { name: 'paymentSchedule', label: 'Tiến độ thanh toán', type: 'textarea', rows: 2, value: c.payment_schedule || '' },
-      { name: 'penaltyTerms', label: 'Điều khoản phạt vi phạm', type: 'textarea', rows: 2, value: c.penalty_terms || '' },
-      { name: 'note', label: 'Ghi chú', type: 'textarea', rows: 2, value: c.note || '' },
-    ],
-    submitText: 'Gửi lại',
-    onSubmit: async (v) => {
-      try {
-        await patch('/contracts/' + c.id, { ...v, value: Number(v.value) || 0 });
-        toast('Đã gửi lại hợp đồng để duyệt.', 'ok');
+        if (edit) await patch('/products/' + product.id, body);
+        else await post('/products', body);
+        toast(edit ? 'Đã cập nhật gói dịch vụ' : 'Đã thêm gói dịch vụ', 'ok');
         after();
       } catch (e) { toast(e.message, 'err'); return false; }
     },
@@ -406,10 +150,132 @@ function resubmitContractBuilder(c, after) {
 }
 
 /**
+ * Công cụ NHẨM giá — không tạo bản ghi nào, không gọi API. Dùng để trả lời khách ngay trong cuộc
+ * gọi; muốn có báo giá thật (có số hiệu, có luồng duyệt) thì lập ở Phương án kinh doanh.
+ * Công thức chép đúng computeQuotePricing() ở server/routes/deals.js để con số ở đây không lệch
+ * với báo giá thật cùng gói & cùng chiết khấu: chiết khấu áp lên CẢ thành tiền lẫn hoa hồng.
+ */
+function estimateModal(d, presetProduct) {
+  // Chỉ gói ĐANG BÁN — Admin nạp cả gói đã ngừng bán để quản bảng giá, nhưng không được nhẩm giá
+  // (rồi chào khách) bằng một gói công ty đã dừng.
+  const opts = d.products.filter(p => p.active).map(p => ({ v: p.id, n: p.name + ' — ' + money(p.price) }));
+  const { root } = modal({
+    title: 'Nhẩm giá & hoa hồng',
+    wide: true,
+    fields: [
+      { name: 'productId', label: 'Gói dịch vụ', type: 'select', value: presetProduct || '', options: opts },
+      { name: 'qty', label: 'Số lượng', type: 'number', value: 1 },
+      { name: 'productId2', label: 'Gói thứ hai (tuỳ chọn)', type: 'select', options: [{ v: '', n: '— không —' }, ...opts] },
+      { name: 'discountPct', label: 'Chiết khấu (%)', type: 'number', value: 0 },
+    ],
+    html: '<div data-est></div>',
+    submitText: 'Đóng',
+    onSubmit: () => true,
+  });
+
+  const form = root.querySelector('[data-form]');
+  const out = root.querySelector('[data-est]');
+
+  const calc = () => {
+    const v = Object.fromEntries(new FormData(form).entries());
+    const disc = Math.min(Math.max(Number(v.discountPct) || 0, 0), 100);
+    const lines = [
+      { p: d.products.find(x => x.id === v.productId), qty: Number(v.qty) || 1 },
+      { p: d.products.find(x => x.id === v.productId2), qty: 1 },
+    ].filter(l => l.p);
+
+    let subtotal = 0, commission = 0;
+    for (const l of lines) {
+      subtotal += l.p.price * l.qty;
+      commission += l.p.price * l.qty * (l.p.commission_rate || 5) / 100;
+    }
+    const total = subtotal * (1 - disc / 100);
+    commission = Math.round(commission * (1 - disc / 100));
+
+    const overCap = lines.filter(l => disc > Number(l.p.max_discount ?? 100));
+    out.innerHTML = `<div class="card mt">
+      <div class="sm">Tạm tính: <b>${vnd(subtotal)}</b></div>
+      <div class="sm">Chiết khấu: <b>${disc}%</b> (−${vnd(subtotal - total)})</div>
+      <div class="sm">Thành tiền: <b style="color:#F59E0B">${vnd(total)}</b></div>
+      <div class="sm">Hoa hồng dự kiến: <b>${vnd(commission)}</b></div>
+    </div>
+    ${overCap.length ? `<div class="note red mt">Vượt trần chiết khấu riêng của gói: ${overCap.map(l => `${esc(l.p.name)} (trần ${l.p.max_discount}%)`).join('; ')}.</div>` : ''}
+    ${disc > d.threshold ? `<div class="note mt">Chiết khấu vượt ngưỡng ${d.threshold}% — báo giá thật sẽ phải qua TPKD duyệt (vòng 1). Lập tại <a href="#/plans">Phương án kinh doanh</a>.</div>` : ''}
+    <div class="xs mut mt">Đây chỉ là ước tính tại chỗ, không tạo báo giá và không lưu lại.</div>`;
+  };
+
+  form.addEventListener('input', calc);
+  form.addEventListener('change', calc);
+  calc();
+}
+
+/**
+ * Điều chỉnh tỉ lệ hoa hồng của một cơ chế hợp tác.
+ *
+ * Ghi thẳng vào CÙNG hai khoá cấu hình mà Quản trị → Ngưỡng & SLA đang dùng
+ * (partner_pa1_partner_rate…), không tạo bản sao riêng cho màn hình này — nếu không sẽ có hai chỗ
+ * cùng khai một tỉ lệ và không biết chỗ nào là thật. POST /api/config đóng hiệu lực bản cũ rồi
+ * thêm bản mới thay vì ghi đè, nên deal đã chốt vẫn giữ đúng tỉ lệ tại thời điểm chốt.
+ *
+ * Hai khoá phải gửi làm HAI lần gọi (API nhận mỗi lần một khoá). Gọi tuần tự chứ không song song:
+ * cả hai cùng xoá cache cfg:global, chạy song song thì lần đọc kế tiếp có thể bắt được trạng thái
+ * mới một nửa.
+ */
+function rateModal(key, partnerRate, saleRate, after) {
+  const prefix = `partner_${key.toLowerCase()}_`;
+  const { root } = modal({
+    title: 'Điều chỉnh hoa hồng — ' + SCHEME_NAME[key],
+    fields: [
+      { name: 'partnerRate', label: 'Partner nhận (%)', type: 'number', value: partnerRate, required: true },
+      { name: 'saleRate', label: 'Sale nhận (%)', type: 'number', value: saleRate, required: true },
+    ],
+    html: '<div data-total></div>',
+    submitText: 'Lưu tỉ lệ',
+    onSubmit: async (v) => {
+      const pr = Number(v.partnerRate), sr = Number(v.saleRate);
+      if (![pr, sr].every(n => Number.isFinite(n) && n >= 0)) { toast('Tỉ lệ phải là số không âm.', 'err'); return false; }
+      if (pr + sr > 100) { toast('Tổng chi hoa hồng vượt 100% giá trị hợp đồng.', 'err'); return false; }
+      try {
+        await post('/config', { key: prefix + 'partner_rate', value: pr });
+        await post('/config', { key: prefix + 'sale_rate', value: sr });
+        toast(`Đã cập nhật ${SCHEME_NAME[key]}: partner ${pr}% · sale ${sr}%`, 'ok');
+        after();
+      } catch (e) { toast(e.message, 'err'); return false; }
+    },
+  });
+
+  // Tổng chi hiện ngay khi gõ — đây là con số người duyệt tỉ lệ thực sự quan tâm, để không phải
+  // cộng nhẩm rồi mới phát hiện đã cho đi quá nhiều.
+  const form = root.querySelector('[data-form]');
+  const out = root.querySelector('[data-total]');
+  const calc = () => {
+    const v = Object.fromEntries(new FormData(form).entries());
+    const pr = Number(v.partnerRate) || 0, sr = Number(v.saleRate) || 0;
+    const sample = 500000000;
+    out.innerHTML = `<div class="card mt">
+      <div class="sm">Tổng chi hoa hồng: <b${pr + sr > 100 ? ' style="color:var(--red)"' : ''}>${(pr + sr).toFixed(1)}%</b></div>
+      <div class="sm mut">Trên hợp đồng mẫu ${vnd(sample)}: partner ${money(sample * pr / 100)} · sale ${money(sample * sr / 100)}
+        · còn lại cho công ty <b>${money(sample * (100 - pr - sr) / 100)}</b></div>
+    </div>
+    <div class="xs mut mt">Áp dụng cho deal chốt từ lúc lưu trở đi. Cùng giá trị với Quản trị → Ngưỡng &amp; SLA
+      (<code>${esc(prefix)}partner_rate</code>, <code>${esc(prefix)}sale_rate</code>).</div>`;
+  };
+  form.addEventListener('input', calc);
+  calc();
+}
+
+/* Tên hiển thị của hai cơ chế hợp tác. Mã PA1/PA2 vẫn là khoá dữ liệu (nv_deals.phuong_an_hop_tac,
+ * cấu hình partnerScheme của máy chủ) nhưng KHÔNG hiện ra ở màn hình này — người đọc bảng hoa hồng
+ * cần biết ai làm gì và ăn bao nhiêu, mã nội bộ chỉ thêm một lớp phải dịch. Pipeline vẫn hiện mã
+ * khi gắn phương án cho deal (src/const.js PA_OPTIONS) vì ở đó đang chọn đúng trường dữ liệu.
+ */
+const SCHEME_NAME = { PA1: 'Partner giới thiệu', PA2: 'Partner tự chốt' };
+
+/**
  * Hoa hồng khách hàng đến từ Partner — hai cơ chế chia tiền khác hẳn nhau, nên trình bày cạnh
  * nhau trên cùng một giá trị hợp đồng để người đọc thấy ngay khác biệt thay vì phải tự nhẩm:
- *   PA1 — Partner giới thiệu, kinh doanh chốt: sale làm toàn bộ nên hưởng đủ, partner hưởng phí giới thiệu.
- *   PA2 — Partner tự chốt: partner hưởng phần lớn, sale chỉ hưởng phần hỗ trợ hồ sơ & quy trình duyệt.
+ *   Partner giới thiệu — kinh doanh chốt: sale làm toàn bộ nên hưởng đủ, partner hưởng phí giới thiệu.
+ *   Partner tự chốt: partner hưởng phần lớn, sale chỉ hưởng phần hỗ trợ hồ sơ & quy trình duyệt.
  * Tỉ lệ lấy từ cấu hình server (Quản trị → Ngưỡng & SLA), không cứng trong giao diện.
  */
 function partnerCommissionTab(d) {
@@ -421,8 +287,10 @@ function partnerCommissionTab(d) {
   const partnerCustomers = d.customers.filter(c => c.partner_id);
   const partnerName = (id) => (d.partners.find(p => p.id === id) || {}).name || '—';
 
-  const schemeCard = (key, s, title, who) => `<div class="card">
-    <div class="row wrap"><div class="grow b">${esc(title)}</div>${chip(key, key === 'PA1' ? 'blue' : 'amber')}</div>
+  const schemeCard = (key, s, who) => `<div class="card">
+    <div class="row wrap"><div class="grow b">${esc(SCHEME_NAME[key])}</div>
+      ${isLead() ? `<button class="btn sm" data-rate="${esc(key)}"
+        data-partner="${s.partnerRate}" data-sale="${s.saleRate}">${icon('slidersHorizontal', 14)} Điều chỉnh</button>` : ''}</div>
     <div class="sm mut">${esc(who)}</div>
     <div class="grid g2 mt">
       ${stat('Partner nhận', s.partnerRate + '%', 'Trên giá trị hợp đồng', 'amber')}
@@ -434,11 +302,14 @@ function partnerCommissionTab(d) {
   // Bảng ví dụ trên một giá trị tròn để so sánh nhanh — không phải số của deal cụ thể nào.
   const sample = 500000000;
   return `<div class="note mb">Cơ chế áp dụng khi <b>deal được gắn phương án hợp tác</b> ở Pipeline và khách hàng có gắn Partner trong CRM.
-    Khi deal chuyển sang "đã chốt", hệ thống ghi hoa hồng theo đúng cơ chế tương ứng thay vì tỉ lệ theo gói dịch vụ.</div>
+    Khi deal chuyển sang "đã chốt", hệ thống ghi hoa hồng theo đúng cơ chế tương ứng thay vì tỉ lệ theo gói dịch vụ.
+    ${isLead()
+      ? 'Đổi tỉ lệ bằng nút <b>Điều chỉnh</b> trên từng cơ chế — áp dụng cho các deal chốt <b>từ lúc đổi trở đi</b>, deal đã chốt giữ nguyên tỉ lệ tại thời điểm chốt.'
+      : 'Tỉ lệ do Trưởng phòng KD / Ban Giám đốc đặt.'}</div>
 
   <div class="grid g2">
-    ${schemeCard('PA1', pa1, 'Partner giới thiệu — KD chốt', 'Kinh doanh làm toàn bộ công đoạn bán hàng; partner hưởng phí giới thiệu.')}
-    ${schemeCard('PA2', pa2, 'Partner tự chốt', 'Partner tự chăm sóc và chốt; sale hỗ trợ hồ sơ và đưa qua quy trình duyệt nội bộ.')}
+    ${schemeCard('PA1', pa1, 'Kinh doanh làm toàn bộ công đoạn bán hàng; partner hưởng phí giới thiệu.')}
+    ${schemeCard('PA2', pa2, 'Partner tự chăm sóc và chốt; sale hỗ trợ hồ sơ và đưa qua quy trình duyệt nội bộ.')}
   </div>
 
   <div class="sec-title">So sánh trên hợp đồng mẫu ${vnd(sample)}</div>
@@ -449,7 +320,7 @@ function partnerCommissionTab(d) {
         ${[['PA1', pa1, 'Kinh doanh'], ['PA2', pa2, 'Partner']].map(([k, s, who]) => {
           const pAmt = sample * s.partnerRate / 100, sAmt = sample * s.saleRate / 100;
           return `<tr>
-            <td><b>${esc(k)}</b></td><td class="sm">${esc(who)}</td>
+            <td><b>${esc(SCHEME_NAME[k])}</b></td><td class="sm">${esc(who)}</td>
             <td class="b">${money(pAmt)}</td><td class="b">${money(sAmt)}</td>
             <td>${money(pAmt + sAmt)}</td><td>${money(sample - pAmt - sAmt)}</td>
           </tr>`;
@@ -463,12 +334,12 @@ function partnerCommissionTab(d) {
     const s = x.phuong_an_hop_tac === 'PA1' ? pa1 : pa2;
     return `<div class="item">
       <div class="dot-i">${icon('handshake')}</div>
-      <div class="grow"><div class="t">${esc(x.title)} ${chip(x.phuong_an_hop_tac, x.phuong_an_hop_tac === 'PA1' ? 'blue' : 'amber')}</div>
+      <div class="grow"><div class="t">${esc(x.title)} ${chip(SCHEME_NAME[x.phuong_an_hop_tac], x.phuong_an_hop_tac === 'PA1' ? 'blue' : 'amber')}</div>
         <div class="d">${esc(x.customer_name || '—')} · ${esc(x.owner_name || '')} · ${money(x.value)}</div>
         <div class="d xs">Partner ${s.partnerRate}% = ${money(x.value * s.partnerRate / 100)} · sale ${s.saleRate}% = ${money(x.value * s.saleRate / 100)}</div></div>
       ${chip(x.status === 'won' ? 'Đã chốt' : 'Đang mở', x.status === 'won' ? 'green' : 'grey')}
     </div>`;
-  }).join('') : '<div class="sm mut">Chưa có deal nào gắn phương án hợp tác PA1/PA2.</div>'}</div>
+  }).join('') : '<div class="sm mut">Chưa có deal nào gắn phương án hợp tác nào.</div>'}</div>
 
   <div class="sec-title">Khách hàng gắn Partner (${partnerCustomers.length})</div>
   <div class="card">${partnerCustomers.length ? partnerCustomers.map(c => `<a class="item" href="#/crm/${esc(c.id)}">

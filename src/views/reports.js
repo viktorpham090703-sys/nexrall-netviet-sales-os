@@ -23,7 +23,7 @@ export async function render(el) {
   const drawSection = (s) => {
     const maxPage = Math.max(1, Math.ceil(s.total / s.pageSize));
     return `<div class="card mt">
-      <div class="row"><div class="grow b">${esc(s.userName)}</div>${chip(roleLabel({ id: s.userId, role: s.role }))}</div>
+      <div class="row"><div class="grow b">${esc(s.userName)}</div>${chip(roleLabel({ id: s.userId, role: s.role, title: s.title }))}</div>
       ${s.items.length ? s.items.map(r => `<div class="item">
         <div class="dot-i">${icon(r.kind === 'week' ? 'calendar' : r.kind === 'month' ? 'calendarDays' : 'notepadText')}</div>
         <div class="grow"><div class="t">${r.kind === 'week' ? 'Báo cáo tuần' : r.kind === 'month' ? 'Tổng hợp tháng' : 'EOD'} ${esc(r.period)}</div>

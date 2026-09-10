@@ -161,8 +161,16 @@ export const ROLE_NAME = {
   hr: 'Hành chính nhân sự',
 };
 
-/* HAUNV là TGĐ kiêm Admin toàn quyền — hiển thị chức danh riêng thay vì nhãn "Admin / BGĐ" chung. */
-export const roleLabel = (u) => (u && u.id === 'HAUNV') ? 'Admin/TGĐ' : ROLE_NAME[(u || {}).role] || (u || {}).role || '';
+/* Chức danh do Admin/TGĐ đặt ở "Vai trò & chức danh" (cột nv_users.title) là nhãn ƯU TIÊN: đổi
+ * chức danh ở màn Quản trị thì mọi chỗ hiển thị vai trò (thẻ hồ sơ sidebar, danh sách người dùng,
+ * Console đội, Hồ sơ nhân sự, Báo cáo) đổi theo, không còn kẹt ở nhãn mặc định của vai trò.
+ * Chưa đặt chức danh mới rơi về nhãn mặc định — riêng HAUNV là TGĐ kiêm Admin toàn quyền nên có
+ * nhãn mặc định riêng thay vì "Admin / BGĐ" chung. */
+/* Nhãn mặc định theo VAI TRÒ hệ thống — dùng ở nơi đã hiện chức danh riêng ngay bên cạnh (thẻ hồ
+ * sơ nhân sự, Console đội) để không lặp lại cùng một chuỗi hai lần. */
+export const roleDefaultLabel = (u) => (u && u.id === 'HAUNV')
+  ? 'Admin/TGĐ' : ROLE_NAME[(u || {}).role] || (u || {}).role || '';
+export const roleLabel = (u) => (u && String(u.title || '').trim()) || roleDefaultLabel(u);
 
 export const TASK_STATUS = { todo: { n: 'Chờ làm', c: 'grey' }, in_progress: { n: 'Đang làm', c: 'blue' }, done: { n: 'Hoàn thành', c: 'green' } };
 export const PRIO = { high: { n: 'Cao', c: 'red' }, medium: { n: 'Vừa', c: 'amber' }, low: { n: 'Thấp', c: 'grey' } };

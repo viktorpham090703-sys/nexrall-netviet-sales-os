@@ -25,6 +25,54 @@ const KIND_NAME = { bao_gia: 'Báo giá', hop_dong: 'Hợp đồng', nghiem_thu:
 const APPROVER_ROLES = ['manager', 'admin'];
 const APPROVER_NAME = { manager: 'Trưởng phòng KD', admin: 'Giám đốc' };
 
+/** Hạng mục còn NHẬP TAY trong phương án. `bao_gia`/`hop_dong` nay lập bằng chứng từ thật
+ * (nv_quotes / nv_contracts) ngay tại bước 1 và bước 2, không trình bằng ô summary nữa. */
+const MANUAL_KINDS = ['nghiem_thu', 'thanh_ly'];
+
+/**
+ * Điều kiện khớp 1 chứng từ với phương án đang xét. Nhánh thứ hai là DỰ PHÒNG cho dữ liệu tạo
+ * trước migration 70-71 (`plan_id` còn NULL): báo giá/hợp đồng cũ của khách vẫn hiện đúng ở
+ * phương án của khách đó thay vì biến mất khỏi màn hình.
+ * `planCol`/`cusCol` là biểu thức SQL trỏ tới phương án — trong subquery tương quan thì đó là
+ * `pl.id`/`pl.customer_id`, còn khi tra 1 phương án cụ thể thì là tham số `?`.
+ */
+const docMatch = (x, planCol, cusCol) =>
+  `(${x}.plan_id=${planCol} OR (${x}.plan_id IS NULL AND ${x}.customer_id=${cusCol}))`;
+
+/** Chứng từ đang bị trả lại để sửa — khớp đúng needsResubmit() ở src/salesDocs.js.
+ * IFNULL là BẮT BUỘC chứ không phải cho gọn: v1_decision/v2_decision là NULL ở chứng từ chưa ai
+ * chạm tới, mà so sánh với NULL cho ra NULL (không phải FALSE) — nhánh `NOT (...)` ở countExpr sẽ
+ * thành NULL và loại luôn dòng đó khỏi bộ đếm "chờ duyệt". */
+const docRevise = (x) =>
+  `((${x}.status='pending_v1' AND IFNULL(${x}.v1_decision,'')='revise') OR (${x}.status='pending_v2' AND IFNULL(${x}.v2_decision,'')='revise'))`;
+
+/**
+ * Biểu thức đếm cho danh sách phương án. Từ khi bước 1 & 2 chạy bằng chứng từ thật, trạng thái
+ * một phương án nằm ở HAI nguồn: nv_plan_items (nghiệm thu, thanh lý) và nv_quotes/nv_contracts
+ * (báo giá, hợp đồng). Gộp lại ở đây để giao diện vẫn đọc đúng 3 con số cũ và giữ nguyên cách
+ * hiển thị "x/4 hạng mục đã duyệt".
+ * - approved: mỗi loại chứng từ tính TỐI ĐA 1 (một phương án có thể có nhiều báo giá, nhưng bước
+ *   "Báo giá" thì chỉ xong một lần) — nếu không con số sẽ vượt quá 4.
+ * - pending: trừ các bản đang bị trả lại, vì chúng vẫn mang status pending_v* nhưng đã được đếm
+ *   ở revise rồi — để nguyên thì 1 báo giá bị trả lại hiện cùng lúc 2 chip mâu thuẫn.
+ */
+function countExpr(kind) {
+  const items = `(SELECT COUNT(*) FROM nv_plan_items i WHERE i.plan_id=pl.id
+    AND i.kind IN ('nghiem_thu','thanh_ly') AND i.status='${kind}')`;
+  const m = (x) => docMatch(x, 'pl.id', 'pl.customer_id');
+  if (kind === 'approved') {
+    return `(${items}
+      + (SELECT CASE WHEN EXISTS(SELECT 1 FROM nv_quotes q WHERE ${m('q')} AND q.status IN ('approved','draft')) THEN 1 ELSE 0 END)
+      + (SELECT CASE WHEN EXISTS(SELECT 1 FROM nv_contracts ct WHERE ${m('ct')} AND ct.status='approved') THEN 1 ELSE 0 END))`;
+  }
+  const docCond = kind === 'revise'
+    ? (x) => docRevise(x)
+    : (x) => `${x}.status IN ('pending_v1','pending_v2') AND NOT ${docRevise(x)}`;
+  return `(${items}
+    + (SELECT COUNT(*) FROM nv_quotes q WHERE ${m('q')} AND ${docCond('q')})
+    + (SELECT COUNT(*) FROM nv_contracts ct WHERE ${m('ct')} AND ${docCond('ct')}))`;
+}
+
 /** Ghi 1 dòng vào nhật ký trao đổi của phương án — mọi thay đổi trạng thái đều đi qua đây. */
 async function logEvent(env, planId, itemId, userId, kind, message) {
   await env.DB.prepare('INSERT INTO nv_plan_events (id,plan_id,item_id,user_id,kind,message,created_at) VALUES (?,?,?,?,?,?,?)')
@@ -50,9 +98,9 @@ export async function planRoutes(ctx) {
     const s = scope(ctx, 'pl.owner_id');
     const customerId = (url.searchParams.get('customerId') || '').trim();
     let sql = `SELECT pl.*, c.name customer_name, u.name owner_name,
-      (SELECT COUNT(*) FROM nv_plan_items i WHERE i.plan_id=pl.id AND i.status='pending') pending_n,
-      (SELECT COUNT(*) FROM nv_plan_items i WHERE i.plan_id=pl.id AND i.status='revise') revise_n,
-      (SELECT COUNT(*) FROM nv_plan_items i WHERE i.plan_id=pl.id AND i.status='approved') approved_n
+      ${countExpr('pending')} pending_n,
+      ${countExpr('revise')} revise_n,
+      ${countExpr('approved')} approved_n
       FROM nv_business_plans pl
       LEFT JOIN nv_customers c ON c.id=pl.customer_id
       LEFT JOIN nv_users u ON u.id=pl.owner_id WHERE 1=1` + s.sql;
@@ -94,15 +142,27 @@ export async function planRoutes(ctx) {
     need(ctx);
     const plan = await findPlan(env, ctx, p.id);
     if (!plan) return json({ error: 'Không tìm thấy phương án' }, 404);
-    const [items, events, cus] = await Promise.all([
+    // Bước 1 & 2 của phương án đọc thẳng chứng từ thật, nên trả kèm luôn ở đây thay vì bắt giao
+    // diện gọi /api/quotes + /api/contracts rồi tự lọc — điều kiện khớp (gồm nhánh dự phòng cho
+    // dữ liệu cũ) chỉ nên tồn tại đúng một chỗ là máy chủ.
+    const [items, events, cus, quotes, contracts] = await Promise.all([
       env.DB.prepare('SELECT i.*, u.name approver_name FROM nv_plan_items i LEFT JOIN nv_users u ON u.id=i.approver_id WHERE i.plan_id=? ORDER BY i.created_at').bind(p.id).all(),
       env.DB.prepare('SELECT e.*, u.name user_name, u.role user_role FROM nv_plan_events e LEFT JOIN nv_users u ON u.id=e.user_id WHERE e.plan_id=? ORDER BY e.created_at DESC LIMIT 60').bind(p.id).all(),
       env.DB.prepare('SELECT id,name,industry FROM nv_customers WHERE id=?').bind(plan.customer_id).first(),
+      env.DB.prepare(`SELECT q.*, u.name owner_name, c.name customer_name FROM nv_quotes q
+        LEFT JOIN nv_users u ON u.id=q.owner_id LEFT JOIN nv_customers c ON c.id=q.customer_id
+        WHERE ${docMatch('q', '?', '?')} ORDER BY q.created_at DESC LIMIT 50`).bind(p.id, plan.customer_id).all(),
+      env.DB.prepare(`SELECT ct.*, u.name owner_name, c.name customer_name, d.title deal_title FROM nv_contracts ct
+        LEFT JOIN nv_users u ON u.id=ct.owner_id LEFT JOIN nv_customers c ON c.id=ct.customer_id LEFT JOIN nv_deals d ON d.id=ct.deal_id
+        WHERE ${docMatch('ct', '?', '?')} ORDER BY ct.created_at DESC LIMIT 50`).bind(p.id, plan.customer_id).all(),
     ]);
     // Giữ đúng thứ tự vòng đời kể cả khi CSDL trả về lệch (4 hàng tạo cùng 1 giây).
     const byKind = new Map((items.results || []).map(i => [i.kind, i]));
     const ordered = PLAN_KINDS.map(k => byKind.get(k)).filter(Boolean);
-    return json({ plan, customer: cus || null, items: ordered, events: events.results || [] });
+    return json({
+      plan, customer: cus || null, items: ordered, events: events.results || [],
+      quotes: quotes.results || [], contracts: contracts.results || [],
+    });
   }
 
   /**
@@ -155,6 +215,12 @@ export async function planRoutes(ctx) {
     /* ----- Nhánh TRÌNH DUYỆT: chỉ chủ phương án, chỉ khi hạng mục chưa trình hoặc đang bị trả
        lại. Trình lại sau khi bị trả lại sẽ XOÁ quyết định cũ để người duyệt không nhìn nhầm
        phản hồi của vòng trước là phản hồi cho nội dung mới. ----- */
+    // Báo giá & hợp đồng đã có chứng từ thật với luồng duyệt 2 vòng riêng — không cho trình bằng
+    // ô summary nữa, nếu không lại quay về đúng cảnh nhập số hai lần và duyệt hai lần mà việc gộp
+    // này sinh ra để dẹp. Hai hàng nv_plan_items tương ứng vẫn được giữ (dữ liệu cũ không mất).
+    if (!MANUAL_KINDS.includes(item.kind)) {
+      return json({ error: `${kindName} nay lập trực tiếp trong phương án bằng chứng từ thật — không trình bằng ô nhập tay.` }, 409);
+    }
     if (plan.owner_id !== ctx.me.id && !isLead(ctx.me)) {
       return json({ error: 'Chỉ người phụ trách mới trình được hạng mục này.' }, 403);
     }

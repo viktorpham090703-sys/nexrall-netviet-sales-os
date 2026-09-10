@@ -1,5 +1,5 @@
 import { get, post, patch } from '../api.js';
-import { isLead, assigneeField } from '../state.js';
+import { state, isLead, assigneeField, salesTeamUsers } from '../state.js';
 import { esc, mount, chip, empty, fmtDT, toast, modal, stat } from '../ui.js';
 import { PRIO, TASK_STATUS } from '../const.js';
 import { icon } from '../icons.js';
@@ -34,6 +34,11 @@ export async function render(el) {
       <div class="d">Hoàn thành ${fmtDT(t.done_at)}${isLead() ? ' · ' + esc(t.user_name || '') : ''}</div></div></div>`).join('') || empty('circleCheck', 'Chưa có việc hoàn thành.')}</div>`;
   };
 
+  /* Nút "Nhận" chỉ hiện với CHÍNH nhân sự được giao: TP/Admin nhìn thấy việc của cả đội (scope
+   * theo workspace ở server/routes/work.js), bấm Nhận thay thì mốc accepted_at — căn cứ tính SLA
+   * nhận việc và leo thang khi quá hạn — không còn phản ánh việc nhân sự đã tiếp nhận hay chưa.
+   * Cấp trên vẫn theo dõi được qua chip "Chờ nhận việc"/"Quá SLA nhận việc" ở dưới. Máy chủ chặn
+   * lại lần nữa, không chỉ ẩn nút. */
   const row = (t) => `<div class="item">
     <div class="dot-i">${icon(t.assigner_id ? 'inbox' : 'notepadText')}</div>
     <div class="grow"><div class="t">${esc(t.title)}</div>
@@ -47,7 +52,7 @@ export async function render(el) {
       </div>
     </div>
     <div class="right">
-      ${t.assigner_id && !t.accepted_at ? `<button class="btn sm amber" data-accept="${esc(t.id)}">Nhận</button>` : ''}
+      ${t.assigner_id && !t.accepted_at && t.user_id === state.me?.id ? `<button class="btn sm amber" data-accept="${esc(t.id)}">Nhận</button>` : ''}
       <div class="mt"><button class="btn sm" data-done="${esc(t.id)}">Xong</button></div>
     </div></div>`;
 
@@ -65,7 +70,7 @@ export async function render(el) {
       fields: [
         { name: 'title', label: 'Tên công việc', required: true },
         { name: 'detail', label: 'Mô tả / yêu cầu', type: 'textarea', rows: 2 },
-        ...(isLead() ? [assigneeField('userId')] : []),
+        ...(isLead() ? [assigneeField('userId', salesTeamUsers())] : []),
         { name: 'dealId', label: 'Gắn với deal', type: 'select', options: [{ v: '', n: '— không —' }, ...d.deals.map(x => ({ v: x.id, n: x.title }))] },
         { name: 'priority', label: 'Ưu tiên', type: 'select', options: [{ v: 'high', n: 'Cao' }, { v: 'medium', n: 'Vừa' }, { v: 'low', n: 'Thấp' }] },
         { name: 'dueDate', label: 'Hạn hoàn thành', type: 'date' },

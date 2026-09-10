@@ -359,7 +359,7 @@ export async function coreRoutes(ctx) {
       const approverRole = q.status === 'pending_v1' ? 'manager' : 'admin';
       const { results: approvers } = await env.DB.prepare('SELECT id FROM nv_users WHERE role=? AND active=1 AND is_demo=?').bind(approverRole, q.owner_is_demo ? 1 : 0).all();
       for (const a of approvers || []) {
-        if (await push(a.id, { type: 'approval', title: `🔴 Báo giá chờ duyệt ${round} quá hạn`, body: q.title + ` – đã ${elapsed} ngày làm việc chưa xử lý.`, link: '#/saleskit', level: 'danger' })) out.quoteSla++;
+        if (await push(a.id, { type: 'approval', title: `🔴 Báo giá chờ duyệt ${round} quá hạn`, body: q.title + ` – đã ${elapsed} ngày làm việc chưa xử lý.`, link: '#/plans', level: 'danger' })) out.quoteSla++;
       }
       if (elapsed >= 2 && approverRole !== 'admin') {
         const { results: admins } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(q.owner_is_demo ? 1 : 0).all();
@@ -381,7 +381,7 @@ export async function coreRoutes(ctx) {
       const approverRole = c.status === 'pending_v1' ? 'manager' : 'hr';
       const { results: approvers } = await env.DB.prepare('SELECT id FROM nv_users WHERE role=? AND active=1 AND is_demo=?').bind(approverRole, c.owner_is_demo ? 1 : 0).all();
       for (const a of approvers || []) {
-        if (await push(a.id, { type: 'approval', title: `🔴 Hợp đồng chờ duyệt ${round} quá hạn`, body: c.title + ` – đã ${elapsed} ngày làm việc chưa xử lý.`, link: '#/saleskit', level: 'danger' })) out.contractSla++;
+        if (await push(a.id, { type: 'approval', title: `🔴 Hợp đồng chờ duyệt ${round} quá hạn`, body: c.title + ` – đã ${elapsed} ngày làm việc chưa xử lý.`, link: '#/plans', level: 'danger' })) out.contractSla++;
       }
       if (elapsed >= 2) {
         const { results: admins } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(c.owner_is_demo ? 1 : 0).all();

@@ -96,6 +96,36 @@ async function commissionRate(env, dealId, service) {
 }
 
 /**
+ * Bỏ qua vòng duyệt mà chính người lập là người duyệt.
+ *
+ * Báo giá và hợp đồng đều chạy 2 vòng: V1 = TPKD, V2 = Giám đốc/BGĐ (báo giá) hoặc HCNS (hợp đồng).
+ * Bắt người lập trình duyệt cho chính mình — hoặc cho cấp dưới của mình rồi quay về tự duyệt — là
+ * vòng lặp vô nghĩa, chỉ làm chậm và đẻ ra thông báo rác. Nên:
+ *   - Admin/BGĐ lập: bỏ cả 2 vòng (họ chính là V2, và đứng trên V1).
+ *   - TPKD lập: bỏ V1 (chính họ), vẫn phải qua V2.
+ *   - Sales lập: giữ nguyên đủ 2 vòng.
+ * LƯU Ý cho hợp đồng: V2 là HCNS — vai trò chốt hồ sơ chứ không phải cấp trên của TPKD — nên TPKD
+ * chỉ bỏ được V1, không bao giờ bỏ V2.
+ */
+const skippedRounds = (role) => role === 'admin' ? 2 : role === 'manager' ? 1 : 0;
+
+/** Trạng thái khởi đầu sau khi trừ các vòng đã bỏ. */
+const startStatus = (role) => ({ 2: 'approved', 1: 'pending_v2' }[skippedRounds(role)] || 'pending_v1');
+
+/**
+ * 8 giá trị cột v1_ và v2_ cho câu INSERT, điền sẵn các vòng được bỏ qua.
+ * Điền chứ không để trống: một chứng từ 'approved' mà không ai đứng tên duyệt thì người đọc hồ sơ
+ * sau này không có cách nào biết vì sao nó được duyệt.
+ */
+function skippedRoundColumns(me, skipped, t) {
+  const why = me.role === 'admin'
+    ? 'Admin/BGĐ lập — duyệt thẳng, không qua vòng nào.'
+    : 'TPKD lập — bỏ vòng 1 vì người lập chính là người duyệt vòng này.';
+  const round = (on) => on ? [me.id, 'approved', why, t] : [null, null, null, null];
+  return [...round(skipped >= 1), ...round(skipped >= 2)];
+}
+
+/**
  * Tính giá 1 báo giá theo danh sách gói + chiết khấu — dùng chung cho tạo mới (POST /api/quotes)
  * và sửa & trình lại (PATCH /api/quotes/:id nhánh resubmit) để không chép lại logic tính giá.
  * `overCapItems` chỉ để NÊU RÕ cho người duyệt (gói nào vượt trần riêng của nó), KHÔNG chặn ở đây —
@@ -257,7 +287,11 @@ export async function dealRoutes(ctx) {
   /* ================= Bảng gói dịch vụ ================= */
   if ((p = match(ctx, 'GET', '/api/products'))) {
     need(ctx);
-    const { results } = await env.DB.prepare('SELECT * FROM nv_products WHERE active=1 ORDER BY line, price').all();
+    // `?includeInactive=1` chỉ dành cho Admin — người quản bảng giá cần thấy cả gói đã ngừng bán
+    // để bán lại, còn mọi nơi tiêu thụ khác (tạo báo giá, AI, cổng API) phải chỉ thấy gói đang bán.
+    const withInactive = url.searchParams.get('includeInactive') === '1' && ctx.me.role === 'admin';
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM nv_products${withInactive ? '' : ' WHERE active=1'} ORDER BY line, price`).all();
     const cfg = await getConfig(env, ctx.me.id);
     // Kèm cơ chế hoa hồng Partner để Sales Kit vẽ được bảng tính % mà không phải gọi thêm 1 API
     // cấu hình riêng — Sales Kit luôn load /api/products nên đây là chỗ rẻ nhất để gửi kèm.
@@ -277,7 +311,51 @@ export async function dealRoutes(ctx) {
       .bind(id, vText(b.name, 'Tên gói', { max: 160, required: true }), str(b.line, 40), str(b.unit, 20) || 'gói',
         vMoney(b.price, 'Giá gói'), b.commissionRate != null ? vPercent(b.commissionRate, 'Tỉ lệ hoa hồng', { max: 50 }) : 5,
         b.maxDiscount != null ? vPercent(b.maxDiscount, 'Chiết khấu tối đa', { max: 100 }) : 10, str(b.description, 500)).run();
+    await audit(env, ctx.me.id, 'create', 'product', id, { name: b.name, price: b.price });
     return json({ id });
+  }
+
+  /**
+   * Sửa 1 gói dịch vụ. Chỉ ghi những trường CÓ MẶT trong body (partial update) — sửa mỗi giá thì
+   * không được vô tình đặt lại mô tả/tỉ lệ hoa hồng về mặc định.
+   * Giá mới KHÔNG hồi tố: báo giá đã lập lưu đơn giá vào nv_quotes.items ngay lúc tạo, nên đổi
+   * bảng giá không làm lệch báo giá cũ hay hoa hồng đã ghi nhận.
+   */
+  if ((p = match(ctx, 'PATCH', '/api/products/:id'))) {
+    need(ctx, ['admin']);
+    const b = await readBody(ctx.request);
+    const pr = await env.DB.prepare('SELECT * FROM nv_products WHERE id=?').bind(p.id).first();
+    if (!pr) return json({ error: 'Không tìm thấy gói dịch vụ' }, 404);
+    const sets = [], args = [];
+    const put = (col, val) => { sets.push(`${col}=?`); args.push(val); };
+    if (b.name != null) put('name', vText(b.name, 'Tên gói', { max: 160, required: true }));
+    if (b.line != null) put('line', str(b.line, 40));
+    if (b.unit != null) put('unit', str(b.unit, 20) || 'gói');
+    if (b.price != null) put('price', vMoney(b.price, 'Giá gói'));
+    if (b.commissionRate != null) put('commission_rate', vPercent(b.commissionRate, 'Tỉ lệ hoa hồng', { max: 50 }));
+    if (b.maxDiscount != null) put('max_discount', vPercent(b.maxDiscount, 'Chiết khấu tối đa', { max: 100 }));
+    if (b.description != null) put('description', str(b.description, 500));
+    if (b.active != null) put('active', b.active ? 1 : 0);
+    if (!sets.length) return json({ error: 'Không có gì để cập nhật' }, 400);
+    args.push(p.id);
+    await env.DB.prepare(`UPDATE nv_products SET ${sets.join(',')} WHERE id=?`).bind(...args).run();
+    await audit(env, ctx.me.id, 'update', 'product', p.id, { fields: sets.map(x => x.split('=')[0]) });
+    return json({ ok: true });
+  }
+
+  /**
+   * Ngừng bán 1 gói — đặt active=0 chứ KHÔNG xoá hàng. Báo giá cũ tham chiếu productId trong
+   * nv_quotes.items và commissionRate() tra ngược nv_products theo id để tính hoa hồng; xoá thật
+   * thì hoa hồng của deal đã chốt rơi về tỉ lệ mặc định theo dòng dịch vụ, tức là sai số tiền đã
+   * ghi nhận cho sale. Gói ngừng bán biến mất khỏi mọi bộ chọn nhưng Admin bán lại được.
+   */
+  if ((p = match(ctx, 'DELETE', '/api/products/:id'))) {
+    need(ctx, ['admin']);
+    const pr = await env.DB.prepare('SELECT * FROM nv_products WHERE id=?').bind(p.id).first();
+    if (!pr) return json({ error: 'Không tìm thấy gói dịch vụ' }, 404);
+    await env.DB.prepare('UPDATE nv_products SET active=0 WHERE id=?').bind(p.id).run();
+    await audit(env, ctx.me.id, 'deactivate', 'product', p.id, { name: pr.name });
+    return json({ ok: true });
   }
 
   /* ================= Báo giá / Proposal ================= */
@@ -306,18 +384,35 @@ export async function dealRoutes(ctx) {
     }
     const { clean, subtotal, total, commission, overCapItems } = await computeQuotePricing(env, items, disc);
     const threshold = cfg.discount_threshold ?? 15;
-    const status = disc > threshold ? 'pending_v1' : 'draft';
+    /* Không ai phải trình duyệt cho CHÍNH MÌNH hoặc cho cấp dưới của mình — người lập tự bỏ qua
+     * những vòng mà họ vốn là người duyệt (xem startStatus ở đầu file):
+     *   Admin/BGĐ lập → duyệt thẳng (họ là V2, và đứng trên V1).
+     *   TPKD lập      → bỏ V1 (chính họ), vào thẳng V2 cho Giám đốc duyệt.
+     *   Sales lập     → đủ 2 vòng như cũ.
+     * Chiết khấu dưới ngưỡng vẫn là 'draft' cho mọi vai trò: đó là luật theo MỨC CHIẾT KHẤU, không
+     * liên quan tới chức vụ người lập. */
+    const skipped = skippedRounds(ctx.me.role);
+    const status = disc > threshold ? startStatus(ctx.me.role) : (ctx.me.role === 'admin' ? 'approved' : 'draft');
     const t = now(), id = uid('qt');
-    await env.DB.prepare('INSERT INTO nv_quotes (id,deal_id,owner_id,customer_id,title,items,subtotal,discount_pct,total,commission,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .bind(id, str(b.dealId, 40), ctx.me.id, str(b.customerId, 40), str(b.title, 160) || 'Báo giá NetViet', JSON.stringify(clean),
-        subtotal, disc, total, commission, status, t, t).run();
+    await env.DB.prepare(`INSERT INTO nv_quotes (id,deal_id,owner_id,customer_id,plan_id,title,items,subtotal,discount_pct,total,commission,status,
+        v1_approver_id,v1_decision,v1_note,v1_decided_at,v2_approver_id,v2_decision,v2_note,v2_decided_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .bind(id, str(b.dealId, 40), ctx.me.id, str(b.customerId, 40), str(b.planId, 40) || null,
+        str(b.title, 160) || 'Báo giá NetViet', JSON.stringify(clean),
+        subtotal, disc, total, commission, status,
+        ...skippedRoundColumns(ctx.me, skipped, t),
+        t, t).run();
+    const overCapNote = overCapItems.length
+      ? ' Vượt trần riêng: ' + overCapItems.map(o => `${o.name} (trần ${o.cap}%, chênh +${o.over}%)`).join('; ') + '.'
+      : '';
     if (status === 'pending_v1') {
-      const overCapNote = overCapItems.length
-        ? ' Vượt trần riêng: ' + overCapItems.map(o => `${o.name} (trần ${o.cap}%, chênh +${o.over}%)`).join('; ') + '.'
-        : '';
       // V1 = TPKD duyệt trước — chỉ báo TPKD CÙNG workspace với người gửi báo giá.
       const { results: mgrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='manager' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
-      for (const m of mgrs || []) await notify(env, m.id, { type: 'approval', title: 'Chờ duyệt báo giá (V1) — chiết khấu ' + disc + '%', body: (ctx.me.name || '') + ' gửi báo giá vượt ngưỡng ' + threshold + '%.' + overCapNote, link: '#/saleskit', level: 'danger' });
+      for (const m of mgrs || []) await notify(env, m.id, { type: 'approval', title: 'Chờ duyệt báo giá (V1) — chiết khấu ' + disc + '%', body: (ctx.me.name || '') + ' gửi báo giá vượt ngưỡng ' + threshold + '%.' + overCapNote, link: '#/plans', level: 'danger' });
+    } else if (status === 'pending_v2') {
+      // TPKD tự lập nên bỏ V1 — báo thẳng Giám đốc/BGĐ, đừng để hồ sơ nằm im không ai biết.
+      const { results: dirs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
+      for (const d2 of dirs || []) if (d2.id !== ctx.me.id) await notify(env, d2.id, { type: 'approval', title: 'Chờ duyệt báo giá (V2) — chiết khấu ' + disc + '%', body: (ctx.me.name || '') + ' (TPKD) tự lập, đã bỏ vòng 1.' + overCapNote, link: '#/plans', level: 'danger' });
     }
     return json({ id, status, subtotal, total, commission, threshold, overCapItems });
   }
@@ -350,9 +445,9 @@ export async function dealRoutes(ctx) {
           // Admin cũng có thể tự duyệt V1 (vai trò Giám đốc đã sáp nhập vào Admin) — bỏ qua chính
           // người vừa duyệt để không tự báo cho mình chờ duyệt V2.
           const { results: dirs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
-          for (const d2 of dirs || []) if (d2.id !== ctx.me.id) await notify(env, d2.id, { type: 'approval', title: 'Chờ duyệt báo giá (V2): ' + q.title, body: (ctx.me.name || '') + ' đã duyệt vòng 1.', link: '#/saleskit', level: 'danger' });
+          for (const d2 of dirs || []) if (d2.id !== ctx.me.id) await notify(env, d2.id, { type: 'approval', title: 'Chờ duyệt báo giá (V2): ' + q.title, body: (ctx.me.name || '') + ' đã duyệt vòng 1.', link: '#/plans', level: 'danger' });
         } else {
-          await notify(env, q.owner_id, { type: 'approval', title: '✏️ TPKD yêu cầu điều chỉnh báo giá', body: q.title + (note ? ' – ' + note : ''), link: '#/saleskit', level: 'warn' });
+          await notify(env, q.owner_id, { type: 'approval', title: '✏️ TPKD yêu cầu điều chỉnh báo giá', body: q.title + (note ? ' – ' + note : ''), link: '#/plans', level: 'warn' });
         }
         await audit(env, ctx.me.id, 'approve_quote_v1', 'quote', p.id, { decision });
         return json({ ok: true, status: nextStatus });
@@ -364,8 +459,8 @@ export async function dealRoutes(ctx) {
         await env.DB.prepare('UPDATE nv_quotes SET status=?,v2_approver_id=?,v2_decision=?,v2_note=?,v2_decided_at=?,updated_at=? WHERE id=?')
           .bind(nextStatus, ctx.me.id, decision, note, t, t, p.id).run();
         await notify(env, q.owner_id, decision === 'approved'
-          ? { type: 'approval', title: '✅ Báo giá đã được duyệt', body: q.title, link: '#/saleskit', level: 'info' }
-          : { type: 'approval', title: '✏️ Admin/BGĐ yêu cầu điều chỉnh báo giá', body: q.title + (note ? ' – ' + note : ''), link: '#/saleskit', level: 'warn' });
+          ? { type: 'approval', title: '✅ Báo giá đã được duyệt', body: q.title, link: '#/plans', level: 'info' }
+          : { type: 'approval', title: '✏️ Admin/BGĐ yêu cầu điều chỉnh báo giá', body: q.title + (note ? ' – ' + note : ''), link: '#/plans', level: 'warn' });
         await audit(env, ctx.me.id, 'approve_quote_v2', 'quote', p.id, { decision });
         return json({ ok: true, status: nextStatus });
       }
@@ -393,7 +488,7 @@ export async function dealRoutes(ctx) {
       // V1 báo lại TPKD; V2 báo THẲNG Admin/BGĐ — không quay lại TPKD (đúng tài liệu).
       const targetRole = round === 1 ? 'manager' : 'admin';
       const { results: targets } = await env.DB.prepare('SELECT id FROM nv_users WHERE role=? AND active=1 AND is_demo=?').bind(targetRole, wsBucket(ctx.me)).all();
-      for (const u2 of targets || []) await notify(env, u2.id, { type: 'approval', title: 'Báo giá đã sửa, chờ duyệt lại: ' + title, body: (ctx.me.name || '') + ' đã cập nhật theo yêu cầu điều chỉnh.', link: '#/saleskit', level: 'danger' });
+      for (const u2 of targets || []) await notify(env, u2.id, { type: 'approval', title: 'Báo giá đã sửa, chờ duyệt lại: ' + title, body: (ctx.me.name || '') + ' đã cập nhật theo yêu cầu điều chỉnh.', link: '#/plans', level: 'danger' });
       await audit(env, ctx.me.id, 'resubmit_quote', 'quote', p.id, { round });
       return json({ ok: true, subtotal, total, commission });
     }
@@ -420,15 +515,31 @@ export async function dealRoutes(ctx) {
     const title = vText(b.title, 'Tên hợp đồng', { max: 160, required: true });
     const value = vMoney(b.value, 'Giá trị hợp đồng');
     const t = now(), id = uid('ct2');
-    await env.DB.prepare(`INSERT INTO nv_contracts (id,deal_id,quote_id,owner_id,customer_id,title,value,payment_schedule,penalty_terms,note,status,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,'pending_v1',?,?)`)
+    /* Bỏ vòng mà người lập chính là người duyệt (xem skippedRounds ở đầu file). Khác báo giá ở chỗ
+     * hợp đồng KHÔNG có ngưỡng bỏ qua — sales lập thì luôn đủ 2 vòng.
+     * Lưu ý vận hành: Admin/BGĐ lập thì bỏ cả V2 = HCNS, nên HCNS không nhận được hợp đồng đó qua
+     * luồng duyệt và cần lấy hồ sơ theo cách khác. TPKD lập thì vẫn qua HCNS bình thường. */
+    const skipped = skippedRounds(ctx.me.role);
+    const status = startStatus(ctx.me.role);
+    await env.DB.prepare(`INSERT INTO nv_contracts (id,deal_id,quote_id,owner_id,customer_id,plan_id,title,value,payment_schedule,penalty_terms,note,status,
+        v1_approver_id,v1_decision,v1_note,v1_decided_at,v2_approver_id,v2_decision,v2_note,v2_decided_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .bind(id, str(b.dealId, 40) || null, str(b.quoteId, 40) || null, ctx.me.id, str(b.customerId, 40) || null,
-        title, value, str(b.paymentSchedule, 500), str(b.penaltyTerms, 500), str(b.note, 500), t, t).run();
-    // V1 = TPKD duyệt trước — chỉ báo TPKD CÙNG workspace với người tạo hợp đồng.
-    const { results: mgrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='manager' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
-    for (const m of mgrs || []) await notify(env, m.id, { type: 'approval', title: 'Chờ duyệt hợp đồng (V1): ' + title, body: (ctx.me.name || '') + ' đã lập hợp đồng ' + new Intl.NumberFormat('vi-VN').format(value) + 'đ.', link: '#/saleskit', level: 'danger' });
-    await audit(env, ctx.me.id, 'create', 'contract', id, { title, value });
-    return json({ id, status: 'pending_v1' });
+        str(b.planId, 40) || null, title, value, str(b.paymentSchedule, 500), str(b.penaltyTerms, 500), str(b.note, 500), status,
+        ...skippedRoundColumns(ctx.me, skipped, t),
+        t, t).run();
+    const money = new Intl.NumberFormat('vi-VN').format(value) + 'đ';
+    if (status === 'pending_v1') {
+      // V1 = TPKD duyệt trước — chỉ báo TPKD CÙNG workspace với người tạo hợp đồng.
+      const { results: mgrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='manager' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
+      for (const m of mgrs || []) await notify(env, m.id, { type: 'approval', title: 'Chờ duyệt hợp đồng (V1): ' + title, body: (ctx.me.name || '') + ' đã lập hợp đồng ' + money + '.', link: '#/plans', level: 'danger' });
+    } else if (status === 'pending_v2') {
+      // TPKD tự lập nên bỏ V1 — hợp đồng vào thẳng bàn HCNS, phải báo cho HCNS biết.
+      const { results: hrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='hr' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
+      for (const h of hrs || []) await notify(env, h.id, { type: 'approval', title: 'Chờ duyệt hợp đồng (V2): ' + title, body: (ctx.me.name || '') + ' (TPKD) tự lập ' + money + ', đã bỏ vòng 1.', link: '#/plans', level: 'danger' });
+    }
+    await audit(env, ctx.me.id, 'create', 'contract', id, { title, value, status });
+    return json({ id, status });
   }
 
   /* Cùng khuôn mẫu như PATCH /api/quotes/:id — duyệt (`decision`) hoặc sửa & trình lại (`title`/
@@ -453,9 +564,9 @@ export async function dealRoutes(ctx) {
           .bind(nextStatus, ctx.me.id, decision, note, t, t, p.id).run();
         if (decision === 'approved') {
           const { results: hrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='hr' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
-          for (const h of hrs || []) await notify(env, h.id, { type: 'approval', title: 'Chờ duyệt hợp đồng (V2): ' + c.title, body: (ctx.me.name || '') + ' đã duyệt vòng 1.', link: '#/saleskit', level: 'danger' });
+          for (const h of hrs || []) await notify(env, h.id, { type: 'approval', title: 'Chờ duyệt hợp đồng (V2): ' + c.title, body: (ctx.me.name || '') + ' đã duyệt vòng 1.', link: '#/plans', level: 'danger' });
         } else {
-          await notify(env, c.owner_id, { type: 'approval', title: '✏️ TPKD yêu cầu điều chỉnh hợp đồng', body: c.title + (note ? ' – ' + note : ''), link: '#/saleskit', level: 'warn' });
+          await notify(env, c.owner_id, { type: 'approval', title: '✏️ TPKD yêu cầu điều chỉnh hợp đồng', body: c.title + (note ? ' – ' + note : ''), link: '#/plans', level: 'warn' });
         }
         await audit(env, ctx.me.id, 'approve_contract_v1', 'contract', p.id, { decision });
         return json({ ok: true, status: nextStatus });
@@ -466,8 +577,8 @@ export async function dealRoutes(ctx) {
         await env.DB.prepare('UPDATE nv_contracts SET status=?,v2_approver_id=?,v2_decision=?,v2_note=?,v2_decided_at=?,updated_at=? WHERE id=?')
           .bind(nextStatus, ctx.me.id, decision, note, t, t, p.id).run();
         await notify(env, c.owner_id, decision === 'approved'
-          ? { type: 'approval', title: '✅ Hợp đồng đã ký', body: c.title, link: '#/saleskit', level: 'info' }
-          : { type: 'approval', title: '✏️ HCNS yêu cầu điều chỉnh hợp đồng', body: c.title + (note ? ' – ' + note : ''), link: '#/saleskit', level: 'warn' });
+          ? { type: 'approval', title: '✅ Hợp đồng đã ký', body: c.title, link: '#/plans', level: 'info' }
+          : { type: 'approval', title: '✏️ HCNS yêu cầu điều chỉnh hợp đồng', body: c.title + (note ? ' – ' + note : ''), link: '#/plans', level: 'warn' });
         await audit(env, ctx.me.id, 'approve_contract_v2', 'contract', p.id, { decision });
         return json({ ok: true, status: nextStatus });
       }
@@ -487,7 +598,7 @@ export async function dealRoutes(ctx) {
       // V1 báo lại TPKD; V2 báo THẲNG HCNS — không quay lại TPKD.
       const targetRole = round === 1 ? 'manager' : 'hr';
       const { results: targets } = await env.DB.prepare('SELECT id FROM nv_users WHERE role=? AND active=1 AND is_demo=?').bind(targetRole, wsBucket(ctx.me)).all();
-      for (const u2 of targets || []) await notify(env, u2.id, { type: 'approval', title: 'Hợp đồng đã sửa, chờ duyệt lại: ' + title, body: (ctx.me.name || '') + ' đã cập nhật theo yêu cầu điều chỉnh.', link: '#/saleskit', level: 'danger' });
+      for (const u2 of targets || []) await notify(env, u2.id, { type: 'approval', title: 'Hợp đồng đã sửa, chờ duyệt lại: ' + title, body: (ctx.me.name || '') + ' đã cập nhật theo yêu cầu điều chỉnh.', link: '#/plans', level: 'danger' });
       await audit(env, ctx.me.id, 'resubmit_contract', 'contract', p.id, { round });
       return json({ ok: true });
     }

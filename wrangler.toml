@@ -1,33 +1,44 @@
 # Cấu hình dùng cho CẢ local (`npm run dev`) LẪN deploy production qua Cloudflare
-# Workers Builds. Trước đây file này chỉ phục vụ local; nay Cloudflare đọc chính
-# file này khi build từ GitHub, nên name/binding phải khớp Worker thật.
-name = "nexrall-netviet-sales-os"
+# Worker thật: nextrall-netviet-sales-os1
+
+name = "nextrall-netviet-sales-os1"
 main = "local/entry.js"
 compatibility_date = "2026-09-01"
 
-# Front-end tĩnh (index.html + src/ + styles/) được gom sang ./public bằng
-# `npm run build` (CI, copy thật) hoặc `npm run assets` (local, symlink).
-# public/ nằm trong .gitignore nên BẮT BUỘC phải chạy bước build trước khi deploy.
-# Request không khớp file tĩnh sẽ rơi vào Worker (/api/*).
+# Front-end tĩnh (index.html + src/ + styles/) được build vào ./public
+# Request không khớp file tĩnh sẽ rơi vào Worker (/api/*)
 [assets]
 directory = "./public"
 not_found_handling = "single-page-application"
 
-# D1 — local dùng --local (DB trong .wrangler/state); production dùng đúng database_id dưới đây.
+
+# D1 Database
+# Local:
+#   wrangler dev --local
+# Production:
+#   wrangler deploy
 [[d1_databases]]
 binding = "DB"
 database_name = "netviet-sales-os"
 database_id = "79b5d7cc-4121-499e-bab0-cbbdabc53221"
 
+
+# Cloudflare KV
 [[kv_namespaces]]
 binding = "SHARED_KV"
 id = "3c09fbd8cbd24f0aa11150366b80892e"
 
-# R2 — lưu file gốc (báo giá/hợp đồng) do người dùng upload ở Sales Kit.
+
+# Cloudflare R2
+# Lưu file gốc: báo giá / hợp đồng / tài liệu Sales Kit
 [[r2_buckets]]
 binding = "DOCS"
 bucket_name = "netviet-sales-os-docs"
 
-# Lịch quét tự động (M10 Automation): mỗi 30 phút gọi /api/__cron
+
+# Cron Trigger
+# M10 Automation: mỗi 30 phút gọi /api/__cron
 [triggers]
-crons = ["*/30 * * * *"]
+crons = [
+  "*/30 * * * *"
+]

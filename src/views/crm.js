@@ -1,5 +1,5 @@
 import { get, post, patch } from '../api.js';
-import { state, isLead, assigneeField } from '../state.js';
+import { state, isLead, salesTeamUsers, salesTeamOption } from '../state.js';
 import { esc, money, mount, chip, empty, rel, fmtDate, fmtDT, toast, modal, initials, stat } from '../ui.js';
 import {
   SERVICES, ACT_TYPES, actIcon, actName, stageName, LEAD_SOURCES, leadSourceName, CUSTOMER_SCALE_OPTIONS,
@@ -34,14 +34,6 @@ const statusChips = (c) => (c.statuses || []).map(k => chip(statusDef(k).n, stat
 
 /** Chip ĐKKH + số ngày còn lại. */
 const dkkhChip = (dk) => chip(dkkhLabel(dk), (DKKH_TONE[dk?.kind] || DKKH_TONE.locked).c);
-
-/** Nhãn thân thiện trong riêng bộ chọn Sale phụ trách. Giữ nguyên ID để lọc/gán dữ liệu không
- * bị ảnh hưởng bởi việc hiển thị tên nhân sự. */
-const responsibleLabel = (u) => {
-  if (u.id === 'HUONGLT') return 'Lưu Thiên Hương';
-  if (u.id === 'PHUONGVH') return 'Vũ Hà Phương';
-  return u.name;
-};
 
 export async function render(el, params) {
   if (params && params.id) return detail(el, params.id);
@@ -94,7 +86,7 @@ export async function render(el, params) {
         ${nFilters ? `<button class="btn sm ghost" data-clearf>Xoá lọc (${nFilters})</button>` : ''}</div>
       <input placeholder="Tìm theo tên, ngành hoặc số điện thoại…" value="${esc(filter.q)}" data-q class="mb">
       <div class="grid g3">
-        ${isLead() ? sel('owner', 'Sale phụ trách', filter.owner, [{ v: '', n: 'All' }, ...d.sales.map(u => ({ v: u.id, n: responsibleLabel(u) }))]) : ''}
+        ${isLead() ? sel('owner', 'Sale phụ trách', filter.owner, [{ v: '', n: 'All' }, ...d.sales.map(salesTeamOption)]) : ''}
         ${sel('industry', 'Ngành hàng', filter.industry, [{ v: '', n: 'All' }, ...industries.map(i => ({ v: i, n: i }))])}
         ${sel('scale', 'Quy mô', filter.scale, [{ v: '', n: 'All' }, ...CUSTOMER_SCALE_OPTIONS.map(s => ({ v: s, n: s }))])}
         ${sel('source', 'Nguồn khách hàng', filter.source, [{ v: '', n: 'All' }, ...LEAD_SOURCES.map(s => ({ v: s.v, n: s.n }))])}
@@ -235,7 +227,7 @@ async function detail(el, id) {
 
     <div class="sec-title">Phương án kinh doanh (${d.plans.length})</div>
     <div class="card">
-      <div class="sm mut mb">Báo giá · Hợp đồng · Nghiệm thu · Thanh lý — trình TPKD hoặc Giám đốc duyệt, phản hồi quay lại đúng luồng đã trình.</div>
+      <div class="sm mut mb">Báo giá · Hợp đồng · Nghiệm thu · Thanh lý — lập chứng từ và trình duyệt ngay trong phương án, phản hồi quay lại đúng luồng đã trình.</div>
       ${d.plans.length ? d.plans.map(pl => `<a class="item" href="#/plans/${esc(pl.id)}">
         <div class="dot-i">${icon('clipboardList')}</div>
         <div class="grow"><div class="t">${esc(pl.title)}</div>
@@ -284,7 +276,7 @@ async function detail(el, id) {
     el.querySelector('[data-editstatus]').onclick = () => statusModal(d.customer, () => detail(el, id));
     el.querySelector('[data-addplan]').onclick = () => modal({
       title: 'Tạo phương án kinh doanh',
-      html: '<div class="sm mut mb">Hệ thống tạo sẵn 4 hạng mục: Báo giá · Hợp đồng · Nghiệm thu · Thanh lý.</div>',
+      html: '<div class="sm mut mb">Hệ thống tạo sẵn 4 hạng mục: Báo giá · Hợp đồng · Nghiệm thu · Thanh lý. Báo giá và hợp đồng lập bằng chứng từ thật ngay tại bước 1 và bước 2.</div>',
       fields: [
         { name: 'title', label: 'Tên phương án', required: true, value: 'Phương án ' + d.customer.name },
         { name: 'dealId', label: 'Gắn cơ hội (tuỳ chọn)', type: 'select', options: [{ v: '', n: '— không —' }, ...d.deals.map(x => ({ v: x.id, n: x.title }))] },
@@ -353,8 +345,16 @@ function statusModal(c, after) {
 }
 
 /** Thêm khách hàng mới — trạng thái ban đầu chọn được ngay, mặc định "Khách mới". */
+/**
+ * Thêm khách hàng, kèm cảnh báo trùng/deal registration NGAY KHI GÕ.
+ *
+ * Trước đây cảnh báo chỉ xuất hiện dưới dạng toast lúc bấm Lưu, mà toast sống 3.2 giây độc lập với
+ * ô nhập: đổi sang tên khách khác thì cảnh báo cũ vẫn nằm đó nhắc tên khách trước — đọc như thể
+ * khách mới cũng đang bị trùng. Nay cảnh báo là một khối gắn ngay dưới ô "Tên công ty", tự cập
+ * nhật theo tên/điện thoại đang gõ và biến mất ngay khi không còn trùng.
+ */
 function customerModal(c, d, after) {
-  modal({
+  const { root } = modal({
     title: 'Thêm khách hàng',
     fields: [
       { name: 'name', label: 'Tên công ty', required: true },
@@ -364,7 +364,7 @@ function customerModal(c, d, after) {
       { name: 'status', label: 'Trạng thái ban đầu', type: 'select', options: CUSTOMER_STATUSES.map(s => ({ v: s.k, n: s.n })) },
       { name: 'nguonKhachHang', label: 'Nguồn khách hàng', type: 'select', options: [{ v: '', n: '— chưa rõ —' }, ...LEAD_SOURCES] },
       { name: 'partnerId', label: 'Partner (nếu nguồn là Partner)', type: 'select', options: [{ v: '', n: '— không —' }, ...d.partners.map(pt => ({ v: pt.id, n: pt.name }))] },
-      ...(isLead() ? [{ name: 'ownerId', label: 'Sale phụ trách', type: 'select', options: d.sales.map(u => ({ v: u.id, n: responsibleLabel(u) })) }] : []),
+      ...(isLead() ? [{ name: 'ownerId', label: 'Sale phụ trách', type: 'select', options: d.sales.map(salesTeamOption) }] : []),
       { name: 'note', label: 'Ghi chú', type: 'textarea', rows: 2 },
     ],
     onSubmit: async (v) => {
@@ -373,6 +373,58 @@ function customerModal(c, d, after) {
       after();
     },
   });
+
+  bindDuplicateWarning(root);
+}
+
+/**
+ * Gắn khối cảnh báo trùng khách vào modal và giữ nó luôn khớp với nội dung đang gõ.
+ * Hỏi máy chủ (GET /api/customers/check-duplicate) chứ không dò trong danh sách đang hiển thị:
+ * sales chỉ thấy khách CỦA MÌNH, mà ca cần cảnh báo nhất lại đúng là khách do sale khác giữ.
+ */
+function bindDuplicateWarning(root, excludeId) {
+  const nameEl = root.querySelector('[name="name"]');
+  const phoneEl = root.querySelector('[name="phone"]');
+  if (!nameEl) return;
+
+  const warn = document.createElement('div');
+  warn.className = 'note red mb';
+  warn.style.display = 'none';
+  warn.style.marginTop = '8px';
+  nameEl.closest('label').insertAdjacentElement('afterend', warn);
+
+  // `seq` chống câu trả lời về trễ: gõ tên A rồi đổi sang tên B, nếu phản hồi của A về sau phản
+  // hồi của B thì cảnh báo lại hiện tên A — đúng cái lỗi "cảnh báo nhắc khách cũ" cần dẹp.
+  let seq = 0, timer;
+  const hide = () => { warn.style.display = 'none'; warn.innerHTML = ''; };
+
+  const check = async () => {
+    const name = (nameEl.value || '').trim();
+    const phone = ((phoneEl && phoneEl.value) || '').trim();
+    // Dưới 2 ký tự thì chính máy chủ cũng không nhận (vText min 2) — không hỏi cho phí.
+    if (name.length < 2 && !phone) return hide();
+    const mine = ++seq;
+    let r;
+    try {
+      const qs = new URLSearchParams({ name, phone });
+      if (excludeId) qs.set('excludeId', excludeId);
+      r = await get('/customers/check-duplicate?' + qs.toString());
+    } catch (e) { if (mine === seq) hide(); return; }
+    if (mine !== seq) return;
+
+    const dup = r.duplicate;
+    if (!dup) return hide();
+    warn.style.display = '';
+    warn.innerHTML = `${dup.mine
+      ? `Khách <b>${esc(dup.name)}</b> đã có trong danh sách của bạn.`
+      : `Khách <b>${esc(dup.name)}</b> đã được <b>${esc(dup.ownerName || 'sales khác')}</b> đăng ký.
+         Vui lòng trao đổi trước khi tiếp cận (deal registration).`}
+      ${dup.matchedPhone ? '<div class="xs mut mt">Trùng theo <b>số điện thoại</b>, không phải theo tên.</div>' : ''}`;
+  };
+
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(check, 400); };
+  nameEl.addEventListener('input', schedule);
+  if (phoneEl) phoneEl.addEventListener('input', schedule);
 }
 
 /** Modal ghi hoạt động — dùng lại ở nhiều màn */
@@ -404,7 +456,10 @@ function partnerModal(pt, after) {
       { name: 'name', label: 'Tên partner', required: true, value: pt?.name || '' },
       { name: 'phone', label: 'Điện thoại', value: pt?.phone || '' },
       { name: 'email', label: 'Email', value: pt?.email || '' },
-      ...(isLead() ? [{ ...assigneeField('saleId'), label: 'Sale phụ trách (cố định)', value: pt?.sale_phu_trach_id || '' }] : []),
+      ...(isLead() ? [{
+        name: 'saleId', label: 'Sale phụ trách (cố định)', type: 'select', value: pt?.sale_phu_trach_id || '',
+        options: salesTeamUsers().map(salesTeamOption),
+      }] : []),
       { name: 'note', label: 'Ghi chú', type: 'textarea', rows: 2, value: pt?.note || '' },
     ],
     submitText: pt ? 'Lưu' : 'Thêm partner',

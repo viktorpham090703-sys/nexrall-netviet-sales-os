@@ -143,6 +143,14 @@ export async function workRoutes(ctx) {
     if (!task) return json({ error: 'Không tìm thấy công việc' }, 404);
     const b = await readBody(ctx.request);
     const t = now();
+    // "Nhận việc" là xác nhận của CHÍNH nhân sự được giao, không phải thao tác quản lý: scope() ở
+    // trên cho TP/Admin chạm tới việc của cả đội nên nếu không chặn ở đây, cấp trên bấm Nhận thay
+    // được và mốc accepted_at — căn cứ duy nhất để tính SLA nhận việc + leo thang khi quá hạn —
+    // sẽ báo là đã tiếp nhận trong khi nhân sự chưa hề mở việc. Các thao tác còn lại (đổi trạng
+    // thái, hạn, mô tả, ưu tiên) vẫn mở cho TP/Admin như cũ.
+    if (b.accept && task.user_id !== ctx.me.id) {
+      return json({ error: 'Chỉ nhân sự được giao mới xác nhận nhận việc.' }, 403);
+    }
     const status = ['todo', 'in_progress', 'done'].includes(b.status) ? b.status : task.status;
     const accepted = b.accept ? (task.accepted_at || t) : task.accepted_at;
     await env.DB.prepare('UPDATE nv_tasks SET status=?,accepted_at=?,done_at=?,detail=?,priority=?,due_at=? WHERE id=?')
@@ -225,11 +233,11 @@ export async function workRoutes(ctx) {
     // Luôn giới hạn đúng workspace (demo/chính thức) của người xem.
     let members;
     if (ctx.me.role === 'sales') {
-      members = [{ id: ctx.me.id, name: ctx.me.name, role: ctx.me.role }];
+      members = [{ id: ctx.me.id, name: ctx.me.name, role: ctx.me.role, title: ctx.me.title }];
     } else {
       const visibleRoles = REPORT_VISIBLE_ROLES[ctx.me.role] || [];
       const { results } = await env.DB.prepare(
-        `SELECT id,name,role FROM nv_users WHERE active=1 AND is_demo=? AND role IN (${visibleRoles.map(() => '?').join(',')})
+        `SELECT id,name,role,title FROM nv_users WHERE active=1 AND is_demo=? AND role IN (${visibleRoles.map(() => '?').join(',')})
          ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END, name`)
         .bind(wsBucket(ctx.me), ...visibleRoles).all();
       members = results || [];
@@ -240,7 +248,8 @@ export async function workRoutes(ctx) {
       const total = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_daily_reports WHERE user_id=?').bind(m.id).first('n')) || 0;
       const { results: items } = await env.DB.prepare(
         'SELECT * FROM nv_daily_reports WHERE user_id=? ORDER BY period DESC, submitted_at DESC LIMIT ?').bind(m.id, REPORT_PAGE_SIZE).all();
-      sections.push({ userId: m.id, userName: m.name, role: m.role, items: items || [], total, page: 1, pageSize: REPORT_PAGE_SIZE });
+      // Kèm `title` để màn Báo cáo hiện đúng chức danh Admin đã đặt (client: roleLabel).
+      sections.push({ userId: m.id, userName: m.name, role: m.role, title: m.title || null, items: items || [], total, page: 1, pageSize: REPORT_PAGE_SIZE });
     }
 
     return json({
@@ -449,10 +458,10 @@ export async function workRoutes(ctx) {
     // Trả cả 2 vòng (V1: TPKD, V2: Giám đốc) — front-end tự lọc theo vai trò người xem để hiện
     // đúng nút duyệt của vòng họ được phép.
     const { results: pendingQuotes } = await env.DB.prepare(`SELECT q.*, u.name owner_name, c.name customer_name FROM nv_quotes q LEFT JOIN nv_users u ON u.id=q.owner_id LEFT JOIN nv_customers c ON c.id=q.customer_id WHERE q.status IN ('pending_v1','pending_v2')${wsQuotes.sql} ORDER BY q.created_at DESC`).bind(...wsQuotes.args).all();
-    (pendingQuotes || []).forEach(q => alerts.push({ level: 'warn', type: 'approval', text: `Báo giá "${q.title}" chiết khấu ${q.discount_pct}% chờ duyệt ${q.status === 'pending_v1' ? 'V1 (TPKD)' : 'V2 (Giám đốc)'} (${q.owner_name}).`, link: '#/saleskit' }));
+    (pendingQuotes || []).forEach(q => alerts.push({ level: 'warn', type: 'approval', text: `Báo giá "${q.title}" chiết khấu ${q.discount_pct}% chờ duyệt ${q.status === 'pending_v1' ? 'V1 (TPKD)' : 'V2 (Giám đốc)'} (${q.owner_name}).`, link: '#/plans' }));
     const wsContracts = wsScope(ctx, 'c.owner_id');
     const { results: pendingContracts } = await env.DB.prepare(`SELECT c.*, u.name owner_name FROM nv_contracts c LEFT JOIN nv_users u ON u.id=c.owner_id WHERE c.status IN ('pending_v1','pending_v2')${wsContracts.sql} ORDER BY c.created_at DESC`).bind(...wsContracts.args).all();
-    (pendingContracts || []).forEach(c => alerts.push({ level: 'warn', type: 'approval', text: `Hợp đồng "${c.title}" chờ duyệt ${c.status === 'pending_v1' ? 'V1 (TPKD)' : 'V2 (HCNS)'} (${c.owner_name}).`, link: '#/saleskit' }));
+    (pendingContracts || []).forEach(c => alerts.push({ level: 'warn', type: 'approval', text: `Hợp đồng "${c.title}" chờ duyệt ${c.status === 'pending_v1' ? 'V1 (TPKD)' : 'V2 (HCNS)'} (${c.owner_name}).`, link: '#/plans' }));
     const wsTasks = wsScope(ctx, 't.user_id');
     const { results: lateTasks } = await env.DB.prepare(`SELECT t.*, u.name user_name FROM nv_tasks t LEFT JOIN nv_users u ON u.id=t.user_id WHERE t.status!='done' AND t.assigner_id IS NOT NULL AND t.accepted_at IS NULL${wsTasks.sql}`).bind(...wsTasks.args).all();
     (lateTasks || []).forEach(x => {

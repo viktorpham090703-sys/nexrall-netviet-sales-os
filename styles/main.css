@@ -25,6 +25,13 @@ img{max-width:100%}
 .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;padding:10px 14px;
   background:var(--bg2);border-bottom:1px solid var(--line)}
 .topbar .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.3px}
+/* Đồng hồ ngày/giờ ở thanh trên cùng: ngày trên, giờ chạy theo giây ở dưới. Giờ dùng chữ số đều
+   bề ngang (tabular-nums) để con số không nhảy ngang mỗi giây. */
+.topbar .brand.topbar-clock{flex-direction:column;align-items:flex-start;gap:0;line-height:1.15}
+.topbar-clock .clock-date{font-size:13px;font-weight:800;letter-spacing:.3px}
+.topbar-clock .clock-time{font-size:12px;font-weight:700;color:var(--mut);
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.topbar-clock .clock-zone{margin-left:5px;font-size:11px;font-weight:600;opacity:.72;letter-spacing:.2px}
 .brand-logo{height:19px;display:block}
 .sidebar a.brand-logo-link{display:inline-block;padding:7px 10px;border-radius:10px;background:#fff;width:auto}
 .sidebar a.brand-logo-link:hover,.sidebar a.brand-logo-link:active,.sidebar a.brand-logo-link.active{background:#fff;box-shadow:none}

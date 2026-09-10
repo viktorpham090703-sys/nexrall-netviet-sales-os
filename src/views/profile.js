@@ -1,7 +1,7 @@
 import { get, patch, post, del } from '../api.js';
 import { state, logout } from '../state.js';
 import { esc, avatar, mount, modal, toast, confirmDialog, refreshShellAvatars } from '../ui.js';
-import { roleLabel } from '../const.js';
+import { roleDefaultLabel } from '../const.js';
 import { icon } from '../icons.js';
 
 const fmtDateStr = (s) => {
@@ -30,7 +30,7 @@ export async function render(el) {
           <div class="grow">
             <div class="row wrap" style="gap:6px">
               <span class="chip blue">${esc(p.id)}</span>
-              <span class="chip">${esc(roleLabel(p))}</span>
+              <span class="chip">${esc(roleDefaultLabel(p))}</span>
             </div>
             <div class="b" style="font-size:19px;margin-top:6px">${esc(p.name)}</div>
             <div class="sm mut mt">${p.title ? esc(p.title) : '—'}</div>

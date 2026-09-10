@@ -51,6 +51,13 @@ export function refreshShellAvatars(me) {
   });
 }
 
+/** Cập nhật nhãn vai trò/chức danh trên thẻ hồ sơ ở sidebar sau khi Admin đổi chức danh cho
+ * CHÍNH mình — khung app (shell) chỉ được dựng lại khi `role` đổi (xem src/app.js), nên đổi mỗi
+ * chức danh sẽ không kích hoạt vẽ lại nếu không sửa trực tiếp ở đây. */
+export function refreshShellRole(label) {
+  document.querySelectorAll('.side-profile-role').forEach(el => { el.textContent = label; });
+}
+
 export const chip = (text, tone = '') => `<span class="chip ${tone}">${esc(text)}</span>`;
 export const bar = (val, max, cls = '') => `<div class="bar ${cls}"><i style="width:${Math.min(100, pct(val, max))}%"></i></div>`;
 

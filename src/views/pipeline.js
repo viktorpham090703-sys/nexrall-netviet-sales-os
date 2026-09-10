@@ -1,5 +1,5 @@
 import { get, post, patch } from '../api.js';
-import { isLead, isAdmin, salesUsers, assigneeField } from '../state.js';
+import { isLead, isAdmin, salesTeamUsers, salesTeamOption, assigneeField } from '../state.js';
 import { esc, money, mount, chip, empty, stat, toast, modal, fmtDate } from '../ui.js';
 import { STAGES, TENDER_STAGES, TERMINAL_STAGES, SERVICES, stageName, PA_OPTIONS, EXEC_SOURCE_OPTIONS } from '../const.js';
 import { logActivity } from './crm.js';
@@ -53,7 +53,7 @@ export async function render(el) {
       <button data-view="kanban" class="${view === 'kanban' ? 'on' : ''}">Kanban</button>
       <button data-view="list" class="${view === 'list' ? 'on' : ''}">Danh sách</button>
       <button data-view="sla" class="${view === 'sla' ? 'on' : ''}">Cảnh báo SLA (${shownBreach.length})</button>
-      ${isLead() ? `<button data-owner class="${owner !== 'all' ? 'on' : ''}">Lọc: ${owner === 'all' ? 'Toàn đội' : esc((salesUsers().find(u => u.id === owner) || {}).name || '')}</button>` : ''}
+      ${isLead() ? `<button data-owner class="${owner !== 'all' ? 'on' : ''}">Lọc: ${owner === 'all' ? 'Toàn đội' : esc((salesTeamUsers().find(u => u.id === owner) || {}).name || '')}</button>` : ''}
     </div>
 
     ${view === 'kanban' ? kanban(shown, procType === 'dau_thau' ? [...TENDER_STAGES, ...TERMINAL_STAGE_DEFS] : STAGES, d.sla)
@@ -69,7 +69,7 @@ export async function render(el) {
     const ob = el.querySelector('[data-owner]');
     if (ob) ob.onclick = () => modal({
       title: 'Lọc theo nhân sự',
-      fields: [{ name: 'owner', label: 'Nhân sự', type: 'select', value: owner, options: [{ v: 'all', n: 'Toàn đội' }, ...salesUsers().map(u => ({ v: u.id, n: u.name }))] }],
+      fields: [{ name: 'owner', label: 'Nhân sự', type: 'select', value: owner, options: [{ v: 'all', n: 'Toàn đội' }, ...salesTeamUsers().map(salesTeamOption)] }],
       submitText: 'Áp dụng', onSubmit: (v) => { owner = v.owner; render(el); },
     });
     el.querySelector('[data-add]').onclick = () => addDeal(d.customers, () => render(el));
@@ -126,7 +126,7 @@ function addDeal(customers, after) {
       { name: 'value', label: 'Giá trị (đ)', type: 'number', value: 50000000 },
       { name: 'stage', label: 'Giai đoạn', type: 'select', options: STAGES.map(s => ({ v: s.k, n: s.n })) },
       { name: 'phuongAnHopTac', label: 'Phương án hợp tác (nếu qua Partner)', type: 'select', options: [{ v: '', n: '— không —' }, ...PA_OPTIONS] },
-      ...(isLead() ? [assigneeField('ownerId')] : []),
+      ...(isLead() ? [assigneeField('ownerId', salesTeamUsers())] : []),
     ],
     onSubmit: async (v) => { await post('/deals', v); toast('Đã tạo cơ hội', 'ok'); after(); },
   });

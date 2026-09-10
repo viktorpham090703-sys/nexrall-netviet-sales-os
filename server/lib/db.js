@@ -270,6 +270,23 @@ const MIGRATIONS = [
   `ALTER TABLE nv_commissions ADD COLUMN partner_id TEXT`,
   `ALTER TABLE nv_commissions ADD COLUMN partner_rate REAL`,
   `ALTER TABLE nv_commissions ADD COLUMN partner_amount REAL`,
+
+  // 67-69: tên hiển thị THẬT cho 3 nhân sự trực tiếp giữ khách/partner. Từ migration 31/33 tới nay
+  // cột `name` của họ vẫn đang bằng chính mã nhân viên (DUCNH/HUONGLT/PHUONGVH) nên mọi nơi hiển
+  // thị người phụ trách — bộ chọn "Sale phụ trách (cố định)" của Partner, bộ lọc CRM, cột sale_name,
+  // avatar viết tắt — đều hiện mã chứ không hiện tên người. Sửa THẲNG ở CSDL thay vì ánh xạ mã→tên
+  // ở giao diện (src/views/crm.js từng làm vậy cho 2 mã, nay bỏ đi): `name` là nguồn duy nhất cho
+  // toàn bộ màn hình, còn đăng nhập dùng id/email nên đổi tên không ảnh hưởng xác thực.
+  `UPDATE nv_users SET name='Nguyễn Hải Đức' WHERE id='DUCNH'`,
+  `UPDATE nv_users SET name='Lưu Thiên Hương' WHERE id='HUONGLT'`,
+  `UPDATE nv_users SET name='Vũ Hà Phương' WHERE id='PHUONGVH'`,
+
+  // 70-71: gắn chứng từ vào PHƯƠNG ÁN KINH DOANH. Báo giá & hợp đồng nay lập ngay tại bước 1/bước
+  // 2 của phương án thay vì gõ tay lại vào nv_plan_items, nên cần biết chứng từ thuộc phương án
+  // nào. Cột để NULL với dữ liệu tạo trước migration này — server/routes/plans.js có nhánh dự
+  // phòng khớp theo customer_id để chứng từ cũ vẫn hiện đúng phương án của khách đó.
+  `ALTER TABLE nv_quotes ADD COLUMN plan_id TEXT`,
+  `ALTER TABLE nv_contracts ADD COLUMN plan_id TEXT`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
@@ -925,7 +942,7 @@ async function seed(env) {
     ['u_s1', 'assignment', 'Bạn được giao 1 việc mới', 'TP giao: Chăm sóc deal An Phát – gửi kịch bản v2', '#/tasks', 'info'],
     ['u_s2', 'sla', 'Deal nguội cần xử lý', 'Deal "Video AI ra mắt mẫu xe mới" 11 ngày không hoạt động.', '#/pipeline', 'danger'],
     ['u_s3', 'report', 'Chưa nộp báo cáo hôm qua', 'Vui lòng nộp báo cáo EOD để không bị trừ điểm kỷ luật.', '#/reports', 'warn'],
-    ['u_tp', 'approval', 'Chờ duyệt chiết khấu 18%', 'Báo giá Nâu Việt vượt ngưỡng 15%.', '#/saleskit', 'danger'],
+    ['u_tp', 'approval', 'Chờ duyệt chiết khấu 18%', 'Báo giá Nâu Việt vượt ngưỡng 15%.', '#/plans', 'danger'],
     ['u_tp', 'tender', 'Cơ hội thầu mới điểm cao', '3 gói thầu mới phù hợp năng lực NetViet.', '#/prospect', 'info'],
   ];
   notis.forEach((n, i) => P('INSERT INTO nv_notifications (id,user_id,type,title,body,link,level,read,created_at) VALUES (?,?,?,?,?,?,?,0,?)',

@@ -1,9 +1,9 @@
 import { get, post, patch } from '../api.js';
 import { state, salesUsers, isAdmin } from '../state.js';
 import { esc, money, mount, chip, bar, empty, stat, toast, modal, fmtDate, bindTabs } from '../ui.js';
-import { stageName, STAGES, TERMINAL_STAGES, QUOTE_STATUS, CONTRACT_STATUS, roleLabel, PIP_STATUS, gradeTone, APPROVAL_TONE } from '../const.js';
+import { stageName, STAGES, TERMINAL_STAGES, QUOTE_STATUS, CONTRACT_STATUS, roleLabel, roleDefaultLabel, PIP_STATUS, gradeTone, APPROVAL_TONE } from '../const.js';
 import { icon } from '../icons.js';
-import { canDecide, canDecideContract, bindApprovalActions } from './saleskit.js';
+import { canDecide, canDecideContract, bindApprovalActions } from '../salesDocs.js';
 
 let tab = 'overview';
 /* HCNS chỉ xét duyệt báo giá/hợp đồng/hồ sơ thầu — không có nhiệm vụ quản lý đội sales
@@ -49,7 +49,7 @@ export async function render(el) {
   ${!isHR() && tab === 'overview' ? `<div class="card">${d.members.map(m => m.role === 'sales' ? `<div class="item">
       <div class="dot-i">${icon(m.kpi.total >= 80 ? 'star' : m.kpi.total >= 60 ? 'smile' : 'triangleAlert')}</div>
       <div class="grow"><div class="t">${esc(m.name)} ${chip(m.kpi.grade, gradeTone(m.kpi.total))}</div>
-        <div class="d xs mut">${esc(m.title || roleLabel(m))}</div>
+        <div class="d xs mut">${esc(roleLabel(m))}</div>
         <div class="d">DT ${money(m.metrics.revenue)}/${money(m.metrics.target_revenue)} · pipeline ${money(m.pipeline)} · ${m.metrics.wonN} deal chốt</div>
         <div class="mt">${bar(m.metrics.newContacts, m.metrics.quota_contacts_month)}</div>
         <div class="d xs">Liên hệ mới ${m.metrics.newContacts}/${m.metrics.quota_contacts_month} · báo cáo ${m.metrics.reports} (${m.metrics.lateReports} trễ) · ${m.overdueDeals} deal quá SLA</div></div>
@@ -58,8 +58,8 @@ export async function render(el) {
         <div class="mt"><button class="btn sm" data-pip="${esc(m.id)}">PIP</button></div></div>
     </div>` : `<div class="item">
       <div class="dot-i">${icon(m.role === 'manager' ? 'award' : 'shieldCheck')}</div>
-      <div class="grow"><div class="t">${esc(m.name)} ${chip(roleLabel(m), 'blue')}</div>
-        <div class="d xs mut">${esc(m.title || roleLabel(m))}</div>
+      <div class="grow"><div class="t">${esc(m.name)} ${chip(roleDefaultLabel(m), 'blue')}</div>
+        ${m.title ? `<div class="d xs mut">${esc(m.title)}</div>` : ''}
         <div class="d">Hoạt động ${m.metrics.activities} lượt · ${m.metrics.activeDays}/${m.metrics.workdays} ngày có mặt · báo cáo ${m.metrics.reports} (${m.metrics.lateReports} trễ)</div></div>
     </div>`).join('')}</div>` : ''}
 
