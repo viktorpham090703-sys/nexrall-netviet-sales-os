@@ -165,12 +165,17 @@ const src = decodePNG(Buffer.from(
 console.log(`logo nguồn: ${src.w}x${src.h}`);
 
 mkdirSync(OUT, { recursive: true });
-// ratio = bề rộng logo / cạnh icon. Icon thường 0.84; maskable 0.60 để nằm gọn trong vùng an toàn.
+/* ratio = bề rộng logo / cạnh icon.
+ * Logo NetViet là chữ NGANG tỉ lệ 5.53:1 và không có lề thừa để cắt bớt, nên đặt vào ô vuông thì
+ * chiều cao luôn chỉ bằng ~1/5.5 bề rộng — muốn chữ đọc được ở cỡ icon màn hình chính (~60px thật)
+ * thì phải kéo bề rộng sát mép. 0.92 là mức gần tối đa còn chừa viền thở.
+ * Riêng maskable: Android cắt theo hình tròn đường kính 80% cạnh icon. Dải ngang rộng 0.76 có góc
+ * cách tâm sqrt(0.38² + 0.069²) = 0.386 → nằm trong đường tròn an toàn 0.4, không bị cắt chữ. */
 const JOBS = [
-  ['icon-192.png', 192, 0.84],
-  ['icon-512.png', 512, 0.84],
-  ['icon-512-maskable.png', 512, 0.60],
-  ['apple-touch-icon.png', 180, 0.84],
+  ['icon-192.png', 192, 0.92],
+  ['icon-512.png', 512, 0.92],
+  ['icon-512-maskable.png', 512, 0.76],
+  ['apple-touch-icon.png', 180, 0.92],
 ];
 for (const [name, size, ratio] of JOBS) {
   const lw = Math.round(size * ratio);
