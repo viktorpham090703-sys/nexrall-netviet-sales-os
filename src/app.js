@@ -67,16 +67,29 @@ function parseHash() {
 const homeView = () => isLead() ? 'console' : 'cockpit';
 const notiBadge = () => icon('bell', 17) + (state.unread ? `<span class="dot">${state.unread}</span>` : '');
 
+/* Sidebar thu gọn được (chỉ trên desktop) — nhớ lựa chọn giữa các lần điều hướng và lần mở sau,
+ * vì mỗi lần đổi vai trò `shell()` dựng lại toàn bộ khung và sẽ quên trạng thái nếu không lưu.
+ * localStorage có thể ném lỗi (chế độ ẩn danh, trình duyệt chặn lưu trữ) nên luôn bọc try/catch;
+ * đọc lỗi thì coi như đang mở, tức là về đúng giao diện cũ. */
+const SIDE_KEY = 'nv.sideCollapsed';
+const sideCollapsed = () => { try { return localStorage.getItem(SIDE_KEY) === '1'; } catch (e) { return false; } };
+
+/* 1 mục trong sidebar. Nhãn phải nằm trong thẻ riêng (không để làm text trần) thì lúc thu gọn mới
+ * ẩn được bằng CSS; `title` để khi chỉ còn icon, rê chuột vẫn biết đó là mục gì. */
+const sideLink = (key, ic, label, view) =>
+  `<a href="#/${key}" class="${view === key ? 'active' : ''}" title="${esc(label)}">
+     <span class="side-ic">${ic}</span><span class="side-label">${esc(label)}</span></a>`;
+
 function shell(view) {
   const me = state.me;
   const lead = isLead();
   const navGroups = me.role === 'hr' ? HR_NAV : lead ? LEAD_NAV : SALES_SIDE_NAV;
   const nav = navGroups.map(g => `<div class="sec">${esc(g.sec)}</div>` + g.items
     .filter(i => i[0] !== 'admin' || isLead())
-    .map(i => `<a href="#/${i[0]}" class="${view === i[0] ? 'active' : ''}"><span>${i[1]}</span>${esc(i[2])}</a>`).join('')).join('');
-  return `<div class="shell with-side">
+    .map(i => sideLink(i[0], i[1], i[2], view)).join('')).join('');
+  return `<div class="shell with-side${sideCollapsed() ? ' side-collapsed' : ''}">
     <aside class="sidebar" id="sidebar">
-      <div class="row mb"><a href="#/${homeView()}" class="brand-logo-link"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></a></div>
+      <div class="row mb side-brand"><a href="#/${homeView()}" class="brand-logo-link"><img class="brand-logo" src="${BRAND_LOGO}" alt="NetViet Sales"></a></div>
       <a href="#/profile" class="side-profile-btn ${view === 'profile' ? 'active' : ''}">
         ${avatar(me)}
         <div class="side-profile-info">
@@ -85,8 +98,10 @@ function shell(view) {
         </div>
       </a>
       ${nav}
-      ${!lead ? `<div class="sec">Hệ thống</div><a href="#/more" class="${view === 'more' ? 'active' : ''}"><span>${icon('settings', 15)}</span>Cài đặt</a>` : ''}
+      ${!lead ? `<div class="sec">Hệ thống</div>${sideLink('more', icon('settings', 15), 'Cài đặt', view)}` : ''}
     </aside>
+    <button class="side-toggle" data-side-toggle type="button"
+      aria-label="Thu gọn / mở rộng menu">${icon('chevronRight', 15)}</button>
     <div class="grow" style="min-width:0;display:flex;flex-direction:column">
       <header class="topbar">
         <button class="icon-btn menu-btn" data-menu>${icon('menu', 18)}</button>
@@ -248,6 +263,11 @@ function bindShell() {
   app.querySelectorAll('[data-menu]').forEach(el => el.onclick = (e) => {
     e.preventDefault();
     document.getElementById('sidebar').classList.toggle('open');
+  });
+  wire('[data-side-toggle]', () => {
+    const shellEl = app.querySelector('.shell');
+    const on = shellEl.classList.toggle('side-collapsed');
+    try { localStorage.setItem(SIDE_KEY, on ? '1' : '0'); } catch (e) { /* không lưu được thì thôi */ }
   });
   startClock();
 }

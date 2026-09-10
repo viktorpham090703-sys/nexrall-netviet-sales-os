@@ -66,8 +66,10 @@ main{flex:1;padding:14px 14px calc(var(--nav-h) + 26px);max-width:1240px;width:1
 .bottom-nav a.active{color:var(--red)}
 
 /* ---------- sidebar (TP/Admin) ---------- */
-.with-side{display:flex;flex-direction:row}
-.sidebar{width:216px;flex:none;background:#0B2342;border-right:1px solid #0B2342;padding:12px 10px;
+/* Bề rộng để trong biến vì nút thu gọn nằm NGOÀI sidebar (sidebar có overflow:auto nên đặt bên
+   trong sẽ bị cắt mất phần thò ra) — nút bám mép phải bằng cách đọc lại đúng biến này. */
+.with-side{display:flex;flex-direction:row;--side-w:216px}
+.sidebar{width:var(--side-w);flex:none;background:#0B2342;border-right:1px solid #0B2342;padding:12px 10px;
   position:sticky;top:0;height:100vh;overflow:auto}
 .sidebar .sec{color:#6B7280;font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;margin:14px 8px 6px}
 .sidebar a{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:10px;color:#B8C4D9;font-size:13.5px;font-weight:400}
@@ -80,14 +82,43 @@ main{flex:1;padding:14px 14px calc(var(--nav-h) + 26px);max-width:1240px;width:1
 .side-profile-name{font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .side-profile-role{font-size:11px;color:#93A5C0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .side-scrim{position:fixed;inset:0;background:#000a;z-index:45}
+
+/* Nút thò ra ở mép phải sidebar để thu gọn / mở rộng. Nửa chìm trong sidebar, nửa thò ra ngoài. */
+.side-toggle{position:fixed;left:calc(var(--side-w) - 13px);top:50%;transform:translateY(-50%);
+  z-index:46;width:26px;height:52px;padding:0;border:1px solid var(--line);border-left:0;
+  border-radius:0 13px 13px 0;background:var(--bg2);color:var(--mut);
+  display:grid;place-items:center;cursor:pointer;
+  box-shadow:2px 0 10px rgba(15,23,42,.12);transition:left .2s ease,color .18s ease}
+.side-toggle:hover{color:var(--txt)}
+/* Mũi tên quay TRÁI khi menu đang mở (bấm để thu vào), quay PHẢI khi đã thu (bấm để thò ra). */
+.side-toggle svg{transform:rotate(180deg);transition:transform .2s ease}
+.side-collapsed .side-toggle svg{transform:none}
+
 @media(max-width:899px){
-  .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:50;transform:translateX(-100%);transition:.22s}
+  /* Điện thoại: sidebar là ngăn kéo trượt vào, đã có nút hamburger — không dùng nút thu gọn, và
+     luôn giữ đủ bề rộng kể cả khi lựa chọn "thu gọn" từ desktop còn lưu trong localStorage. */
+  .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:50;width:216px;transform:translateX(-100%);transition:.22s}
   .sidebar.open{transform:none}
+  .side-toggle{display:none}
 }
 @media(min-width:900px){
   .side-scrim,.menu-btn{display:none}
   main{padding-bottom:30px}
   .bottom-nav.desktop-hide{display:none}
+  .sidebar{transition:width .2s ease}
+
+  /* Đã thu gọn: còn đúng một dải icon. Nhãn, tiêu đề nhóm, logo và khối tên/chức danh đều ẩn —
+     giữ lại thì chữ bị cắt cụt giữa chừng, xấu hơn là bỏ hẳn. Rê chuột vào icon vẫn ra tên mục
+     nhờ thuộc tính title. */
+  .shell.side-collapsed{--side-w:62px}
+  .side-collapsed .sidebar{padding-left:7px;padding-right:7px;overflow-x:hidden}
+  .side-collapsed .side-brand,
+  .side-collapsed .sidebar .sec,
+  .side-collapsed .side-profile-info,
+  .side-collapsed .side-label{display:none}
+  .side-collapsed .sidebar a{justify-content:center;gap:0;padding:10px 0}
+  .side-collapsed .sidebar .side-profile-btn{justify-content:center;padding:9px 0;margin-bottom:6px}
+  .side-collapsed .sidebar .side-profile-btn .avatar{margin:0}
 }
 
 /* ---------- scroll / hover fx ---------- */
