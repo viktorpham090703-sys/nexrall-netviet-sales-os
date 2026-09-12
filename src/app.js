@@ -40,6 +40,25 @@ const SALES_NAV = [
   ['tasks', icon('listChecks', 20), 'Công việc'], ['reports', icon('clipboardList', 20), 'Báo cáo'],
   ['more', icon('moreHorizontal', 20), 'Thêm'],
 ];
+/* MỌI vai trò đều phải có thanh dưới trên điện thoại. Trước đây thanh này chỉ dựng cho sales, nên
+ * Trưởng phòng / BGĐ / HCNS mở app trên điện thoại là không thấy thanh nào — chỉ còn nút hamburger,
+ * mà phần chừa chỗ cho thanh dưới (padding của <main>) vẫn giữ nguyên nên đáy trang trống một khoảng
+ * không có gì. Desktop không đổi: thanh dưới vẫn bị ẩn từ 900px trở lên, menu bên vẫn là menu chính.
+ *
+ * TP/BGĐ: ưu tiên việc điều hành đội — Console (duyệt, cảnh báo), Pipeline đội, giao việc. Vẫn có
+ * "Tạo mới" vì TP cũng tự đứng tên khách/deal của mình và giao việc xuống sale. */
+const LEAD_NAV_BOTTOM = [
+  ['console', icon('slidersHorizontal', 20), 'Console'], ['pipeline', icon('barChart2', 20), 'Pipeline'],
+  ['create', icon('plus', 24), 'Tạo mới'],
+  ['tasks', icon('listChecks', 20), 'Giao việc'], ['reports', icon('clipboardList', 20), 'Báo cáo'],
+  ['more', icon('moreHorizontal', 20), 'Thêm'],
+];
+/* HCNS chỉ xem / xét duyệt, không giữ khách hay deal nào — thanh dưới đúng 3 mục của HR_NAV kèm
+ * "Thêm", KHÔNG có "Tạo mới" (không có bản ghi kinh doanh nào thuộc về HCNS để tạo). */
+const HR_NAV_BOTTOM = [
+  ['console', icon('home', 20), 'Trang chủ'], ['prospect', icon('search', 20), 'Duyệt Thầu'],
+  ['admin', icon('usersRound', 20), 'Quản trị'], ['more', icon('moreHorizontal', 20), 'Thêm'],
+];
 const SALES_SIDE_NAV = [
   { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
   { sec: 'Khác', items: [['crm', icon('folderOpen'), 'CRM 360° Khách hàng'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['ai', icon('bot'), 'AI Trợ lý'], ['activities', icon('calendarDays'), 'Lịch & Hoạt động'], ['reports', icon('clipboardList'), 'Báo cáo EOD & Tuần'], ['kpi', icon('trophy'), 'KPI & Hoa hồng'], ['saleskit', icon('fileText'), 'Sales Kit'], ['training', icon('graduationCap'), 'Đào tạo']] },
@@ -90,6 +109,7 @@ function shell(view) {
   const me = state.me;
   const lead = isLead();
   const navGroups = me.role === 'hr' ? HR_NAV : lead ? LEAD_NAV : SALES_SIDE_NAV;
+  const bottomNav = me.role === 'hr' ? HR_NAV_BOTTOM : lead ? LEAD_NAV_BOTTOM : SALES_NAV;
   const nav = navGroups.map(g => `<div class="sec">${esc(g.sec)}</div>` + g.items
     .filter(i => i[0] !== 'admin' || isLead())
     .map(i => sideLink(i[0], i[1], i[2], view)).join('')).join('');
@@ -120,11 +140,11 @@ function shell(view) {
         ${avatar(me, 'data-me')}
       </header>
       <main id="main"></main>
-      ${!lead ? `<nav class="bottom-nav desktop-hide" aria-label="Điều hướng chính">${SALES_NAV.map(i => i[0] === 'more'
+      <nav class="bottom-nav desktop-hide" aria-label="Điều hướng chính">${bottomNav.map(i => i[0] === 'more'
         ? `<a href="#" data-menu><span class="ic">${i[1]}</span>${esc(i[2])}</a>`
         : i[0] === 'create'
           ? `<button type="button" class="nav-create" data-create><span class="ic">${i[1]}</span>${esc(i[2])}</button>`
-          : `<a href="#/${i[0]}" class="${view === i[0] ? 'active' : ''}"><span class="ic">${i[1]}</span>${esc(i[2])}</a>`).join('')}</nav>` : ''}
+          : `<a href="#/${i[0]}" class="${view === i[0] ? 'active' : ''}"><span class="ic">${i[1]}</span>${esc(i[2])}</a>`).join('')}</nav>
     </div>
     <div class="side-scrim" data-scrim hidden></div>
   </div>`;
