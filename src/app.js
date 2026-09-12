@@ -1,6 +1,7 @@
 import { boot, state, isLead } from './state.js';
 import { get, post, sessionToken } from './api.js';
-import { esc, avatar, toast, modal, rel, empty, beginRender } from './ui.js';
+import { esc, avatar, toast, modal, rel, empty, beginRender, closeOverlay } from './ui.js';
+import { openCreateSheet } from './create.js';
 import { roleLabel, BRAND_LOGO } from './const.js';
 import { icon, dot } from './icons.js';
 
@@ -30,9 +31,14 @@ const VIEWS = {
   plans: VPlans,
 };
 
+/* Thanh điều hướng dưới (điện thoại, vai trò sales): ưu tiên việc sale làm nhiều nhất trong ngày —
+ * Trang chủ · Khách hàng · Tạo mới (nút nổi, mở sheet chọn loại) · Công việc · Báo cáo · Thêm (mở
+ * ngăn kéo menu đầy đủ: Pipeline, Tìm khách, KPI, Sales Kit…). Menu desktop giữ nguyên. */
 const SALES_NAV = [
-  ['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'],
-  ['tasks', icon('inbox'), 'Việc'], ['more', icon('moreHorizontal'), 'Thêm'],
+  ['cockpit', icon('home', 20), 'Trang chủ'], ['crm', icon('users', 20), 'Khách hàng'],
+  ['create', icon('plus', 24), 'Tạo mới'],
+  ['tasks', icon('listChecks', 20), 'Công việc'], ['reports', icon('clipboardList', 20), 'Báo cáo'],
+  ['more', icon('moreHorizontal', 20), 'Thêm'],
 ];
 const SALES_SIDE_NAV = [
   { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
@@ -114,10 +120,13 @@ function shell(view) {
         ${avatar(me, 'data-me')}
       </header>
       <main id="main"></main>
-      ${!lead ? `<nav class="bottom-nav desktop-hide">${SALES_NAV.map(i => i[0] === 'more'
+      ${!lead ? `<nav class="bottom-nav desktop-hide" aria-label="Điều hướng chính">${SALES_NAV.map(i => i[0] === 'more'
         ? `<a href="#" data-menu><span class="ic">${i[1]}</span>${esc(i[2])}</a>`
-        : `<a href="#/${i[0]}" class="${view === i[0] ? 'active' : ''}"><span class="ic">${i[1]}</span>${esc(i[2])}</a>`).join('')}</nav>` : ''}
+        : i[0] === 'create'
+          ? `<button type="button" class="nav-create" data-create><span class="ic">${i[1]}</span>${esc(i[2])}</button>`
+          : `<a href="#/${i[0]}" class="${view === i[0] ? 'active' : ''}"><span class="ic">${i[1]}</span>${esc(i[2])}</a>`).join('')}</nav>` : ''}
     </div>
+    <div class="side-scrim" data-scrim hidden></div>
   </div>`;
 }
 
@@ -231,8 +240,8 @@ async function render() {
   const main = document.getElementById('main');
   main.scrollTop = 0;
   window.scrollTo(0, 0);
-  const sb = document.getElementById('sidebar');
-  if (sb) sb.classList.remove('open');
+  setDrawer(false);
+  closeOverlay();   // đổi trang thì modal/sheet đang mở (nếu có) phải đóng theo
 
   if (block) {
     main.innerHTML = `<div class="page-head"><div class="grow"><h2>${icon(block.icon, 19, { style: 'margin-right:6px' })}${esc(block.title)}</h2>
@@ -255,14 +264,27 @@ async function render() {
   }
 }
 
+/* Ngăn kéo menu trên điện thoại: mở/đóng kèm lớp mờ phía sau — chạm ra ngoài hoặc Esc là đóng. */
+function setDrawer(open) {
+  const sb = document.getElementById('sidebar');
+  const scrim = document.querySelector('[data-scrim]');
+  if (sb) sb.classList.toggle('open', open);
+  if (scrim) scrim.hidden = !open;
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('sidebar')?.classList.contains('open')) setDrawer(false);
+});
+
 function bindShell() {
   const app = document.getElementById('app');
   const wire = (sel, fn) => { const el = app.querySelector(sel); if (el) el.onclick = fn; };
   wire('[data-noti]', showNotifications);
   wire('[data-me]', () => { location.hash = '#/profile'; });
+  wire('[data-create]', openCreateSheet);
+  wire('[data-scrim]', () => setDrawer(false));
   app.querySelectorAll('[data-menu]').forEach(el => el.onclick = (e) => {
     e.preventDefault();
-    document.getElementById('sidebar').classList.toggle('open');
+    setDrawer(!document.getElementById('sidebar').classList.contains('open'));
   });
   wire('[data-side-toggle]', () => {
     const shellEl = app.querySelector('.shell');
@@ -279,7 +301,12 @@ window.addEventListener('error', (e) => console.error('Runtime error:', e.messag
   try {
     await boot();
   } catch (e) {
-    document.getElementById('app').innerHTML = `<div class="boot"><div class="err-box">Không kết nối được máy chủ: ${esc(e.message)}</div></div>`;
+    // Mất mạng (vd. app cài trên điện thoại mở khi không có sóng): vỏ app vẫn lên từ cache nhưng
+    // không có dữ liệu — báo rõ và cho thử lại, tuyệt đối không hiện số liệu cũ như số liệu thật.
+    const app = document.getElementById('app');
+    app.innerHTML = `<div class="boot"><div class="err-box" style="max-width:340px;text-align:center">${esc(e.message)}
+      <div class="mt"><button class="btn primary sm" data-retry>Thử lại</button></div></div></div>`;
+    app.querySelector('[data-retry]').onclick = () => location.reload();
     return;
   }
   if (!state.me && sessionToken()) { /* phiên cũ đã hết hạn — sẽ về màn đăng nhập */ }

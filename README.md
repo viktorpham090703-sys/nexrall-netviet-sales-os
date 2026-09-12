@@ -20,7 +20,8 @@ App là một **Progressive Web App**: cài được thẳng từ trình duyệt
 Google Play**, không có bản mobile riêng — vẫn đúng một front-end, một backend, một CSDL.
 
 **iPhone (Safari):** mở link app → nút **Chia sẻ** → **Thêm vào MH chính** → tên hiện sẵn là
-**Phòng Kinh Doanh** → **Thêm**. Chạm icon để mở app ở chế độ toàn màn hình (không có thanh
+**NetViet Sales** → **Thêm**. (Trong app, mục **Thêm → Tài khoản** cũng có hướng dẫn này; trên Android
+mục đó có nút **Cài ứng dụng** — cả hai tự ẩn khi app đã chạy ở chế độ cài đặt.) Chạm icon để mở app ở chế độ toàn màn hình (không có thanh
 địa chỉ Safari). *Lưu ý: phải là Safari — Chrome/Firefox trên iOS không có mục này.*
 
 **Android (Chrome):** menu ⋮ → **Cài đặt ứng dụng / Thêm vào màn hình chính**.

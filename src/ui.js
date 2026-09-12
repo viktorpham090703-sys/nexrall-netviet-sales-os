@@ -93,12 +93,90 @@ export function toast(msg, tone = '') {
   setTimeout(() => el.remove(), 3200);
 }
 
+/* ---------- Lớp phủ dùng chung: modal form & bottom sheet ----------
+ * Chỉ một lớp phủ mở tại một thời điểm (đổ vào #modal-root — mở cái mới là thay cái cũ, đúng như
+ * trước). Ngoài scrim + nút đóng, lớp phủ còn xử lý các hành vi mà app cài lên điện thoại cần có:
+ *   - Esc đóng (desktop);
+ *   - nút Back của Android / cử chỉ back của trình duyệt đóng lớp phủ TRƯỚC, không rời trang: lúc mở
+ *     đẩy thêm 1 mục history (URL giữ nguyên nên không kích hoạt hashchange), popstate → chỉ đóng;
+ *     đóng bằng nút thì history.back() để dọn mục đã đẩy;
+ *   - khoá cuộn nền (html.overlay-open) để iOS không cuộn trang phía sau lớp phủ;
+ *   - đổi route (hashchange) thì tự đóng — xem closeOverlay() được app.js gọi trong render().
+ * Trường hợp bottom sheet "Tạo mới" mở tiếp 1 modal: đóng theo kiểu "handoff" — giữ lại mục history
+ * cho lớp phủ kế tiếp thay vì back() rồi push lại, tránh popstate về trễ đóng nhầm modal vừa mở. */
+const HIST_KEY = 'nvOverlay';
+let active = null;      // lớp phủ đang mở
+let handoff = false;    // lớp phủ vừa đóng để nhường chỗ — mục history vẫn còn, lớp kế tiếp dùng lại
+
+const overlayRoot = () => document.getElementById('modal-root');
+
+function openOverlay(html) {
+  const root = overlayRoot();
+  const needPush = !active && !handoff;
+  handoff = false;
+  root.innerHTML = html;
+  document.documentElement.classList.add('overlay-open');
+  if (needPush) { try { history.pushState({ [HIST_KEY]: true }, '', location.href); } catch (e) { /* bỏ qua */ } }
+
+  const me = {};
+  const dismiss = () => {
+    if (active !== me) return false;
+    active = null;
+    root.innerHTML = '';
+    document.documentElement.classList.remove('overlay-open');
+    return true;
+  };
+  me.close = (opts = {}) => {
+    if (!dismiss()) return;
+    if (opts.handoff) { handoff = true; return; }
+    if (history.state && history.state[HIST_KEY]) history.back();
+  };
+  me.dismiss = dismiss;
+  active = me;
+
+  root.querySelector('.modal-scrim').addEventListener('click', (e) => { if (e.target.classList.contains('modal-scrim')) me.close(); });
+  return { root, close: me.close };
+}
+
+/** Đóng lớp phủ đang mở (nếu có) mà không rời trang — app.js gọi khi đổi route. */
+export function closeOverlay() { if (active) active.close(); }
+
+window.addEventListener('popstate', () => {
+  if (!active) return;
+  // Vẫn đang đứng ở mục history của lớp phủ (vd. traversal nội bộ) → chưa phải "back ra khỏi lớp phủ".
+  if (history.state && history.state[HIST_KEY]) return;
+  active.dismiss();
+});
+window.addEventListener('hashchange', () => { handoff = false; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && active) active.close(); });
+
+/** Kéo xuống để đóng (bottom sheet) — chỉ khi nội dung đang ở đầu, để không tranh với cuộn. */
+function bindSwipeDown(el, close) {
+  let y0 = null, dy = 0;
+  el.addEventListener('touchstart', (e) => {
+    if (el.scrollTop > 0 || e.touches.length !== 1) return;
+    y0 = e.touches[0].clientY; dy = 0; el.style.transition = 'none';
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (y0 == null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    el.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  const end = () => {
+    if (y0 == null) return;
+    el.style.transition = '';
+    if (dy > 90) close(); else el.style.transform = '';
+    y0 = null;
+  };
+  el.addEventListener('touchend', end);
+  el.addEventListener('touchcancel', end);
+}
+
 /**
  * Modal form. fields: [{name,label,type,value,options,placeholder,required,rows,hint}]
  * onSubmit(values) — trả về false để giữ modal mở.
  */
 export function modal({ title, titleIcon = '', fields = [], html = '', submitText = 'Lưu', onSubmit, wide }) {
-  const root = document.getElementById('modal-root');
   const body = fields.map(f => {
     const v = f.value == null ? '' : f.value;
     let input;
@@ -115,18 +193,16 @@ export function modal({ title, titleIcon = '', fields = [], html = '', submitTex
     return `<label class="f"><span>${esc(f.label)}${f.required ? ' *' : ''}</span>${input}${f.hint ? `<div class="xs mut mt">${esc(f.hint)}</div>` : ''}</label>`;
   }).join('');
 
-  root.innerHTML = `<div class="modal-scrim"><div class="modal" ${wide ? 'style="max-width:680px"' : ''}>
+  const { root, close } = openOverlay(`<div class="modal-scrim"><div class="modal" role="dialog" aria-modal="true" ${wide ? 'style="max-width:680px"' : ''}>
     <h3>${titleIcon ? icon(titleIcon, 17, { style: 'margin-right:6px' }) : ''}${esc(title)}</h3>
     <form data-form>${body}${html}
       <div class="row mt" style="gap:8px">
         <button type="button" class="btn grow" data-cancel>Huỷ</button>
         <button type="submit" class="btn primary grow">${esc(submitText)}</button>
       </div>
-    </form></div></div>`;
+    </form></div></div>`);
 
-  const close = () => { root.innerHTML = ''; };
-  root.querySelector('[data-cancel]').onclick = close;
-  root.querySelector('.modal-scrim').addEventListener('click', (e) => { if (e.target.classList.contains('modal-scrim')) close(); });
+  root.querySelector('[data-cancel]').onclick = () => close();
   const form = root.querySelector('[data-form]');
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -140,6 +216,34 @@ export function modal({ title, titleIcon = '', fields = [], html = '', submitTex
       toast(err.message || 'Có lỗi xảy ra', 'err');
     } finally { btn.disabled = false; }
   });
+  return { close, root };
+}
+
+/**
+ * Bottom sheet chọn hành động (trên desktop hiện như hộp thoại giữa màn hình).
+ * items: [{key, icon, tone, title, desc, onSelect}] — chọn 1 mục thì sheet đóng rồi mới gọi onSelect;
+ * onSelect thường mở tiếp một modal, nên đóng theo kiểu handoff (xem chú thích đầu mục lớp phủ).
+ */
+export function sheet({ title, subtitle = '', items = [] }) {
+  const { root, close } = openOverlay(`<div class="modal-scrim sheet-scrim"><div class="modal sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <div class="grow"><h3>${esc(title)}</h3>${subtitle ? `<p class="sheet-sub">${esc(subtitle)}</p>` : ''}</div>
+      <button type="button" class="icon-btn sheet-close" data-cancel aria-label="Đóng">${icon('x', 18)}</button>
+    </div>
+    <div class="sheet-list">${items.map(it => `<button type="button" class="sheet-item" data-sheet-item="${esc(it.key)}">
+      <span class="sheet-ic ${esc(it.tone || '')}">${icon(it.icon, 21)}</span>
+      <span class="grow"><span class="sheet-t">${esc(it.title)}</span><span class="sheet-d">${esc(it.desc || '')}</span></span>
+      ${icon('chevronRight', 18, { class: 'sheet-chev' })}</button>`).join('')}</div>
+  </div></div>`);
+
+  root.querySelector('[data-cancel]').onclick = () => close();
+  root.querySelectorAll('[data-sheet-item]').forEach(b => b.onclick = () => {
+    const it = items.find(x => x.key === b.dataset.sheetItem);
+    close({ handoff: !!(it && it.onSelect) });
+    if (it && it.onSelect) it.onSelect();
+  });
+  bindSwipeDown(root.querySelector('.sheet'), () => close());
   return { close, root };
 }
 

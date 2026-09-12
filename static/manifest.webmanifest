@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Phòng Kinh Doanh",
-  "short_name": "Phòng Kinh Doanh",
-  "description": "Ứng dụng Phòng Kinh Doanh — NetViet Sales OS",
+  "name": "NetViet Sales OS",
+  "short_name": "NetViet Sales",
+  "description": "NetViet Sales OS — quản trị hoạt động & kết quả kinh doanh hàng ngày của đội Sales NetViet",
   "lang": "vi",
   "dir": "ltr",
   "start_url": "/",

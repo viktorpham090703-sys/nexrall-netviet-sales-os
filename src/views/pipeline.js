@@ -132,6 +132,14 @@ function addDeal(customers, after) {
   });
 }
 
+/** Mở modal tạo cơ hội từ bất kỳ màn nào (sheet "Tạo mới") — tự nạp danh sách khách hàng. */
+export async function newDeal(after) {
+  try {
+    const c = await get('/customers');
+    addDeal(c.items || [], after);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
 export function openDeal(x, after) {
   if (!x) return;
   const isTender = x.process_type === 'dau_thau';

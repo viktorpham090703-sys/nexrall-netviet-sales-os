@@ -377,6 +377,15 @@ function customerModal(c, d, after) {
   bindDuplicateWarning(root);
 }
 
+/** Mở modal thêm khách hàng từ bất kỳ màn nào (sheet "Tạo mới") — nạp partner (+ danh sách sale
+ * cho TP/Admin) rồi dùng lại đúng customerModal() của trang CRM, không có form thứ hai. */
+export async function newCustomer(after) {
+  try {
+    const [p, c] = await Promise.all([get('/partners'), isLead() ? get('/customers') : Promise.resolve({})]);
+    customerModal(null, { partners: p.items || [], sales: c.sales || [] }, after);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
 /**
  * Gắn khối cảnh báo trùng khách vào modal và giữ nó luôn khớp với nội dung đang gõ.
  * Hỏi máy chủ (GET /api/customers/check-duplicate) chứ không dò trong danh sách đang hiển thị:

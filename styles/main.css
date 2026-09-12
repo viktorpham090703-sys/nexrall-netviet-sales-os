@@ -15,13 +15,13 @@ img{max-width:100%}
 .hidden{display:none !important}
 
 /* ---------- boot / spinner ---------- */
-.boot{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;color:var(--mut)}
+.boot{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;height:100dvh;gap:14px;color:var(--mut)}
 .spinner{width:30px;height:30px;border:3px solid var(--line);border-top-color:var(--red);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spin{animation:spin 1s linear infinite}
 
 /* ---------- shell ---------- */
-.shell{min-height:100vh;display:flex;flex-direction:column}
+.shell{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
 .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;padding:10px 14px;
   background:var(--bg2);border-bottom:1px solid var(--line)}
 .topbar .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.3px}
@@ -59,11 +59,22 @@ main{flex:1;padding:14px 14px calc(var(--nav-h) + 26px);max-width:1240px;width:1
 
 /* ---------- bottom nav (Sales) ---------- */
 .bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:40;display:flex;background:rgba(255,255,255,.92);
-  backdrop-filter:blur(10px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
-.bottom-nav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 2px 8px;
-  color:var(--mut);font-size:10.5px;font-weight:600}
-.bottom-nav a span.ic{font-size:18px;line-height:1}
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom,0px)}
+/* 6 mục chia đều; nhãn cho phép xuống 2 dòng ("Khách hàng") ở màn 320px thay vì tràn ra ngoài.
+   min-height giữ mọi mục cao bằng nhau dù nhãn 1 hay 2 dòng — vùng chạm luôn ≥ 56px. */
+.bottom-nav a,.bottom-nav .nav-create{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:flex-start;gap:3px;padding:8px 2px 6px;min-height:56px;color:var(--mut);font-size:10px;
+  font-weight:600;line-height:1.1;text-align:center;background:none;border:0;cursor:pointer;font-family:inherit}
+.bottom-nav .ic{display:grid;place-items:center;height:22px;line-height:1}
 .bottom-nav a.active{color:var(--red)}
+/* Nút "Tạo mới": vòng tròn đỏ thương hiệu nhô lên khỏi thanh — hành động chính của sale trên điện thoại. */
+.bottom-nav .nav-create{color:var(--red)}
+.bottom-nav .nav-create .ic{width:46px;height:46px;border-radius:50%;background:var(--red);color:#fff;margin-top:-20px;
+  box-shadow:0 6px 16px rgba(239,59,36,.38);border:3px solid var(--bg2);transition:transform .15s ease}
+.bottom-nav .nav-create:active .ic{transform:scale(.94)}
+/* Lớp mờ phía sau ngăn kéo menu (điện thoại) — chạm vào là đóng menu. */
+.side-scrim[hidden]{display:none}
 
 /* ---------- sidebar (TP/Admin) ---------- */
 /* Bề rộng để trong biến vì nút thu gọn nằm NGOÀI sidebar (sidebar có overflow:auto nên đặt bên
@@ -137,6 +148,10 @@ main{flex:1;padding:14px 14px calc(var(--nav-h) + 26px);max-width:1240px;width:1
 .glow-pulse{animation:glow-pulse 2s ease-in-out infinite}
 
 /* ---------- cards / grid ---------- */
+@media(hover:none){
+  .card:hover,.stat:hover,.btn:hover{transform:none;box-shadow:none}
+  .card:hover{border-color:var(--line)}
+}
 .card{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:13px;
   transition:transform .18s ease,border-color .18s ease}
 .card:hover{transform:translateY(-4px);border-color:#22222248}
@@ -216,8 +231,9 @@ textarea{min-height:74px;resize:vertical}
 /* ---------- list rows ---------- */
 .item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
 .item:last-child{border-bottom:0}
-.item .t{font-weight:700;font-size:13.7px}
-.item .d{color:var(--mut);font-size:12px;margin-top:2px}
+.item .grow{min-width:0}
+.item .t{font-weight:700;font-size:13.7px;overflow-wrap:anywhere}
+.item .d{color:var(--mut);font-size:12px;margin-top:2px;overflow-wrap:anywhere}
 .dot-i{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--bg3);flex:none;font-size:14px}
 
 /* ---------- kanban ---------- */
@@ -248,17 +264,46 @@ textarea{min-height:74px;resize:vertical}
 /* ---------- modal ---------- */
 .modal-scrim{position:fixed;inset:0;background:#000b;z-index:60;display:flex;align-items:flex-end;justify-content:center}
 .modal{background:var(--bg2);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:560px;
-  padding:16px 15px calc(18px + env(safe-area-inset-bottom));max-height:90vh;overflow:auto}
-@media(min-width:640px){.modal-scrim{align-items:center}.modal{border-radius:18px}}
+  padding:16px 15px calc(18px + env(safe-area-inset-bottom,0px));max-height:90vh;max-height:90dvh;overflow:auto;
+  overscroll-behavior:contain;animation:sheet-up .22s ease}
+@media(min-width:640px){.modal-scrim{align-items:center}.modal{border-radius:18px;animation:fade-in .16s ease}}
 .modal h3{font-size:16px;margin-bottom:12px}
+@keyframes sheet-up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){.modal{animation:none}}
+/* Đang mở lớp phủ: khoá cuộn trang phía sau (nhất là iOS Safari cuộn xuyên qua scrim). */
+html.overlay-open,html.overlay-open body{overflow:hidden}
+
+/* Bottom sheet chọn hành động ("Tạo mới"): vạch kéo, tiêu đề + nút đóng, danh sách mục cao ≥ 60px. */
+.sheet{padding:8px 10px calc(12px + env(safe-area-inset-bottom,0px));max-width:480px}
+.sheet-grip{width:36px;height:4px;border-radius:2px;background:var(--line);margin:2px auto 10px}
+.sheet-head{display:flex;align-items:flex-start;gap:10px;padding:0 6px 6px}
+.sheet-head h3{margin:0;font-size:17px}
+.sheet-sub{margin:2px 0 0;color:var(--mut);font-size:12.5px}
+.sheet-close{width:40px;height:40px;flex:none}
+.sheet-list{display:flex;flex-direction:column;gap:2px}
+.sheet-item{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;padding:9px 8px;border:0;border-radius:12px;
+  background:transparent;text-align:left;color:var(--txt);cursor:pointer;font-family:inherit}
+.sheet-item:active{background:var(--bg3)}
+@media(hover:hover){.sheet-item:hover{background:var(--bg3)}}
+.sheet-item .grow{min-width:0}
+.sheet-ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--bg3);color:var(--txt)}
+.sheet-ic.red{background:#FEE2E2;color:var(--red)}
+.sheet-ic.blue{background:#DBEAFE;color:var(--blue)}
+.sheet-ic.amber{background:#FEF3C7;color:#B45309}
+.sheet-ic.green{background:#DCFCE7;color:#16A34A}
+.sheet-ic.grey{background:var(--bg3);color:#374151}
+.sheet-t{display:block;font-weight:700;font-size:14.5px}
+.sheet-d{display:block;color:var(--mut);font-size:12px;margin-top:1px}
+.sheet-chev{color:var(--mut);flex:none}
 
 /* ---------- toast ---------- */
-.toast-root{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h) + 16px);z-index:90;display:flex;flex-direction:column;gap:8px;width:min(92vw,420px)}
+.toast-root{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h) + 16px + env(safe-area-inset-bottom,0px));z-index:90;display:flex;flex-direction:column;gap:8px;width:min(92vw,420px)}
 .toast{background:var(--bg2);border:1px solid var(--line);border-left:3px solid var(--orange);border-radius:11px;padding:10px 12px;font-size:13px;box-shadow:0 8px 24px rgba(15,23,42,.15)}
 .toast.ok{border-left-color:var(--ok)}.toast.err{border-left-color:var(--danger)}
 
 /* ---------- login ---------- */
-.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:26px 18px;
+.login-wrap{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:26px 18px;
   background:radial-gradient(1200px 700px at 50% 0%,#1B3A63,#0B2342 60%,#081A30 100%)}
 .login-wrap .hero h1{font-size:26px;line-height:1.15;color:#fff}
 .login-wrap .hero p{color:#93A5C0;font-size:13.5px;margin-top:6px}
@@ -321,6 +366,24 @@ textarea{min-height:74px;resize:vertical}
 .spark .cl{font-size:9.5px;color:var(--mut);white-space:nowrap}
 .spark .cv{font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
 .spark .col.today .cv{color:var(--orange)}
+
+/* Dải báo mất mạng (src/pwa.js) — nằm trên cùng, chừa vùng tai thỏ khi chạy standalone. */
+.net-bar{position:fixed;top:0;left:0;right:0;z-index:95;background:#B45309;color:#fff;font-size:12.5px;font-weight:600;
+  text-align:center;padding:calc(6px + env(safe-area-inset-top,0px)) 12px 6px}
+.net-bar[hidden]{display:none}
+
+/* ===== Điện thoại / máy tính bảng dọc (dưới 900px) ===== */
+@media(max-width:899px){
+  /* iOS Safari tự phóng to trang khi chạm vào ô nhập có chữ < 16px — đặt đúng 16px để không zoom. */
+  input,select,textarea{font-size:16px}
+  /* Vùng chạm: nút nhỏ và nút icon tối thiểu ~40px theo hướng dẫn của Apple/Google. */
+  .btn.sm{min-height:36px;padding:7px 12px}
+  .icon-btn{width:40px;height:40px}
+  .topbar .avatar{width:38px;height:38px}
+  .page-head .btn{min-height:38px}
+  /* Ngăn kéo menu: bám đúng 2 mép trên/dưới (không dùng 100vh — iOS tính cả phần bị thanh công cụ che). */
+  .sidebar{height:auto;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+}
 
 /* ===== PWA — CHỈ áp dụng khi app đã được cài lên màn hình chính =====
    Trong trình duyệt (desktop lẫn mobile) không có quy tắc nào dưới đây chạy, nên giao diện

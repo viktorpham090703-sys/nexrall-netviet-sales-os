@@ -1,4 +1,4 @@
-/* Service worker của "Phòng Kinh Doanh" (NetViet Sales OS).
+/* Service worker của NetViet Sales OS (bản cài lên màn hình chính iPhone/Android).
  *
  * Nguyên tắc: đây CHỈ là lớp bọc thêm cho web app hiện tại — không đổi routing, không đổi
  * xác thực, không đổi dữ liệu. Website và bản cài lên màn hình chính dùng chung đúng một
@@ -17,11 +17,15 @@
  * lựa chọn bắt buộc: cache-first sẽ khiến người dùng chạy code cũ sau mỗi lần deploy.
  */
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = `nv-static-${VERSION}`;
 
 /* Vỏ app: đủ để mở được giao diện khi mất mạng. Không có dữ liệu người dùng nào ở đây —
- * index.html là khung rỗng, mọi dữ liệu đều nạp qua /api sau khi đăng nhập. */
+ * index.html là khung rỗng, mọi dữ liệu đều nạp qua /api sau khi đăng nhập.
+ * Các module JS cũng nằm trong danh sách: app.js import tĩnh toàn bộ views, thiếu một tệp là cả
+ * app không lên được — chỉ dựa vào cache lúc chạy thì lượt mở đầu tiên (trước khi service worker
+ * kiểm soát trang) không kịp lưu gì, mất mạng ngay sau đó là màn hình trắng. Tệp nào không có
+ * (đổi tên, xoá) chỉ bị bỏ qua, không làm hỏng lần cài. */
 const SHELL = [
   '/',
   '/styles/main.css',
@@ -31,13 +35,24 @@ const SHELL = [
   '/icons/apple-touch-icon.png',
   '/apple-touch-icon.png',
   '/favicon.ico',
+  '/src/app.js', '/src/pwa.js', '/src/api.js', '/src/state.js', '/src/ui.js', '/src/const.js', '/src/icons.js',
+  '/src/scrollFx.js', '/src/aiPref.js', '/src/salesDocs.js', '/src/create.js',
+  '/src/views/login.js', '/src/views/setPassword.js', '/src/views/cockpit.js', '/src/views/crm.js',
+  '/src/views/pipeline.js', '/src/views/activity.js', '/src/views/tasks.js', '/src/views/reports.js',
+  '/src/views/kpi.js', '/src/views/ai.js', '/src/views/prospect.js', '/src/views/saleskit.js',
+  '/src/views/console.js', '/src/views/training.js', '/src/views/admin.js', '/src/views/more.js',
+  '/src/views/profile.js', '/src/views/plans.js',
 ];
+
+/* Điều hướng: mạng quá chậm (sóng yếu) thì sau chừng này ms lấy vỏ đã cache thay vì màn trắng chờ
+ * mãi — app lên rồi tự gọi /api, và lớp api.js đã có thông báo lỗi kết nối riêng. */
+const NAV_TIMEOUT_MS = 8000;
 
 const CACHEABLE = /\.(?:js|mjs|css|png|jpg|jpeg|svg|ico|webp|woff2?|webmanifest)$/i;
 
 const OFFLINE_HTML = `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Phòng Kinh Doanh</title>
+<title>NetViet Sales OS</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
 padding:24px;background:#F5F6F8;color:#222;font-family:system-ui,-apple-system,'Segoe UI',Arial,sans-serif}
 div{max-width:340px;text-align:center}h1{font-size:17px;margin:0 0 8px}p{font-size:14px;color:#6B7280;line-height:1.5;margin:0 0 16px}
@@ -71,17 +86,27 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
-/** Ra mạng trước; hỏng mạng mới lấy bản đã lưu. Chỉ lưu phản hồi 200 cùng origin. */
-async function networkFirst(request, fallbackKey) {
+/** Ra mạng trước; hỏng mạng mới lấy bản đã lưu. Chỉ lưu phản hồi 200 cùng origin.
+ * `timeoutMs` (chỉ dùng cho điều hướng): quá hạn mà đã có bản cache thì trả cache, chưa có thì
+ * vẫn đợi mạng — không bao giờ trả lỗi sớm hơn so với không có service worker. */
+async function networkFirst(request, fallbackKey, timeoutMs) {
   const cache = await caches.open(CACHE);
-  try {
-    const res = await fetch(request);
-    if (res && res.status === 200 && res.type === 'basic') {
-      cache.put(request, res.clone()).catch(() => {});
-    }
+  const fromCache = async () => (await cache.match(request)) || (fallbackKey ? await cache.match(fallbackKey) : null);
+  const net = fetch(request).then((res) => {
+    if (res && res.status === 200 && res.type === 'basic') cache.put(request, res.clone()).catch(() => {});
     return res;
+  });
+  try {
+    if (timeoutMs) {
+      const timer = new Promise((resolve) => setTimeout(() => resolve('timeout'), timeoutMs));
+      const first = await Promise.race([net, timer]);
+      if (first !== 'timeout') return first;
+      const hit = await fromCache();
+      if (hit) { net.catch(() => {}); return hit; }
+    }
+    return await net;
   } catch (err) {
-    const hit = (await cache.match(request)) || (fallbackKey ? await cache.match(fallbackKey) : null);
+    const hit = await fromCache();
     if (hit) return hit;
     throw err;
   }
@@ -97,7 +122,7 @@ self.addEventListener('fetch', (event) => {
 
   if (req.mode === 'navigate') {
     // Toàn bộ điều hướng trong app chạy bằng hash (#/cockpit…), nên mọi lần mở app đều là "/".
-    event.respondWith(networkFirst(req, '/').catch(() => offlineResponse()));
+    event.respondWith(networkFirst(req, '/', NAV_TIMEOUT_MS).catch(() => offlineResponse()));
     return;
   }
 

@@ -65,25 +65,38 @@ export async function render(el) {
       try { await patch('/tasks/' + b.dataset.done, { status: 'done' }); toast('Đã hoàn thành', 'ok'); render(el); }
       catch (e) { toast(e.message, 'err'); }
     });
-    el.querySelector('[data-add]').onclick = () => modal({
-      title: isLead() ? 'Giao việc cho sale' : 'Thêm việc',
-      fields: [
-        { name: 'title', label: 'Tên công việc', required: true },
-        { name: 'detail', label: 'Mô tả / yêu cầu', type: 'textarea', rows: 2 },
-        ...(isLead() ? [assigneeField('userId', salesTeamUsers())] : []),
-        { name: 'dealId', label: 'Gắn với deal', type: 'select', options: [{ v: '', n: '— không —' }, ...d.deals.map(x => ({ v: x.id, n: x.title }))] },
-        { name: 'priority', label: 'Ưu tiên', type: 'select', options: [{ v: 'high', n: 'Cao' }, { v: 'medium', n: 'Vừa' }, { v: 'low', n: 'Thấp' }] },
-        { name: 'dueDate', label: 'Hạn hoàn thành', type: 'date' },
-        ...(isLead() ? [{ name: 'acceptSlaMin', label: 'SLA nhận việc (phút)', type: 'number', value: 120 }] : []),
-      ],
-      onSubmit: async (v) => {
-        const dueAt = v.dueDate ? Math.floor(new Date(v.dueDate + 'T17:00:00').getTime() / 1000) : undefined;
-        await post('/tasks', { ...v, dueAt });
-        toast(isLead() ? 'Đã giao việc & gửi thông báo' : 'Đã thêm việc', 'ok');
-        render(el);
-      },
-    });
+    el.querySelector('[data-add]').onclick = () => taskModal(d.deals, () => render(el));
   };
 
   await mount(el, load, draw, bind);
+}
+
+/** Modal tạo/giao việc — dùng ở trang Việc và ở sheet "Tạo mới" (footer điện thoại). */
+function taskModal(deals, after) {
+  modal({
+    title: isLead() ? 'Giao việc cho sale' : 'Thêm việc',
+    fields: [
+      { name: 'title', label: 'Tên công việc', required: true },
+      { name: 'detail', label: 'Mô tả / yêu cầu', type: 'textarea', rows: 2 },
+      ...(isLead() ? [assigneeField('userId', salesTeamUsers())] : []),
+      { name: 'dealId', label: 'Gắn với deal', type: 'select', options: [{ v: '', n: '— không —' }, ...deals.map(x => ({ v: x.id, n: x.title }))] },
+      { name: 'priority', label: 'Ưu tiên', type: 'select', options: [{ v: 'high', n: 'Cao' }, { v: 'medium', n: 'Vừa' }, { v: 'low', n: 'Thấp' }] },
+      { name: 'dueDate', label: 'Hạn hoàn thành', type: 'date' },
+      ...(isLead() ? [{ name: 'acceptSlaMin', label: 'SLA nhận việc (phút)', type: 'number', value: 120 }] : []),
+    ],
+    onSubmit: async (v) => {
+      const dueAt = v.dueDate ? Math.floor(new Date(v.dueDate + 'T17:00:00').getTime() / 1000) : undefined;
+      await post('/tasks', { ...v, dueAt });
+      toast(isLead() ? 'Đã giao việc & gửi thông báo' : 'Đã thêm việc', 'ok');
+      if (after) after();
+    },
+  });
+}
+
+/** Mở modal tạo việc từ bất kỳ màn nào (sheet "Tạo mới") — tự nạp danh sách deal để gắn. */
+export async function newTask(after) {
+  try {
+    const d = await get('/deals');
+    taskModal(d.items || [], after);
+  } catch (e) { toast(e.message, 'err'); }
 }
