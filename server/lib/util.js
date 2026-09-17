@@ -1,3 +1,5 @@
+import { sendPushToUser } from './push.js';
+
 export class HttpError extends Error {
   constructor(status, msg) { super(msg); this.status = status; }
 }
@@ -147,6 +149,17 @@ export async function audit(env, userId, action, entity, entityId, meta) {
 export async function notify(env, userId, { type, title, body, link, level }) {
   await env.DB.prepare('INSERT INTO nv_notifications (id,user_id,type,title,body,link,level,read,created_at) VALUES (?,?,?,?,?,?,?,0,?)')
     .bind(uid('nt'), userId, type || 'info', title, body || null, link || null, level || 'info', now()).run();
+  // This is the single notification fan-out point used by Admin, Sales and HCNS flows.
+  // The push copy stays generic because it can be displayed on an unlocked/locked device screen;
+  // full business context is available only after the recipient opens the in-app notification.
+  try {
+    await sendPushToUser(env, userId, {
+      title: 'NetViet Sales OS',
+      body: 'Bạn có một thông báo mới cần xử lý.',
+      link,
+      tag: `salesos-${type || 'info'}`,
+    });
+  } catch (e) { /* Push must never block the corresponding business action. */ }
 }
 
 export const num = (v, d = 0) => {

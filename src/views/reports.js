@@ -31,7 +31,8 @@ export async function render(el) {
           <div class="d">${r.calls} gọi · ${r.meetings} gặp · ${r.new_contacts} liên hệ mới · ${r.deals_moved} deal chuyển GĐ${r.revenue ? ' · DT ' + money(r.revenue) : ''}</div>
           ${r.highlight ? `<div class="d xs">${icon('lightbulb', 12)} ${esc(r.highlight)}</div>` : ''}
           ${r.blocker ? `<div class="d xs">${icon('construction', 12)} ${esc(r.blocker)}</div>` : ''}</div>
-        ${r.late ? chip('Trễ hạn', 'red') : chip('Đúng hạn', 'green')}
+        <div class="row" style="gap:6px">${r.highlight?.startsWith('Hệ thống tự tổng hợp và tự nộp') ? chip('Tự nộp', 'blue') : ''}
+          ${r.late ? chip('Trễ hạn', 'red') : chip('Đúng hạn', 'green')}</div>
       </div>`).join('') : empty('notepadText', 'Chưa có báo cáo nào.')}
       ${s.total ? `<div class="row mt" style="gap:8px;justify-content:flex-end;align-items:center">
         <span class="xs mut">${pageRange(s.page, s.pageSize, s.total)}</span>
@@ -46,7 +47,7 @@ export async function render(el) {
   const draftCard = (label, dr, submitted, kind, deadlineHour, extra = '') => `<div class="card">
     <div class="row wrap"><div class="grow b">${esc(label)} (${esc(dr.period)})</div>
       ${chip('Tự tổng hợp', 'green')}
-      ${submitted ? chip('Đã nộp', 'green') : chip(kind === 'day' ? 'Chưa nộp · hạn ' + deadlineHour + 'h' : 'Chưa nộp', 'amber')}</div>
+      ${submitted ? chip('Đã nộp', 'green') : chip(kind === 'day' ? 'Chưa nộp · hạn ' + deadlineHour + 'h' : kind === 'week' ? 'Chưa nộp · hạn T6 17h' : 'Chưa nộp · hạn cuối tháng 17h', 'amber')}</div>
     <div class="grid g4 mt">
       ${stat('Cuộc gọi', dr.calls)}${stat('Gặp/Demo', dr.meetings)}
       ${stat('Liên hệ mới', dr.new_contacts)}${stat('Tương tác với khách', dr.customer_touches)}
@@ -76,9 +77,6 @@ export async function render(el) {
       <div class="grow"><h2>Báo cáo</h2>
         <p>Ngày · tuần · tháng tự tổng hợp từ dữ liệu thêm mới và cập nhật — bạn chỉ bổ sung phần định tính</p></div>
     </div>
-
-    <div class="note mb">Toàn bộ số định lượng do hệ thống <b>tự đếm</b> từ hoạt động đã ghi, khách thêm mới,
-      deal chuyển giai đoạn và báo giá gửi đi — không sửa tay được, nên số trong báo cáo luôn khớp dữ liệu gốc.</div>
 
     <div class="seg mb">
       <button data-rp="day" class="${rpTab === 'day' ? 'on' : ''}">Báo cáo ngày</button>

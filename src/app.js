@@ -124,7 +124,7 @@ function shell(view) {
         </div>
       </a>
       ${nav}
-      ${!lead ? `<div class="sec">Hệ thống</div>${sideLink('more', icon('settings', 15), 'Cài đặt', view)}` : ''}
+      <div class="sec">Hệ thống</div>${sideLink('more', icon('settings', 15), 'Cài đặt', view)}
     </aside>
     <button class="side-toggle" data-side-toggle type="button"
       aria-label="Thu gọn / mở rộng menu">${icon('chevronRight', 15)}</button>

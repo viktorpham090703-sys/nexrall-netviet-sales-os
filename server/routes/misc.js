@@ -3,6 +3,7 @@ import { askAI, AI_TASKS, providerStatus, pickProvider, testProvider } from '../
 import { getConfig } from '../lib/kpi.js';
 import { vEmail, vPhone, vText, vPassword } from '../lib/validate.js';
 import { hashPassword, newSetupToken, hashSetupToken } from '../lib/auth.js';
+import { pushConfigured, sendPushToUser } from '../lib/push.js';
 
 const SETUP_TOKEN_TTL = 48 * 3600; // 48 giờ — đủ để nhân sự nhận link qua Zalo/Slack rồi đặt mật khẩu
 
@@ -119,7 +120,9 @@ export async function miscRoutes(ctx) {
     const p256dh = str(b.keys?.p256dh, 500);
     const auth = str(b.keys?.auth, 500);
 
-    if (!endpoint || !p256dh || !auth) {
+    let endpointUrl;
+    try { endpointUrl = endpoint ? new URL(endpoint) : null; } catch (e) { endpointUrl = null; }
+    if (!endpointUrl || endpointUrl.protocol !== 'https:' || !p256dh || !auth) {
       return json({ error: 'Subscription Push không hợp lệ' }, 400);
     }
 
@@ -141,11 +144,11 @@ export async function miscRoutes(ctx) {
     `).bind(
       uid('push'),
       ctx.me.id,
-      endpoint,
+      endpointUrl.toString(),
       p256dh,
       auth,
-      str(b.userAgent, 500),
-      str(b.platform, 40),
+      str(ctx.request.headers.get('user-agent'), 500),
+      pushPlatform(ctx.request.headers.get('user-agent')),
       t,
       t,
       t
@@ -158,7 +161,7 @@ export async function miscRoutes(ctx) {
     need(ctx);
 
     const { results } = await env.DB.prepare(`
-      SELECT id, endpoint, platform, user_agent, created_at, updated_at, last_used_at
+      SELECT id, platform, user_agent, created_at, updated_at, last_used_at
       FROM nv_push_subscriptions
       WHERE user_id=?
       ORDER BY updated_at DESC
@@ -166,8 +169,9 @@ export async function miscRoutes(ctx) {
 
     return json({
       enabled: (results || []).length > 0,
-      count: (results || []).length,
-      items: results || []
+      subscriptions: results || [],
+      vapidPublicKey: env.VAPID_PUBLIC_KEY || null,
+      configured: pushConfigured(env),
     });
   }
 
@@ -175,16 +179,27 @@ export async function miscRoutes(ctx) {
     need(ctx);
 
     const endpoint = str(url.searchParams.get('endpoint'), 2000);
+    const id = str(url.searchParams.get('id'), 120);
 
-    if (!endpoint) {
-      return json({ error: 'Thiếu endpoint Push' }, 400);
+    if (!endpoint && !id) {
+      return json({ error: 'Thiếu subscription Push' }, 400);
     }
 
-    await env.DB.prepare(
-      'DELETE FROM nv_push_subscriptions WHERE user_id=? AND endpoint=?'
-    ).bind(ctx.me.id, endpoint).run();
+    if (id) await env.DB.prepare('DELETE FROM nv_push_subscriptions WHERE user_id=? AND id=?').bind(ctx.me.id, id).run();
+    else await env.DB.prepare('DELETE FROM nv_push_subscriptions WHERE user_id=? AND endpoint=?').bind(ctx.me.id, endpoint).run();
 
     return json({ ok: true });
+  }
+
+  if ((p = match(ctx, 'POST', '/api/push/test'))) {
+    need(ctx);
+    if (!pushConfigured(env)) return json({ error: 'Push chưa được cấu hình trên máy chủ' }, 503);
+    const result = await sendPushToUser(env, ctx.me.id, {
+      title: 'NetViet Sales OS', body: 'Push Notification đang hoạt động.',
+      link: '/#/cockpit', tag: 'salesos-push-test',
+    });
+    if (!result.sent) return json({ error: result.removed ? 'Subscription đã hết hạn; hãy bật lại thông báo trên thiết bị này' : 'Không gửi được thông báo thử' }, 409);
+    return json({ ok: true, ...result });
   }
 
 
@@ -336,4 +351,13 @@ export async function miscRoutes(ctx) {
   }
 
   return null;
+}
+
+function pushPlatform(userAgent) {
+  const ua = String(userAgent || '');
+  if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
+  if (/Android/i.test(ua)) return 'android';
+  if (/Windows/i.test(ua)) return 'windows';
+  if (/Macintosh|Mac OS X/i.test(ua)) return 'macos';
+  return 'other';
 }

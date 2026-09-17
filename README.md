@@ -34,6 +34,22 @@ Tài nguyên PWA nằm ở [static/](static/): `manifest.webmanifest`, `sw.js` (
 `icons/`. Icon sinh từ logo chính thức bằng `node local/gen-pwa-icons.mjs` — chỉ chạy lại khi
 logo đổi. `npm run build` tự copy `static/` ra `public/`.
 
+## Thông báo đẩy Web Push
+
+Người dùng tự bật/tắt thông báo tại **Tài khoản**; iPhone/iPad phải mở bản PWA đã cài lên Màn hình
+chính. Cần đặt ba biến môi trường trước khi bật tính năng:
+
+| Biến | Nơi đặt | Mô tả |
+|---|---|---|
+| `VAPID_PUBLIC_KEY` | `.dev.vars` và Worker secret/biến môi trường | Khoá công khai base64url P-256, được gửi cho trình duyệt. |
+| `VAPID_PRIVATE_KEY` | Chỉ `.dev.vars` local hoặc Worker secret | Khoá riêng base64url P-256 tương ứng; không commit hoặc đưa vào frontend. |
+| `VAPID_SUBJECT` | `.dev.vars` và Worker secret/biến môi trường | `mailto:...` hoặc URL HTTPS của đơn vị vận hành. |
+
+Tạo cặp VAPID bằng một công cụ tin cậy của đội vận hành, đặt giá trị thật trong secrets rồi deploy
+theo quy trình hiện có. Không thay cặp khoá sau khi người dùng đã đăng ký nếu chưa có kế hoạch yêu
+cầu họ đăng ký lại. Máy chủ tự loại subscription hết hạn (HTTP 404/410); một người dùng có thể có
+nhiều thiết bị cùng nhận thông báo.
+
 ## Tài khoản trên bản đang chạy tại Nexrall
 CSDL của bản deploy này đã có sẵn 5 tài khoản (nhân sự + dữ liệu nghiệp vụ mẫu đầy đủ). Mật khẩu
 tạm cho cả 5: **`NetViet@2026`** — app **buộc đổi mật khẩu ngay lần đăng nhập đầu tiên**.

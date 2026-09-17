@@ -100,16 +100,16 @@ self.addEventListener('push', (event) => {
     };
   }
 
-  const title = data.title || 'NetViet Sales OS';
+  const title = typeof data.title === 'string' ? data.title : 'NetViet Sales OS';
+  const url = typeof data.data?.url === 'string' ? data.data.url : (typeof data.url === 'string' ? data.url : '/#/cockpit');
 
   const options = {
-    body: data.body || 'Bạn có thông báo mới.',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-    data: {
-      url: data.url || '/',
-    },
-    tag: data.tag || 'netviet-sales-os',
+    body: typeof data.body === 'string' ? data.body : 'Bạn có thông báo mới.',
+    icon: typeof data.icon === 'string' ? data.icon : '/icons/icon-192.png',
+    badge: typeof data.badge === 'string' ? data.badge : '/icons/icon-192.png',
+    data: { url: url.startsWith('/#/') ? url : '/#/cockpit' },
+    tag: typeof data.tag === 'string' ? data.tag : 'netviet-sales-os',
+    timestamp: Number.isFinite(Number(data.timestamp)) ? Number(data.timestamp) : Date.now(),
     renotify: true,
   };
 
@@ -122,7 +122,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const targetUrl = event.notification.data?.url || '/';
+  const targetUrl = event.notification.data?.url || '/#/cockpit';
 
   event.waitUntil(
     (async () => {
@@ -131,16 +131,12 @@ self.addEventListener('notificationclick', (event) => {
         includeUncontrolled: true,
       });
 
-      // Nếu app đã mở → đưa app lên foreground
+      // Nếu app đã mở → điều hướng và đưa đúng cửa sổ đó lên foreground, không tạo tab dư.
       for (const client of clients) {
         if ('focus' in client) {
           try {
+            if ('navigate' in client) await client.navigate(targetUrl);
             await client.focus();
-
-            if (targetUrl && targetUrl !== '/') {
-              await client.navigate(targetUrl);
-            }
-
             return;
           } catch (e) {
             // Nếu client hiện tại không navigate được → mở cửa sổ mới bên dưới

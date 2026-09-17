@@ -1,3 +1,5 @@
+import { del, get, post } from './api.js';
+
 /* Lớp PWA — hoàn toàn tách rời app: không đụng vào state, routing hay giao diện nghiệp vụ. Nếu trình
  * duyệt không hỗ trợ (hoặc đăng ký lỗi), app vẫn chạy y hệt như một website bình thường.
  *
@@ -35,7 +37,52 @@ window.nvPWA = {
     const r = await ev.userChoice;
     return r && r.outcome;
   },
+  pushSupported: () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window,
+  pushStatus: async () => {
+    const status = await get('/push/status');
+    if (window.nvPWA.pushSupported()) {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        status.currentDeviceSubscribed = !!(await registration.pushManager.getSubscription());
+      } catch (e) { status.currentDeviceSubscribed = false; }
+    }
+    return status;
+  },
+  /** Must only be called from a click/tap handler: iOS requires a user gesture for permission. */
+  enablePush: async () => {
+    if (!window.nvPWA.pushSupported()) throw new Error('Trình duyệt này chưa hỗ trợ thông báo đẩy.');
+    const status = await get('/push/status');
+    if (!status.configured || !status.vapidPublicKey) throw new Error('Thông báo đẩy chưa được cấu hình trên máy chủ.');
+    let permission = Notification.permission;
+    if (permission === 'default') permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('Bạn chưa cho phép thông báo trong trình duyệt.');
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64urlToUint8Array(status.vapidPublicKey),
+    });
+    await post('/push/subscribe', subscription.toJSON());
+    return window.nvPWA.pushStatus();
+  },
+  disablePush: async () => {
+    if (!('serviceWorker' in navigator)) return;
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) {
+      await del('/push/subscribe?endpoint=' + encodeURIComponent(subscription.endpoint));
+      await subscription.unsubscribe();
+    }
+  },
+  removePushSubscription: async (id) => del('/push/subscribe?id=' + encodeURIComponent(id)),
+  testPush: async () => post('/push/test', {}),
 };
+
+function base64urlToUint8Array(value) {
+  const padded = String(value).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(value).length + 3) % 4);
+  const raw = atob(padded);
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

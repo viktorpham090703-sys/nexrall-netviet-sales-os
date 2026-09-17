@@ -27,3 +27,10 @@ PBX_API_KEY=
 
 # Khoá cho bộ lập lịch gọi /api/__cron (M10 Automation). Bắt buộc khi deploy thật.
 CRON_SECRET=doi-thanh-chuoi-ngau-nhien
+
+# Web Push (tạo một cặp VAPID P-256 riêng cho môi trường local/production).
+# PUBLIC_KEY có thể lộ cho trình duyệt; PRIVATE_KEY chỉ đặt trong .dev.vars/Worker Secret.
+# VAPID_SUBJECT phải là mailto: hoặc URL https hợp lệ, ví dụ mailto:ops@netviet.vn.
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:ops@netviet.vn

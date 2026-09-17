@@ -4,6 +4,7 @@ import { createSession, destroySession, readToken, verifyPassword, hashPassword,
 import { appMode } from '../lib/db.js';
 import { vPassword, vText, vPhone, vDateStr, vEmail } from '../lib/validate.js';
 import { clientIp, loginRateLimited, recordLoginFailure, clearLoginAttempts } from '../lib/ratelimit.js';
+import { autoSubmitOutstandingReports } from './work.js';
 
 /** Trần dung lượng ảnh đại diện sau khi client đã thu nhỏ — 320px vuông JPEG chỉ tầm 20-40KB,
  * 512KB là biên rộng rãi cho ảnh PNG/WEBP nhiều chi tiết mà vẫn không làm nặng /api/bootstrap. */
@@ -263,7 +264,11 @@ export async function coreRoutes(ctx) {
     }
     const t = now();
     const since = t - 12 * 3600;
-    const out = { sla: 0, escalation: 0, tasks: 0, reports: 0, tenders: 0, pip: 0, quoteSla: 0, contractSla: 0 };
+    const out = { sla: 0, escalation: 0, tasks: 0, reports: 0, autoReports: { day: 0, week: 0, month: 0 }, tenders: 0, pip: 0, quoteSla: 0, contractSla: 0 };
+
+    // Hạn nộp thủ công là 17h; tới 18h Cron tự tổng hợp và nộp thay những tài khoản còn thiếu.
+    // Chạy trước khối nhắc việc để tài khoản vừa được tự nộp không nhận thêm cảnh báo "trễ hạn".
+    out.autoReports = await autoSubmitOutstandingReports(env, t);
 
     // Đã nhắc gì trong 12h qua? (khoá = type|link|title để không gửi trùng)
     const { results: recent } = await env.DB.prepare('SELECT user_id,type,title FROM nv_notifications WHERE created_at >= ?').bind(since).all();
@@ -312,7 +317,7 @@ export async function coreRoutes(ctx) {
 
     /* 3. Nhắc nộp báo cáo EOD trước hạn (FR-M10-2) */
     const hourVN = (new Date().getUTCHours() + 7) % 24;
-    const deadline = Number(cfg.report_deadline_hour || 17.5);
+    const deadline = Number(cfg.report_deadline_hour || 17);
     if (hourVN >= deadline - 1 && hourVN < deadline + 4) {
       const { results: sales } = await env.DB.prepare("SELECT id,name FROM nv_users WHERE role='sales' AND active=1").all();
       for (const u of sales || []) {

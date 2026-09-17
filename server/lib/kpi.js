@@ -3,7 +3,7 @@ import { now, DAY, monthKey, TZ_OFFSET } from './util.js';
 const DEFAULTS = {
   quota_daily_contacts: 8, quota_calls: 25, quota_meetings: 2, quota_followups: 10,
   target_revenue: 400000000, target_deals: 3, target_pipeline: 1200000000,
-  discount_threshold: 15, discount_hard_cap: 30, report_deadline_hour: 17.5, task_accept_sla_min: 120,
+  discount_threshold: 15, discount_hard_cap: 30, report_deadline_hour: 17, task_accept_sla_min: 120,
   ramp_days: 30, pip_quota_ratio: 0.7, pip_window_days: 14,
   // ĐKKH — sale giữ quyền chăm sóc 1 tháng; hết hạn mà chưa ký thì sale khác được nhận.
   // `dkkh_lock_when_signed`=1 nghĩa là khách đã ký hợp đồng thì giữ vĩnh viễn, không đếm ngược nữa.

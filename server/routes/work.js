@@ -75,11 +75,71 @@ function weekKey(ts = now()) {
 }
 
 /** Khoảng thời gian [from, to) của một loại báo cáo. */
-function reportRange(kind) {
-  const t = now();
+function reportRange(kind, t = now()) {
   if (kind === 'week') return { from: startOfWeek(t), to: t + 1, period: weekKey(t) };
   if (kind === 'month') return { from: startOfMonth(t), to: t + 1, period: monthKey(t) };
-  return { from: startOfDay(t), to: t + 1, period: todayKey() };
+  return { from: startOfDay(t), to: t + 1, period: new Date((t + TZ_OFFSET) * 1000).toISOString().slice(0, 10) };
+}
+
+/** Quá hạn 17h theo kỳ đang nộp: EOD hằng ngày, tuần vào thứ Sáu, tháng vào ngày cuối tháng. */
+function isLateReportSubmission(kind, at = now()) {
+  const vn = new Date((at + TZ_OFFSET) * 1000);
+  const hour = vn.getUTCHours() + vn.getUTCMinutes() / 60;
+  if (kind === 'day') return hour >= 17;
+  if (kind === 'week') return vn.getUTCDay() > 5 || (vn.getUTCDay() === 5 && hour >= 17);
+  const lastDay = new Date(Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth() + 1, 0)).getUTCDate();
+  return vn.getUTCDate() === lastDay && hour >= 17;
+}
+
+/**
+ * Tự nộp các báo cáo còn thiếu đúng mốc 18:00 giờ Việt Nam. Hàm nằm ở tầng server để Cron vẫn
+ * hoạt động khi không ai mở ứng dụng. Chỉ thêm báo cáo khi kỳ đó hoàn toàn chưa có bản nộp, do đó
+ * lần Cron kế tiếp (hoặc chạy lại thủ công) không thể tạo bản ghi trùng.
+ */
+export async function autoSubmitOutstandingReports(env, at = now()) {
+  const vn = new Date((at + TZ_OFFSET) * 1000);
+  if (vn.getUTCHours() !== 18) return { day: 0, week: 0, month: 0 };
+
+  const kinds = ['day'];
+  if (vn.getUTCDay() === 5) kinds.push('week'); // Thứ Sáu
+  const lastDay = new Date(Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth() + 1, 0)).getUTCDate();
+  if (vn.getUTCDate() === lastDay) kinds.push('month');
+
+  // Áp dụng cho toàn bộ nhân sự kinh doanh, không giới hạn workspace demo/chính thức: Sales,
+  // TPKD (manager) và Admin/BGĐ đều có nghĩa vụ nộp báo cáo của chính mình.
+  const { results: users } = await env.DB.prepare(
+    "SELECT id FROM nv_users WHERE active=1 AND role IN ('sales','manager','admin')"
+  ).all();
+  const counts = { day: 0, week: 0, month: 0 };
+
+  for (const kind of kinds) {
+    const range = reportRange(kind, at);
+    for (const user of users || []) {
+      const submitted = await env.DB.prepare(
+        'SELECT id FROM nv_daily_reports WHERE user_id=? AND kind=? AND period=? LIMIT 1'
+      ).bind(user.id, kind, range.period).first();
+      if (submitted) continue;
+
+      const agg = await aggregateReport(env, user.id, range.from, range.to);
+      const title = kind === 'day' ? 'EOD' : kind === 'week' ? 'báo cáo tuần' : 'tổng hợp tháng';
+      await env.DB.prepare(
+        'INSERT INTO nv_daily_reports (id,user_id,kind,period,calls,meetings,new_contacts,deals_moved,revenue,highlight,blocker,plan,late,submitted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+      ).bind(
+        uid('rp'), user.id, kind, range.period, agg.calls, agg.meetings, agg.new_contacts,
+        agg.deals_moved, agg.revenue,
+        `Hệ thống tự tổng hợp và tự nộp ${title} lúc 18h do chưa nộp trước hạn 17h.`,
+        '', '', 1, at
+      ).run();
+      await notify(env, user.id, {
+        type: 'report', title: `🤖 Đã tự nộp ${title}`,
+        body: `Hệ thống đã tự tổng hợp và nộp lúc 18h vì báo cáo chưa được nộp trước 17h.`,
+        link: '#/reports', level: 'warn',
+      });
+      await audit(env, user.id, 'auto_submit_report', 'report', range.period, { kind, submittedAt: at });
+      counts[kind]++;
+    }
+  }
+  return counts;
 }
 
 /** true nếu `me` được phép xem lịch sử báo cáo của `target` (cùng workspace + đúng luật cấp bậc). */
@@ -259,7 +319,7 @@ export async function workRoutes(ctx) {
       trend,
       quota: { contacts_day: cfg.quota_daily_contacts || 8, calls_day: cfg.quota_calls || 25, meetings_day: cfg.quota_meetings || 2 },
       submittedToday, submittedWeek, submittedMonth,
-      deadlineHour: cfg.report_deadline_hour || 17.5,
+      deadlineHour: cfg.report_deadline_hour || 17,
       sections,
     });
   }
@@ -274,11 +334,7 @@ export async function workRoutes(ctx) {
     const range = reportRange(kind);
     const period = vPeriod(range.period, todayKey());
     const agg = await aggregateReport(env, ctx.me.id, range.from, range.to);
-    const cfg = await getConfig(env, ctx.me.id);
-    // Giờ VN dạng thập phân để so được mốc 17h30 (17.5)
-    const d0 = new Date();
-    const hourVN = ((d0.getUTCHours() + 7) % 24) + d0.getUTCMinutes() / 60;
-    const late = kind === 'day' && (period < todayKey() || hourVN >= (cfg.report_deadline_hour || 17.5)) ? 1 : 0;
+    const late = (kind === 'day' && period < todayKey()) || isLateReportSubmission(kind) ? 1 : 0;
     // Đặc tả M6 yêu cầu báo cáo BẤT BIẾN sau khi nộp: mỗi lần nộp/cập nhật cùng kỳ báo cáo tạo 1
     // BẢN GHI MỚI có dấu thời gian riêng thay vì ghi đè bản cũ — nhờ vậy "Lịch sử báo cáo" luôn
     // phản ánh đúng số lần đã nộp/cập nhật thay vì đứng yên ở tổng số cũ. computeKpi() (kpi.js) đã
