@@ -287,6 +287,32 @@ const MIGRATIONS = [
   // phòng khớp theo customer_id để chứng từ cũ vẫn hiện đúng phương án của khách đó.
   `ALTER TABLE nv_quotes ADD COLUMN plan_id TEXT`,
   `ALTER TABLE nv_contracts ADD COLUMN plan_id TEXT`,
+
+  // 72: chuẩn hoá hạn nộp EOD về 17:00 theo quy trình vận hành. Cập nhật các cấu hình còn hiệu
+  // 72: chuẩn hoá hạn nộp EOD về 17:00 theo quy trình vận hành. Cập nhật các cấu hình còn hiệu
+  // lực (cả chung lẫn theo người dùng) để các CSDL đã triển khai trước đây không giữ giá trị cũ
+  // 17:30 và làm lệch điều kiện tự nộp lúc 18:00.
+  `UPDATE nv_kpi_config SET value='17' WHERE ckey='report_deadline_hour' AND valid_to IS NULL`,
+
+  // 73: lưu Web Push subscription cho từng tài khoản / thiết bị.
+  // Một user có thể đăng ký nhiều thiết bị hoặc nhiều browser.
+  // Không lưu session token; user_id được xác định từ session phía server.
+  `CREATE TABLE IF NOT EXISTS nv_push_subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    user_agent TEXT,
+    platform TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_used_at INTEGER
+  )`,
+
+  // 74: tăng tốc truy vấn các thiết bị push của một user.
+  `CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user
+   ON nv_push_subscriptions(user_id)`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
@@ -699,7 +725,7 @@ async function seed(env) {
   const cfg = [
     ['quota_daily_contacts', '8'], ['quota_calls', '25'], ['quota_meetings', '2'],
     ['target_revenue', '400000000'], ['target_deals', '3'], ['target_pipeline', '1200000000'],
-    ['discount_threshold', '15'], ['report_deadline_hour', '17.5'],
+    ['discount_threshold', '15'], ['report_deadline_hour', '17'],
     ['sla_days', '{"lead_moi":2,"tiep_can":3,"du_dieu_kien":3,"chao_hang":4,"cho_duyet_bg_v1":1,"cho_duyet_bg_v2":1,"da_gui_bao_gia":3,"dam_phan":5,"cho_duyet_hd_v1":1,"cho_duyet_hd_v2":1,"hop_dong_da_ky":3,"dang_san_xuat":14,"ban_giao":5,"hoan_tat":3}'],
     ['task_accept_sla_min', '120'],
   ];

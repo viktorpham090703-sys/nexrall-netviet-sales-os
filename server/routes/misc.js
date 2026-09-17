@@ -109,6 +109,85 @@ export async function miscRoutes(ctx) {
     return json({ ...res, providers: providerStatus(env) });
   }
 
+  // ===== Web Push =====
+
+  if ((p = match(ctx, 'POST', '/api/push/subscribe'))) {
+    need(ctx);
+
+    const b = await readBody(ctx.request);
+    const endpoint = str(b.endpoint, 2000);
+    const p256dh = str(b.keys?.p256dh, 500);
+    const auth = str(b.keys?.auth, 500);
+
+    if (!endpoint || !p256dh || !auth) {
+      return json({ error: 'Subscription Push không hợp lệ' }, 400);
+    }
+
+    const t = now();
+
+    await env.DB.prepare(`
+      INSERT INTO nv_push_subscriptions
+        (id, user_id, endpoint, p256dh, auth, user_agent, platform,
+         created_at, updated_at, last_used_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(endpoint) DO UPDATE SET
+        user_id = excluded.user_id,
+        p256dh = excluded.p256dh,
+        auth = excluded.auth,
+        user_agent = excluded.user_agent,
+        platform = excluded.platform,
+        updated_at = excluded.updated_at,
+        last_used_at = excluded.last_used_at
+    `).bind(
+      uid('push'),
+      ctx.me.id,
+      endpoint,
+      p256dh,
+      auth,
+      str(b.userAgent, 500),
+      str(b.platform, 40),
+      t,
+      t,
+      t
+    ).run();
+
+    return json({ ok: true });
+  }
+
+  if ((p = match(ctx, 'GET', '/api/push/status'))) {
+    need(ctx);
+
+    const { results } = await env.DB.prepare(`
+      SELECT id, endpoint, platform, user_agent, created_at, updated_at, last_used_at
+      FROM nv_push_subscriptions
+      WHERE user_id=?
+      ORDER BY updated_at DESC
+    `).bind(ctx.me.id).all();
+
+    return json({
+      enabled: (results || []).length > 0,
+      count: (results || []).length,
+      items: results || []
+    });
+  }
+
+  if ((p = match(ctx, 'DELETE', '/api/push/subscribe'))) {
+    need(ctx);
+
+    const endpoint = str(url.searchParams.get('endpoint'), 2000);
+
+    if (!endpoint) {
+      return json({ error: 'Thiếu endpoint Push' }, 400);
+    }
+
+    await env.DB.prepare(
+      'DELETE FROM nv_push_subscriptions WHERE user_id=? AND endpoint=?'
+    ).bind(ctx.me.id, endpoint).run();
+
+    return json({ ok: true });
+  }
+
+
   /* ================= Cấu hình / Quản trị ================= */
   if ((p = match(ctx, 'GET', '/api/config'))) {
     need(ctx);

@@ -86,6 +86,78 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
+// ===== Web Push =====
+
+self.addEventListener('push', (event) => {
+  let data = {};
+
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    data = {
+      title: 'NetViet Sales OS',
+      body: event.data ? event.data.text() : 'Bạn có thông báo mới.',
+    };
+  }
+
+  const title = data.title || 'NetViet Sales OS';
+
+  const options = {
+    body: data.body || 'Bạn có thông báo mới.',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    data: {
+      url: data.url || '/',
+    },
+    tag: data.tag || 'netviet-sales-os',
+    renotify: true,
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+  );
+});
+
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const targetUrl = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    (async () => {
+      const clients = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+
+      // Nếu app đã mở → đưa app lên foreground
+      for (const client of clients) {
+        if ('focus' in client) {
+          try {
+            await client.focus();
+
+            if (targetUrl && targetUrl !== '/') {
+              await client.navigate(targetUrl);
+            }
+
+            return;
+          } catch (e) {
+            // Nếu client hiện tại không navigate được → mở cửa sổ mới bên dưới
+          }
+        }
+      }
+
+      // Nếu app chưa mở → mở Sales OS
+      if (self.clients.openWindow) {
+        await self.clients.openWindow(targetUrl);
+      }
+    })()
+  );
+});
+
+
+
 /** Ra mạng trước; hỏng mạng mới lấy bản đã lưu. Chỉ lưu phản hồi 200 cùng origin.
  * `timeoutMs` (chỉ dùng cho điều hướng): quá hạn mà đã có bản cache thì trả cache, chưa có thì
  * vẫn đợi mạng — không bao giờ trả lỗi sớm hơn so với không có service worker. */
