@@ -218,8 +218,29 @@ export async function workRoutes(ctx) {
         b.detail != null ? str(b.detail, 800) : task.detail,
         ['high', 'medium', 'low'].includes(b.priority) ? b.priority : task.priority,
         b.dueAt != null ? num(b.dueAt, task.due_at) : task.due_at, p.id).run();
-    if (status === 'done' && task.assigner_id) {
-      await notify(env, task.assigner_id, { type: 'assignment', title: '✅ Việc đã hoàn thành', body: task.title, link: '#/console', level: 'info' });
+    // Việc được giao: mọi thay đổi báo cho BÊN KIA (người giao ↔ người nhận), không tự báo cho chính
+    // người thao tác. Việc tự tạo (không có assigner_id) không phát thông báo. Mỗi lần PATCH gửi tối đa
+    // 1 thông báo, ưu tiên: hoàn thành > nhận việc > đổi trạng thái > sửa nội dung.
+    if (task.assigner_id) {
+      const byAssignee = ctx.me.id === task.user_id;
+      const to = byAssignee ? task.assigner_id : task.user_id;
+      const link = byAssignee ? '#/console' : '#/tasks';
+      const changed = [];
+      if (b.detail != null && str(b.detail, 800) !== task.detail) changed.push('mô tả');
+      if (['high', 'medium', 'low'].includes(b.priority) && b.priority !== task.priority) changed.push('ưu tiên');
+      if (b.dueAt != null && num(b.dueAt, task.due_at) !== task.due_at) changed.push('hạn');
+      let msg = null;
+      if (status === 'done' && task.status !== 'done') {
+        msg = { title: byAssignee ? '✅ Việc đã hoàn thành' : `✅ ${ctx.me.name} đã đánh dấu hoàn thành`, level: 'info' };
+      } else if (b.accept && !task.accepted_at) {
+        msg = { title: `👌 ${ctx.me.name} đã nhận việc`, level: 'info' };
+      } else if (status !== task.status) {
+        const label = { todo: 'Chờ làm', in_progress: 'Đang làm', done: 'Hoàn thành' }[status];
+        msg = { title: `🔄 Việc chuyển sang "${label}"`, level: 'info' };
+      } else if (changed.length) {
+        msg = { title: `✏️ Việc được cập nhật ${changed.join(', ')}`, level: 'warn' };
+      }
+      if (msg && to && to !== ctx.me.id) await notify(env, to, { type: 'assignment', body: task.title, link, ...msg });
     }
     return json({ ok: true });
   }
@@ -232,6 +253,9 @@ export async function workRoutes(ctx) {
     if (!task) return json({ error: 'Không tìm thấy công việc' }, 404);
     if (task.assigner_id && !isLead(ctx.me)) return json({ error: 'Việc do cấp trên giao — bạn không thể xoá. Hãy nêu lý do hoàn trả.' }, 403);
     await env.DB.prepare('DELETE FROM nv_tasks WHERE id=?').bind(p.id).run();
+    if (task.assigner_id && task.user_id !== ctx.me.id) {
+      await notify(env, task.user_id, { type: 'assignment', title: '🗑️ Việc được giao đã bị huỷ', body: task.title, link: '#/tasks', level: 'warn' });
+    }
     await audit(env, ctx.me.id, 'delete', 'task', p.id, { title: task.title });
     return json({ ok: true });
   }
