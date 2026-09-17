@@ -30,6 +30,14 @@ export async function login(identifier, password) {
 }
 
 export async function logout() {
+  // Gỡ đăng ký thông báo của THIẾT BỊ NÀY trước khi huỷ phiên (còn phiên thì máy chủ mới cho xoá):
+  // máy dùng chung mà giữ lại thì người đăng nhập sau vẫn nhận push của tài khoản vừa thoát.
+  // Không bao giờ được làm chậm/chặn đăng xuất — tối đa 4 giây rồi bỏ qua.
+  try {
+    if (window.nvPWA?.disablePush) {
+      await Promise.race([window.nvPWA.disablePush(), new Promise((resolve) => setTimeout(resolve, 4000))]);
+    }
+  } catch (e) { /* thiết bị chưa bật thông báo, hoặc lỗi mạng */ }
   try { await del('/session'); } catch (e) { /* phiên có thể đã hết hạn */ }
   setToken('');
   state.me = null;

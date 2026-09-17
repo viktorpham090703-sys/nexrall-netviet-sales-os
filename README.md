@@ -45,10 +45,29 @@ chính. Cần đặt ba biến môi trường trước khi bật tính năng:
 | `VAPID_PRIVATE_KEY` | Chỉ `.dev.vars` local hoặc Worker secret | Khoá riêng base64url P-256 tương ứng; không commit hoặc đưa vào frontend. |
 | `VAPID_SUBJECT` | `.dev.vars` và Worker secret/biến môi trường | `mailto:...` hoặc URL HTTPS của đơn vị vận hành. |
 
-Tạo cặp VAPID bằng một công cụ tin cậy của đội vận hành, đặt giá trị thật trong secrets rồi deploy
-theo quy trình hiện có. Không thay cặp khoá sau khi người dùng đã đăng ký nếu chưa có kế hoạch yêu
-cầu họ đăng ký lại. Máy chủ tự loại subscription hết hạn (HTTP 404/410); một người dùng có thể có
-nhiều thiết bị cùng nhận thông báo.
+Tạo cặp khoá (Node 20+, không cần cài thêm gói; lệnh in ra 2 dòng — chỉ dán vào secrets, không commit):
+
+```bash
+node -e "crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign']).then(async k=>{console.log('VAPID_PUBLIC_KEY='+Buffer.from(await crypto.subtle.exportKey('raw',k.publicKey)).toString('base64url'));console.log('VAPID_PRIVATE_KEY='+(await crypto.subtle.exportKey('jwk',k.privateKey)).d)})"
+```
+
+Đặt lên Worker production (chạy trên đúng tài khoản Cloudflare đang chứa Worker):
+
+```bash
+npx wrangler secret put VAPID_PUBLIC_KEY
+npx wrangler secret put VAPID_PRIVATE_KEY
+npx wrangler secret put VAPID_SUBJECT
+```
+
+Máy chủ kiểm tra cả định dạng khoá: khoá công khai phải là P-256 raw 65 byte, khoá riêng 32 byte, đều
+base64url. Sai định dạng thì `GET /api/push/status` trả `configured: false` kèm `configError` nêu biến
+bị sai (không bao giờ chứa giá trị khoá). Không thay cặp khoá sau khi người dùng đã đăng ký nếu chưa có
+kế hoạch yêu cầu họ đăng ký lại (thiết bị tự đăng ký lại bằng khoá mới khi bấm "Bật thông báo").
+
+Máy chủ tự loại subscription hết hạn (HTTP 404/410); một người dùng có thể có nhiều thiết bị cùng nhận
+thông báo. Đăng xuất sẽ gỡ đăng ký của chính thiết bị đó. Kiểm tra nhanh sau khi đăng nhập: Tài khoản →
+Thông báo đẩy → **Bật thông báo** → **Gửi thử** (gọi `POST /api/push/test`, chỉ gửi tới thiết bị của
+chính tài khoản đang đăng nhập).
 
 ## Tài khoản trên bản đang chạy tại Nexrall
 CSDL của bản deploy này đã có sẵn 5 tài khoản (nhân sự + dữ liệu nghiệp vụ mẫu đầy đủ). Mật khẩu

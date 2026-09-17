@@ -315,6 +315,37 @@ function bindShell() {
 }
 
 window.addEventListener('hashchange', render);
+
+/* Phiên hết hạn / bị thu hồi khi app VẪN ĐANG MỞ (bản cài trên điện thoại có thể nằm nền nhiều ngày) —
+ * src/api.js phát sự kiện này khi đã gửi token mà vẫn bị 401. Dọn trạng thái đăng nhập trong bộ nhớ và
+ * về màn đăng nhập, thay vì để giao diện trông như còn đăng nhập trong khi mọi API đều bị từ chối. */
+let sessionExpiring = false;
+window.addEventListener('nv:session-expired', async () => {
+  if (!state.me || sessionExpiring) return;
+  sessionExpiring = true;
+  state.me = null;
+  state.unread = 0;
+  closeOverlay();
+  toast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'err');
+  // Nạp lại bootstrap ở trạng thái chưa đăng nhập, giống state.logout().
+  try { await boot(); } catch (e) { /* mất mạng: vẫn về màn đăng nhập */ }
+  sessionExpiring = false;
+  if (location.hash !== '#/login') location.hash = '#/login';
+  else render();
+});
+
+/* Push tới khi app đang mở: notification của hệ điều hành đã do Service Worker hiện (static/sw.js);
+ * ở đây chỉ cập nhật số trên chuông cho khớp, không vẽ lại màn đang xem (tránh mất dữ liệu đang nhập). */
+window.addEventListener('nv:push-received', async () => {
+  if (!state.me) return;
+  try {
+    const d = await get('/bootstrap');
+    if (!state.me || !d.me || d.me.id !== state.me.id) return;
+    state.unread = d.unread || 0;
+    const badge = document.querySelector('#app [data-noti]');
+    if (badge) badge.innerHTML = notiBadge();
+  } catch (e) { /* chuông cập nhật lần điều hướng sau */ }
+});
 window.addEventListener('error', (e) => console.error('Runtime error:', e.message));
 
 (async function start() {

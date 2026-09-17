@@ -23,8 +23,38 @@ const hmac = async (key, data) => new Uint8Array(await crypto.subtle.sign('HMAC'
 const importHmac = (raw) => crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
 const label = (text) => concat(encoder.encode(text), new Uint8Array([0, 1]));
 
+/** Lý do cấu hình VAPID chưa dùng được (null = hợp lệ). Kiểm tra cả ĐỊNH DẠNG, không chỉ có/không:
+ * khoá dán sai (thiếu ký tự, nhầm PEM, nhầm cặp) trước đây vẫn báo configured=true, rồi mọi lần gửi
+ * đều hỏng âm thầm. Thông điệp chỉ nêu TÊN biến, không bao giờ chứa giá trị khoá. */
+export function vapidConfigError(env) {
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) {
+    return 'Thiếu VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY hoặc VAPID_SUBJECT';
+  }
+  if (!/^(mailto:|https:\/\/)/.test(String(env.VAPID_SUBJECT))) return 'VAPID_SUBJECT phải bắt đầu bằng mailto: hoặc https://';
+  let pub, priv;
+  try { pub = fromB64url(env.VAPID_PUBLIC_KEY); priv = fromB64url(env.VAPID_PRIVATE_KEY); } catch (e) { return 'VAPID key không phải base64url hợp lệ'; }
+  if (pub.length !== 65 || pub[0] !== 4) return 'VAPID_PUBLIC_KEY phải là khoá P-256 dạng raw 65 byte (base64url)';
+  if (priv.length !== 32) return 'VAPID_PRIVATE_KEY phải là khoá riêng P-256 32 byte (base64url)';
+  return null;
+}
+
 export function pushConfigured(env) {
-  return !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && /^(mailto:|https:\/\/)/.test(String(env.VAPID_SUBJECT || '')));
+  return vapidConfigError(env) === null;
+}
+
+/* Bảo đảm bảng subscription tồn tại trước khi đọc/ghi. Migration 73-76 đã lo việc này khi Worker khởi
+ * động, nhưng số thứ tự migration là theo CHỈ MỤC mảng: CSDL từng chạy một bản code có danh sách
+ * migration dài hơn sẽ có schema_version vượt quá và bỏ qua các mục này. Dùng prepare().run() (chạy
+ * được SQL bất kỳ, không bị exec() tách dòng) và chỉ chạy 1 lần mỗi isolate. */
+let pushSchemaReady = null;
+export function ensurePushSchema(env) {
+  if (!pushSchemaReady) {
+    pushSchemaReady = (async () => {
+      await env.DB.prepare('CREATE TABLE IF NOT EXISTS nv_push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, user_agent TEXT, platform TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_used_at INTEGER)').run();
+      await env.DB.prepare('CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user ON nv_push_subscriptions(user_id)').run();
+    })().catch((e) => { pushSchemaReady = null; throw e; });   // lỗi tạm thời → lần sau thử lại
+  }
+  return pushSchemaReady;
 }
 
 /** Normalise user-facing data so scheduled business alerts never put CRM data in push payloads. */
@@ -35,16 +65,20 @@ export function safePushPayload({ title, body, link, tag }) {
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     tag: String(tag || 'netviet-sales-os').slice(0, 80),
+    timestamp: Date.now(),
     data: { url: normaliseAppUrl(link) },
   };
 }
 
 export async function sendPushToUser(env, userId, payload) {
-  if (!pushConfigured(env)) return { configured: false, sent: 0, removed: 0, failed: 0 };
+  if (!pushConfigured(env)) return { configured: false, total: 0, sent: 0, removed: 0, failed: 0 };
+  await ensurePushSchema(env);
   const { results } = await env.DB.prepare(
     'SELECT id,endpoint,p256dh,auth FROM nv_push_subscriptions WHERE user_id=?'
   ).bind(userId).all();
-  const output = { configured: true, sent: 0, removed: 0, failed: 0 };
+  // failedStatuses / errors: để chẩn đoán vì sao KHÔNG gửi được (vd 403 = subscription tạo bằng cặp
+  // VAPID khác). Chỉ có mã HTTP và thông điệp lỗi ngắn — không có endpoint, p256dh hay auth.
+  const output = { configured: true, total: (results || []).length, sent: 0, removed: 0, failed: 0, failedStatuses: [], errors: [] };
   await Promise.all((results || []).map(async (subscription) => {
     try {
       const result = await sendPushToSubscription(env, subscription, payload);
@@ -54,10 +88,15 @@ export async function sendPushToUser(env, userId, payload) {
       } else if (result.ok) {
         await env.DB.prepare('UPDATE nv_push_subscriptions SET last_used_at=? WHERE id=? AND user_id=?').bind(now(), subscription.id, userId).run();
         output.sent++;
-      } else output.failed++;
+      } else {
+        output.failed++;
+        output.failedStatuses.push(result.status);
+      }
     } catch (e) {
       // A malformed/temporary failed device must never prevent another device receiving push.
       output.failed++;
+      const msg = String((e && e.message) || 'Lỗi không xác định').slice(0, 120);
+      if (!output.errors.includes(msg)) output.errors.push(msg);
     }
   }));
   return output;
@@ -78,7 +117,7 @@ export async function sendPushToSubscription(env, subscription, payload) {
     },
     body,
   });
-  return { ok: response.ok, expired: response.status === 404 || response.status === 410 };
+  return { ok: response.ok, status: response.status, expired: response.status === 404 || response.status === 410 };
 }
 
 async function encryptPayload(subscription, text) {
@@ -95,8 +134,11 @@ async function encryptPayload(subscription, text) {
   const ikm = await hmac(await importHmac(prkKey), concat(encoder.encode('WebPush: info\0'), receiverPublic, senderPublic, new Uint8Array([1])));
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const prk = await hmac(await importHmac(salt), ikm);
-  const cek = (await hmac(await importHmac(prk), label('Content-Encoding: aes128gcm\0'))).slice(0, 16);
-  const nonce = (await hmac(await importHmac(prk), label('Content-Encoding: nonce\0'))).slice(0, 12);
+  // RFC 8188 §2.2-2.3: info = "Content-Encoding: aes128gcm" || 0x00, rồi HMAC trên info || 0x01.
+  // label() đã tự nối đúng 0x00 0x01 — KHÔNG thêm "\0" vào chuỗi: thừa 1 byte 0x00 làm sai CEK/nonce,
+  // dịch vụ push vẫn nhận (201) nhưng trình duyệt giải mã thất bại và bỏ qua thông báo.
+  const cek = (await hmac(await importHmac(prk), label('Content-Encoding: aes128gcm'))).slice(0, 16);
+  const nonce = (await hmac(await importHmac(prk), label('Content-Encoding: nonce'))).slice(0, 12);
   const aesKey = await crypto.subtle.importKey('raw', cek, { name: 'AES-GCM' }, false, ['encrypt']);
   const plain = concat(encoder.encode(text), new Uint8Array([2]));
   const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, plain));
@@ -119,7 +161,13 @@ async function vapidToken(env, audience) {
   return `${header}.${payload}.${b64url(signature)}`;
 }
 
-function normaliseAppUrl(value) {
-  const text = String(value || '/#/cockpit');
-  return text.startsWith('/#/') ? text : '/#/cockpit';
+/** Chỉ cho phép route NỘI BỘ của app. Thông báo nghiệp vụ ghi link dạng "#/plans/..." (xem các lời
+ * gọi notify()), còn trang cài đặt/test dùng "/#/cockpit" — trước đây chỉ nhận dạng thứ hai nên mọi
+ * thông báo nghiệp vụ khi bấm vào đều rơi về Cockpit thay vì đúng màn hình. Mọi thứ khác (URL tuyệt
+ * đối, "//host", "javascript:") → Cockpit. */
+export function normaliseAppUrl(value) {
+  const text = String(value || '').trim();
+  if (/^#\/[^\s]*$/.test(text)) return '/' + text;
+  if (/^\/#\/[^\s]*$/.test(text)) return text;
+  return '/#/cockpit';
 }

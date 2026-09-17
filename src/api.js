@@ -41,6 +41,18 @@ export async function api(path, opts = {}) {
   if (!res.ok) {
     // Token hỏng/hết hạn → dọn phiên để app quay về màn đăng nhập
     if (res.status === 401) setToken('');
+    // Đã gửi token mà máy chủ vẫn trả 401 → phiên hết hạn (quá 12 giờ) hoặc bị thu hồi (đăng xuất ở tab
+    // khác). Trước đây chỉ xoá token, còn giao diện vẫn như đang đăng nhập — mọi lệnh gọi sau đó (kể cả
+    // bật/gửi thử thông báo) đều nhận 401 "Chưa đăng nhập" mà không ai hiểu vì sao. Nay báo cho app
+    // (src/app.js) đưa về màn đăng nhập. Trừ POST /session: 401 ở đó là sai mật khẩu, không phải hết phiên.
+    if (res.status === 401 && tok && path !== '/session') {
+      const err = new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+      err.status = 401;
+      err.data = data;
+      err.sessionExpired = true;
+      window.dispatchEvent(new Event('nv:session-expired'));
+      throw err;
+    }
     const err = new Error(friendly(res.status, data.error));
     err.status = res.status;
     err.data = data;

@@ -3,7 +3,7 @@ import { askAI, AI_TASKS, providerStatus, pickProvider, testProvider } from '../
 import { getConfig } from '../lib/kpi.js';
 import { vEmail, vPhone, vText, vPassword } from '../lib/validate.js';
 import { hashPassword, newSetupToken, hashSetupToken } from '../lib/auth.js';
-import { pushConfigured, sendPushToUser } from '../lib/push.js';
+import { vapidConfigError, sendPushToUser, ensurePushSchema } from '../lib/push.js';
 
 const SETUP_TOKEN_TTL = 48 * 3600; // 48 giờ — đủ để nhân sự nhận link qua Zalo/Slack rồi đặt mật khẩu
 
@@ -111,9 +111,13 @@ export async function miscRoutes(ctx) {
   }
 
   // ===== Web Push =====
+  // Xác thực: need(ctx) — ctx.me lấy từ "Authorization: Bearer <nv_session_token>" (server/lib/auth.js),
+  // đúng cơ chế của mọi API khác. Mọi truy vấn đều ràng buộc user_id = ctx.me.id: không đọc, xoá hay
+  // gửi tới thiết bị của tài khoản khác.
 
   if ((p = match(ctx, 'POST', '/api/push/subscribe'))) {
     need(ctx);
+    await ensurePushSchema(env);
 
     const b = await readBody(ctx.request);
     const endpoint = str(b.endpoint, 2000);
@@ -122,12 +126,15 @@ export async function miscRoutes(ctx) {
 
     let endpointUrl;
     try { endpointUrl = endpoint ? new URL(endpoint) : null; } catch (e) { endpointUrl = null; }
-    if (!endpointUrl || endpointUrl.protocol !== 'https:' || !p256dh || !auth) {
+    if (!endpointUrl || endpointUrl.protocol !== 'https:' || !validKey(p256dh, 65) || !validKey(auth, 16)) {
       return json({ error: 'Subscription Push không hợp lệ' }, 400);
     }
 
     const t = now();
 
+    // Cùng endpoint đăng ký lại → cập nhật (không tạo bản trùng). Endpoint chỉ trình duyệt đang giữ khoá
+    // mới có, nên khi một tài khoản khác đăng nhập trên CHÍNH trình duyệt đó và bật thông báo, thiết bị
+    // chuyển sang tài khoản đang đăng nhập — tài khoản cũ thôi nhận push trên máy không còn là của mình.
     await env.DB.prepare(`
       INSERT INTO nv_push_subscriptions
         (id, user_id, endpoint, p256dh, auth, user_agent, platform,
@@ -154,11 +161,13 @@ export async function miscRoutes(ctx) {
       t
     ).run();
 
-    return json({ ok: true });
+    const row = await env.DB.prepare('SELECT id FROM nv_push_subscriptions WHERE endpoint=? AND user_id=?').bind(endpointUrl.toString(), ctx.me.id).first();
+    return json({ ok: true, id: row?.id || null });
   }
 
   if ((p = match(ctx, 'GET', '/api/push/status'))) {
     need(ctx);
+    await ensurePushSchema(env);
 
     const { results } = await env.DB.prepare(`
       SELECT id, platform, user_agent, created_at, updated_at, last_used_at
@@ -167,16 +176,27 @@ export async function miscRoutes(ctx) {
       ORDER BY updated_at DESC
     `).bind(ctx.me.id).all();
 
+    // ?endpoint=… (tuỳ chọn): trình duyệt hỏi "subscription đang có ở máy này đã được lưu cho CHÍNH tài
+    // khoản này chưa?" — tránh hiện "Đang bật" khi trình duyệt có subscription nhưng máy chủ không có.
+    const endpoint = str(url.searchParams.get('endpoint'), 2000);
+    const currentDevice = endpoint
+      ? !!(await env.DB.prepare('SELECT 1 FROM nv_push_subscriptions WHERE user_id=? AND endpoint=?').bind(ctx.me.id, endpoint).first())
+      : null;
+
+    const configError = vapidConfigError(env);
     return json({
       enabled: (results || []).length > 0,
       subscriptions: results || [],
-      vapidPublicKey: env.VAPID_PUBLIC_KEY || null,
-      configured: pushConfigured(env),
+      currentDevice,
+      vapidPublicKey: configError ? null : env.VAPID_PUBLIC_KEY,   // chỉ khoá CÔNG KHAI; khoá riêng không bao giờ rời máy chủ
+      configured: !configError,
+      configError,
     });
   }
 
   if ((p = match(ctx, 'DELETE', '/api/push/subscribe'))) {
     need(ctx);
+    await ensurePushSchema(env);
 
     const endpoint = str(url.searchParams.get('endpoint'), 2000);
     const id = str(url.searchParams.get('id'), 120);
@@ -185,23 +205,39 @@ export async function miscRoutes(ctx) {
       return json({ error: 'Thiếu subscription Push' }, 400);
     }
 
-    if (id) await env.DB.prepare('DELETE FROM nv_push_subscriptions WHERE user_id=? AND id=?').bind(ctx.me.id, id).run();
-    else await env.DB.prepare('DELETE FROM nv_push_subscriptions WHERE user_id=? AND endpoint=?').bind(ctx.me.id, endpoint).run();
+    const r = id
+      ? await env.DB.prepare('DELETE FROM nv_push_subscriptions WHERE user_id=? AND id=?').bind(ctx.me.id, id).run()
+      : await env.DB.prepare('DELETE FROM nv_push_subscriptions WHERE user_id=? AND endpoint=?').bind(ctx.me.id, endpoint).run();
 
-    return json({ ok: true });
+    // 404 cả khi thiết bị thuộc tài khoản KHÁC — không tiết lộ là nó có tồn tại.
+    if (!r.meta?.changes) return json({ error: 'Không tìm thấy thiết bị đã đăng ký thông báo' }, 404);
+    return json({ ok: true, removed: r.meta.changes });
   }
 
   if ((p = match(ctx, 'POST', '/api/push/test'))) {
     need(ctx);
-    if (!pushConfigured(env)) return json({ error: 'Push chưa được cấu hình trên máy chủ' }, 503);
-    const result = await sendPushToUser(env, ctx.me.id, {
-      title: 'NetViet Sales OS', body: 'Push Notification đang hoạt động.',
-      link: '/#/cockpit', tag: 'salesos-push-test',
-    });
-    if (!result.sent) return json({ error: result.removed ? 'Subscription đã hết hạn; hãy bật lại thông báo trên thiết bị này' : 'Không gửi được thông báo thử' }, 409);
-    return json({ ok: true, ...result });
-  }
+    const configError = vapidConfigError(env);
+    if (configError) return json({ error: 'Push chưa được cấu hình trên máy chủ', configError }, 503);
 
+    // Nội dung thử tuỳ chọn {title, body, link, tag} — đi qua safePushPayload() như mọi push khác
+    // (cắt độ dài, link chỉ được là route nội bộ "#/…"). Chỉ gửi tới thiết bị của CHÍNH người gọi.
+    // Truyền dữ liệu THÔ: sendPushToUser() → safePushPayload() đã làm sạch đúng 1 lần. Làm sạch trước ở đây
+    // sẽ bị làm sạch lần hai trên object không còn trường `link` → mọi link bị đổi thành Cockpit.
+    const b = await readBody(ctx.request);
+    const result = await sendPushToUser(env, ctx.me.id, {
+      title: str(b.title, 200) || 'NetViet Sales OS',
+      body: str(b.body, 400) || 'Push Notification đang hoạt động.',
+      link: str(b.link, 300) || '/#/cockpit',
+      tag: str(b.tag, 120) || 'salesos-push-test',
+    });
+
+    if (!result.total) return json({ error: 'Tài khoản này chưa có thiết bị nào bật thông báo', ...result }, 404);
+    if (result.sent) return json({ ok: true, ...result });
+    if (result.removed && !result.failed) {
+      return json({ error: 'Đăng ký thông báo trên thiết bị đã hết hạn và đã được gỡ; hãy bật lại thông báo', ...result }, 410);
+    }
+    return json({ error: 'Dịch vụ push không nhận thông báo cho các thiết bị đã đăng ký', ...result }, 502);
+  }
 
   /* ================= Cấu hình / Quản trị ================= */
   if ((p = match(ctx, 'GET', '/api/config'))) {
@@ -351,6 +387,14 @@ export async function miscRoutes(ctx) {
   }
 
   return null;
+}
+
+/** Khoá của PushSubscription là base64url: p256dh = khoá P-256 raw 65 byte, auth = 16 byte. */
+function validKey(value, bytes) {
+  if (!value || !/^[A-Za-z0-9_-]+={0,2}$/.test(value)) return false;
+  try {
+    return atob(value.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '') + '='.repeat((4 - value.replace(/=+$/, '').length % 4) % 4)).length === bytes;
+  } catch (e) { return false; }
 }
 
 function pushPlatform(userAgent) {

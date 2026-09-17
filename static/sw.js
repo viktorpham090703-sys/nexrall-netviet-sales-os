@@ -17,7 +17,7 @@
  * lựa chọn bắt buộc: cache-first sẽ khiến người dùng chạy code cũ sau mỗi lần deploy.
  */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `nv-static-${VERSION}`;
 
 /* Vỏ app: đủ để mở được giao diện khi mất mạng. Không có dữ liệu người dùng nào ở đây —
@@ -88,6 +88,19 @@ self.addEventListener('activate', (event) => {
 
 // ===== Web Push =====
 
+/** Chỉ mở route NỘI BỘ của app. Nhận cả "#/plans/…" (link của thông báo nghiệp vụ) lẫn "/#/cockpit";
+ * URL khác origin, "//host", "javascript:"… đều rơi về Cockpit. Trả về URL tuyệt đối cùng origin. */
+function appUrl(raw) {
+  const fallback = new URL('/#/cockpit', self.location.origin).href;
+  let text = typeof raw === 'string' ? raw.trim() : '';
+  if (text.startsWith('#/')) text = '/' + text;
+  try {
+    const u = new URL(text, self.location.origin);
+    if (u.origin !== self.location.origin || u.pathname !== '/' || !u.hash.startsWith('#/')) return fallback;
+    return u.href;
+  } catch (e) { return fallback; }
+}
+
 self.addEventListener('push', (event) => {
   let data = {};
 
@@ -100,29 +113,37 @@ self.addEventListener('push', (event) => {
     };
   }
 
-  const title = typeof data.title === 'string' ? data.title : 'NetViet Sales OS';
-  const url = typeof data.data?.url === 'string' ? data.data.url : (typeof data.url === 'string' ? data.url : '/#/cockpit');
+  const title = typeof data.title === 'string' && data.title ? data.title : 'NetViet Sales OS';
+  const url = appUrl(typeof data.data?.url === 'string' ? data.data.url : data.url);
 
   const options = {
     body: typeof data.body === 'string' ? data.body : 'Bạn có thông báo mới.',
     icon: typeof data.icon === 'string' ? data.icon : '/icons/icon-192.png',
     badge: typeof data.badge === 'string' ? data.badge : '/icons/icon-192.png',
-    data: { url: url.startsWith('/#/') ? url : '/#/cockpit' },
-    tag: typeof data.tag === 'string' ? data.tag : 'netviet-sales-os',
+    data: { url },
+    tag: typeof data.tag === 'string' && data.tag ? data.tag : 'netviet-sales-os',
     timestamp: Number.isFinite(Number(data.timestamp)) ? Number(data.timestamp) : Date.now(),
     renotify: true,
   };
 
-  event.waitUntil(
-    self.registration.showNotification(title, options)
-  );
+  // LUÔN hiện notification của hệ điều hành — KỂ CẢ khi Sales OS đang mở và đang được dùng. Cố ý không
+  // có nhánh "app đang mở thì bỏ qua": người dùng có thể đang ở màn khác, và subscription đăng ký với
+  // userVisibleOnly:true bắt buộc mỗi push phải hiện ra thông báo.
+  // Song song đó báo cho các cửa sổ app đang mở để cập nhật số thông báo chưa đọc (không kèm dữ liệu).
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, options),
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((list) => list.forEach((c) => c.postMessage({ type: 'nv:push', tag: options.tag })))
+      .catch(() => {}),
+  ]));
 });
 
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const targetUrl = event.notification.data?.url || '/#/cockpit';
+  const targetUrl = appUrl(event.notification.data?.url);
+  const target = new URL(targetUrl);
 
   event.waitUntil(
     (async () => {
@@ -130,23 +151,32 @@ self.addEventListener('notificationclick', (event) => {
         type: 'window',
         includeUncontrolled: true,
       });
+      const appClients = clients.filter((c) => {
+        try { return new URL(c.url).origin === self.location.origin; } catch (e) { return false; }
+      });
 
-      // Nếu app đã mở → điều hướng và đưa đúng cửa sổ đó lên foreground, không tạo tab dư.
-      for (const client of clients) {
-        if ('focus' in client) {
-          try {
-            if ('navigate' in client) await client.navigate(targetUrl);
-            await client.focus();
-            return;
-          } catch (e) {
-            // Nếu client hiện tại không navigate được → mở cửa sổ mới bên dưới
-          }
+      // App đã mở → dùng lại đúng cửa sổ đó (không mở tab dư): đưa lên foreground rồi đổi route.
+      // focus() đi TRƯỚC: trình duyệt chỉ cho focus trong khoảnh khắc ngay sau cú bấm, chờ navigate()
+      // xong mới focus thì có thể đã quá hạn và bị từ chối.
+      for (const client of appClients) {
+        if (!('focus' in client)) continue;
+        let focused;
+        try { focused = await client.focus(); } catch (e) { continue; }   // không focus được → thử cửa sổ kế tiếp
+        const win = focused || client;
+        let routed = false;
+        if ('navigate' in win) {
+          // Cùng trang, chỉ khác hash → navigate() đổi hash, app bắt hashchange và vẽ màn tương ứng.
+          try { routed = !!(await win.navigate(target.href)); } catch (e) { routed = false; }
         }
+        // navigate() không có (một số bản Safari) hoặc bị từ chối (cửa sổ chưa do SW này điều khiển)
+        // → nhờ chính trang đổi hash (src/pwa.js lắng nghe 'nv:navigate').
+        if (!routed) win.postMessage({ type: 'nv:navigate', url: '/' + target.hash });
+        return;
       }
 
-      // Nếu app chưa mở → mở Sales OS
+      // App chưa mở → mở Sales OS đúng route.
       if (self.clients.openWindow) {
-        await self.clients.openWindow(targetUrl);
+        await self.clients.openWindow(target.href);
       }
     })()
   );

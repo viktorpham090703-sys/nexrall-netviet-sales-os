@@ -297,22 +297,19 @@ const MIGRATIONS = [
   // 73: lưu Web Push subscription cho từng tài khoản / thiết bị.
   // Một user có thể đăng ký nhiều thiết bị hoặc nhiều browser.
   // Không lưu session token; user_id được xác định từ session phía server.
-  `CREATE TABLE IF NOT EXISTS nv_push_subscriptions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    endpoint TEXT NOT NULL UNIQUE,
-    p256dh TEXT NOT NULL,
-    auth TEXT NOT NULL,
-    user_agent TEXT,
-    platform TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    last_used_at INTEGER
-  )`,
+  // PHẢI viết trên ĐÚNG 1 dòng như mọi migration khác: migrate() chạy bằng D1 exec(), mà exec() tách
+  // câu lệnh theo dấu xuống dòng — bản nhiều dòng trước đây báo "incomplete input" ngay dòng đầu,
+  // lỗi bị nuốt, schema_version vẫn tăng, nên bảng không bao giờ được tạo.
+  `CREATE TABLE IF NOT EXISTS nv_push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, user_agent TEXT, platform TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_used_at INTEGER)`,
 
   // 74: tăng tốc truy vấn các thiết bị push của một user.
-  `CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user
-   ON nv_push_subscriptions(user_id)`,
+  `CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user ON nv_push_subscriptions(user_id)`,
+
+  // 75-76: SỬA CHỮA cho CSDL đã chạy bản migration 73-74 nhiều dòng — schema_version đã ghi qua 2 mục
+  // đó dù bảng chưa được tạo, nên sửa tại chỗ không đủ; phải có mục mới ở cuối. IF NOT EXISTS nên
+  // CSDL mới (đã tạo đúng ở 73-74) chạy lại cũng không sao.
+  `CREATE TABLE IF NOT EXISTS nv_push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, user_agent TEXT, platform TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_used_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user ON nv_push_subscriptions(user_id)`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'
