@@ -4,6 +4,7 @@ import { esc, mount, chip, toast, modal, stat, bindTabs, confirmDialog, fmtDT, r
 import { roleLabel } from '../const.js';
 import { providers, testProvider, getProvider, setProvider, providerIconName } from '../aiPref.js';
 import { icon } from '../icons.js';
+import { t as tr, tf, personName } from '../i18n.js';
 
 let tab = 'users';
 
@@ -40,19 +41,19 @@ export async function render(el) {
   };
 
   const draw = (d) => `<div class="page-head">
-    <div class="grow"><h2>Quản trị & Phân quyền</h2><p>Người dùng · ngưỡng KPI linh hoạt · SLA · chống chụp màn</p></div>
+    <div class="grow"><h2>${tr('Quản trị & Phân quyền')}</h2><p>${tr('Người dùng · ngưỡng KPI linh hoạt · SLA · chống chụp màn')}</p></div>
   </div>
 
   <div class="grid g3 mb">
     ${stat('Người dùng', d.users.length, d.users.filter(u => u.role === 'sales').length + ' sales', 'blue')}
-    ${stat('Cấu hình', d.cfg.rows.length, 'Global + theo từng sales', 'amber')}
+    ${stat('Cấu hình', d.cfg.rows.length, tr('Global + theo từng sales'), 'amber')}
   </div>
 
   <div class="seg mb">
-    <button data-tab="users" class="${tab === 'users' ? 'on' : ''}">Người dùng</button>
-    <button data-tab="config" class="${tab === 'config' ? 'on' : ''}">Ngưỡng & SLA</button>
-    <button data-tab="ai" class="${tab === 'ai' ? 'on' : ''}">Kết nối AI</button>
-    ${canManageAccounts() ? `<button data-tab="apikeys" class="${tab === 'apikeys' ? 'on' : ''}">Cổng API (${d.keys.filter(k => k.active).length})</button>` : ''}
+    <button data-tab="users" class="${tab === 'users' ? 'on' : ''}">${tr('Người dùng')}</button>
+    <button data-tab="config" class="${tab === 'config' ? 'on' : ''}">${tr('Ngưỡng & SLA')}</button>
+    <button data-tab="ai" class="${tab === 'ai' ? 'on' : ''}">${tr('Kết nối AI')}</button>
+    ${canManageAccounts() ? `<button data-tab="apikeys" class="${tab === 'apikeys' ? 'on' : ''}">${tr('Cổng API')} (${d.keys.filter(k => k.active).length})</button>` : ''}
   </div>
 
   ${tab === 'ai' ? `<div class="card">${(d.ai.providers || []).map(p => `<div class="item">
@@ -61,37 +62,37 @@ export async function render(el) {
         <div class="d">${esc(p.model)}${p.secret ? ' · secret <code>' + esc(p.secret) + '</code>' : ''}</div>
         <div class="d xs">${esc(p.help || '')}</div></div>
       <div class="right">${chip(p.configured ? 'Đã có API key' : 'Chưa có key', p.configured ? 'green' : 'red')}
-        <div class="mt"><button class="btn sm" data-aitest="${esc(p.key)}">Test kết nối</button></div>
-        <div class="mt"><button class="btn sm ${getProvider() === p.key ? 'primary' : ''}" data-aiuse="${esc(p.key)}">Dùng</button></div>
+        <div class="mt"><button class="btn sm" data-aitest="${esc(p.key)}">${tr('Test kết nối')}</button></div>
+        <div class="mt"><button class="btn sm ${getProvider() === p.key ? 'primary' : ''}" data-aiuse="${esc(p.key)}">${tr('Dùng')}</button></div>
       </div></div>`).join('')}</div>
-    <div class="card mt"><div class="b sm mb">${icon('plug', 14)} Cách bật AI thật</div>
-      <div class="sm mut">Vào mục <b>Secrets</b> của app và nhập <code>GEMINI_API_KEY</code> (aistudio.google.com/apikey) hoặc <code>ANTHROPIC_API_KEY</code> (console.anthropic.com).
-      Chỉ cần nhập key là toàn bộ tính năng AI (Trợ lý, soạn email, proposal, research thầu) chuyển sang dùng AI thật — không phải sửa code.
-      Muốn cố định model, thêm <code>GEMINI_MODEL</code> / <code>CLAUDE_MODEL</code>. Nếu gọi API lỗi, app tự dùng nội dung mẫu và báo lý do.</div>
+    <div class="card mt"><div class="b sm mb">${icon('plug', 14)} ${tr('Cách bật AI thật')}</div>
+      <div class="sm mut">${tr('Vào mục')} <b>Secrets</b> ${tr('của app và nhập')} <code>GEMINI_API_KEY</code> (aistudio.google.com/apikey) ${tr('hoặc')} <code>ANTHROPIC_API_KEY</code> (console.anthropic.com).
+      ${tr('Chỉ cần nhập key là toàn bộ tính năng AI (Trợ lý, soạn email, proposal, research thầu) chuyển sang dùng AI thật — không phải sửa code.')}
+      ${tr('Muốn cố định model, thêm')} <code>GEMINI_MODEL</code> / <code>CLAUDE_MODEL</code>. ${tr('Nếu gọi API lỗi, app tự dùng nội dung mẫu và báo lý do.')}</div>
       <div data-aiout class="mt"></div></div>` : ''}
 
-  ${tab === 'users' ? `${canManageAccounts() ? '<button class="btn block mb" data-adduser>+ Thêm người dùng</button>' : ''}
-    ${isAdmin() && !canManageAccounts() ? `<div class="card mb"><div class="sm mut">${icon('lock', 14)} Tài khoản Admin của bạn chỉ xem, không được thêm/khoá tài khoản hay đổi mật khẩu nhân sự khác.</div></div>` : ''}
+  ${tab === 'users' ? `${canManageAccounts() ? `<button class="btn block mb" data-adduser>+ ${tr('Thêm người dùng')}</button>` : ''}
+    ${isAdmin() && !canManageAccounts() ? `<div class="card mb"><div class="sm mut">${icon('lock', 14)} ${tr('Tài khoản Admin của bạn chỉ xem, không được thêm/khoá tài khoản hay đổi mật khẩu nhân sự khác.')}</div></div>` : ''}
     <div class="card">${d.users.map(u => `<div class="item">
       <div class="dot-i">${icon(u.role === 'admin' ? 'shieldCheck' : u.role === 'manager' ? 'award' : 'user')}</div>
-      <div class="grow"><div class="t">${esc(u.name)}</div>
+      <div class="grow"><div class="t">${esc(personName(u.name))}</div>
         <div class="d">${esc(roleLabel(u))} · ${esc(u.email || '')}</div></div>
       <div class="right">${chip(u.active ? 'Hoạt động' : 'Khoá', u.active ? 'green' : 'red')}
         ${canManageAccounts() ? `<div class="mt row" style="gap:6px">
-          <button class="btn sm" data-viewprofile="${esc(u.id)}">Xem hồ sơ</button>
-          <button class="btn sm" data-editrole="${esc(u.id)}">Vai trò & chức danh</button>
-          <button class="btn sm" data-togglestatus="${esc(u.id)}" data-active="${u.active ? '1' : ''}" data-name="${esc(u.name)}">${u.active ? 'Khoá' : 'Kích hoạt'}</button>
-          <button class="btn sm" data-resetlink="${esc(u.id)}" data-name="${esc(u.name)}">Tạo liên kết đặt lại mật khẩu</button>
+          <button class="btn sm" data-viewprofile="${esc(u.id)}">${tr('Xem hồ sơ')}</button>
+          <button class="btn sm" data-editrole="${esc(u.id)}">${tr('Vai trò & chức danh')}</button>
+          <button class="btn sm" data-togglestatus="${esc(u.id)}" data-active="${u.active ? '1' : ''}" data-name="${esc(u.name)}">${u.active ? tr('Khoá') : tr('Kích hoạt')}</button>
+          <button class="btn sm" data-resetlink="${esc(u.id)}" data-name="${esc(u.name)}">${tr('Tạo liên kết đặt lại mật khẩu')}</button>
         </div>` : ''}</div>
     </div>`).join('')}</div>` : ''}
 
-  ${tab === 'config' ? `<button class="btn block mb" data-addcfg>+ Đặt ngưỡng (global hoặc theo sales)</button>
+  ${tab === 'config' ? `<button class="btn block mb" data-addcfg>+ ${tr('Đặt ngưỡng (global hoặc theo sales)')}</button>
     <div class="card scroll-x"><table class="tbl">
-      <tr><th>Khoá</th><th>Phạm vi</th><th>Giá trị</th><th></th></tr>
-      ${d.cfg.rows.map(r => `<tr><td>${esc(CFG_LABELS[r.ckey] || r.ckey)}<div class="xs mut">${esc(r.ckey)}</div></td>
-        <td>${r.user_id ? esc((state.users.find(u => u.id === r.user_id) || {}).name || r.user_id) : 'Toàn hệ thống'}</td>
+      <tr><th>${tr('Khoá')}</th><th>${tr('Phạm vi')}</th><th>${tr('Giá trị')}</th><th></th></tr>
+      ${d.cfg.rows.map(r => `<tr><td>${esc(tr(CFG_LABELS[r.ckey]) || r.ckey)}<div class="xs mut">${esc(r.ckey)}</div></td>
+        <td>${r.user_id ? esc((state.users.find(u => u.id === r.user_id) || {}).name || r.user_id) : tr('Toàn hệ thống')}</td>
         <td>${esc(String(r.value).slice(0, 40))}</td>
-        <td><button class="btn sm" data-editcfg="${esc(r.ckey)}" data-user="${esc(r.user_id || '')}" data-val="${esc(r.value)}">Sửa</button></td></tr>`).join('')}
+        <td><button class="btn sm" data-editcfg="${esc(r.ckey)}" data-user="${esc(r.user_id || '')}" data-val="${esc(r.value)}">${tr('Sửa')}</button></td></tr>`).join('')}
     </table></div>` : ''}
 
   ${tab === 'apikeys' ? apiKeysTab(d) : ''}`;
@@ -100,18 +101,18 @@ export async function render(el) {
     bindTabs(el, t => tab = t, render);
     el.querySelectorAll('[data-aiuse]').forEach(b => b.onclick = () => {
       const p = (d.ai.providers || []).find(x => x.key === b.dataset.aiuse);
-      if (!p.configured) { toast('Chưa nhập ' + p.secret + ' trong Secrets của app', 'err'); return; }
+      if (!p.configured) { toast(tf(() => 'Chưa nhập ' + p.secret + ' trong Secrets của app', () => p.secret + ' is not set in the app Secrets'), 'err'); return; }
       setProvider(p.key);
-      toast('Đã chọn ' + p.label, 'ok');
+      toast(tf(() => 'Đã chọn ' + p.label, () => 'Selected ' + p.label), 'ok');
       render(el);
     });
     el.querySelectorAll('[data-aitest]').forEach(b => b.onclick = async () => {
       const out = el.querySelector('[data-aiout]');
       b.disabled = true;
-      out.innerHTML = `<div class="sm mut">${icon('loaderCircle', 14, { class: 'spin' })} Đang gọi thử API…</div>`;
+      out.innerHTML = `<div class="sm mut">${icon('loaderCircle', 14, { class: 'spin' })} ${tr('Đang gọi thử API…')}</div>`;
       try {
         const r = await testProvider(b.dataset.aitest);
-        out.innerHTML = `<div class="sm" style="color:#16A34A">${icon('circleCheck', 14)} Kết nối OK · model <b>${esc(r.model)}</b><div class="xs mut mt">${esc(r.text || '')}</div></div>`;
+        out.innerHTML = `<div class="sm" style="color:#16A34A">${icon('circleCheck', 14)} ${tr('Kết nối OK')} · model <b>${esc(r.model)}</b><div class="xs mut mt">${esc(r.text || '')}</div></div>`;
       } catch (e) {
         out.innerHTML = `<div class="sm" style="color:#F59E0B">${icon('triangleAlert', 14)} ${esc(e.message)}</div>`;
       } finally { b.disabled = false; }
@@ -140,22 +141,22 @@ export async function render(el) {
       try {
         const { profile: pr } = await get('/users/' + b.dataset.viewprofile + '/profile');
         modal({
-          title: 'Hồ sơ nhân sự — ' + pr.name,
+          title: tf(() => 'Hồ sơ nhân sự — ' + pr.name, () => 'Profile — ' + personName(pr.name)),
           titleIcon: 'user',
           wide: true,
           html: `<div class="grid g3">
-            ${profileRow('Mã nhân viên', esc(pr.id))}
-            ${profileRow('Họ và tên', esc(pr.name))}
+            ${profileRow(tr('Mã nhân viên'), esc(pr.id))}
+            ${profileRow(tr('Họ và tên'), esc(pr.name))}
             ${profileRow('Email', esc(pr.email || '—'))}
-            ${profileRow('Số điện thoại', esc(pr.phone || '—'))}
-            ${profileRow('Ngày sinh', fmtDateStr(pr.birth_date))}
-            ${profileRow('Số CCCD', esc(pr.id_number || '—'))}
-            ${profileRow('Hạn CCCD', fmtDateStr(pr.id_expiry))}
-            ${profileRow('Địa chỉ liên hệ', esc(pr.address || '—'))}
-            ${profileRow('Trường học', esc(pr.school || '—'))}
+            ${profileRow(tr('Số điện thoại'), esc(pr.phone || '—'))}
+            ${profileRow(tr('Ngày sinh'), fmtDateStr(pr.birth_date))}
+            ${profileRow(tr('Số CCCD'), esc(pr.id_number || '—'))}
+            ${profileRow(tr('Hạn CCCD'), fmtDateStr(pr.id_expiry))}
+            ${profileRow(tr('Địa chỉ liên hệ'), esc(pr.address || '—'))}
+            ${profileRow(tr('Trường học'), esc(pr.school || '—'))}
           </div>
-          <div class="mt">${profileRow('Liên hệ khẩn cấp', esc(pr.emergency_contact || '—'))}</div>
-          <div class="sm mut mt">${icon('lock', 13)} Hồ sơ do chính nhân sự tự khai và tự sửa — Admin chỉ xem, không sửa được ở đây.</div>`,
+          <div class="mt">${profileRow(tr('Liên hệ khẩn cấp'), esc(pr.emergency_contact || '—'))}</div>
+          <div class="sm mut mt">${icon('lock', 13)} ${tr('Hồ sơ do chính nhân sự tự khai và tự sửa — Admin chỉ xem, không sửa được ở đây.')}</div>`,
           submitText: 'Đóng',
           onSubmit: () => {},
         });
@@ -164,7 +165,7 @@ export async function render(el) {
     el.querySelectorAll('[data-editrole]').forEach(b => b.onclick = () => {
       const u = d.users.find(x => x.id === b.dataset.editrole);
       modal({
-        title: 'Vai trò & chức danh — ' + u.name,
+        title: tf(() => 'Vai trò & chức danh — ' + u.name, () => 'Role & title — ' + personName(u.name)),
         fields: [
           { name: 'role', label: 'Vai trò', type: 'select', value: u.role, options: [{ v: 'sales', n: 'Sales' }, { v: 'manager', n: 'Trưởng phòng' }, { v: 'admin', n: 'Admin/BGĐ' }, { v: 'hr', n: 'Hành chính nhân sự' }] },
           { name: 'title', label: 'Chức danh', value: u.title || '' },
@@ -186,7 +187,8 @@ export async function render(el) {
       const activating = !b.dataset.active;
       confirmDialog(
         activating ? 'Kích hoạt tài khoản' : 'Khoá tài khoản',
-        `Bạn có chắc muốn ${activating ? 'kích hoạt' : 'khoá'} tài khoản của ${b.dataset.name}?`,
+        tf(() => `Bạn có chắc muốn ${activating ? 'kích hoạt' : 'khoá'} tài khoản của ${b.dataset.name}?`,
+          () => `Are you sure you want to ${activating ? 'activate' : 'lock'} ${personName(b.dataset.name)}'s account?`),
         async () => {
           await patch('/users/' + b.dataset.togglestatus, { active: activating });
           toast(activating ? 'Đã kích hoạt tài khoản' : 'Đã khoá tài khoản', 'ok');
@@ -199,7 +201,8 @@ export async function render(el) {
     if (ak) ak.onclick = () => newKeyModal(d, () => render(el));
     el.querySelectorAll('[data-revokekey]').forEach(b => b.onclick = () => confirmDialog(
       'Thu hồi khoá API',
-      `Khoá "${b.dataset.name}" sẽ ngừng hoạt động ngay. App đang dùng khoá này sẽ nhận lỗi 401 cho tới khi được cấp khoá mới.`,
+      tf(() => `Khoá "${b.dataset.name}" sẽ ngừng hoạt động ngay. App đang dùng khoá này sẽ nhận lỗi 401 cho tới khi được cấp khoá mới.`,
+        () => `The key "${b.dataset.name}" will stop working immediately. Apps using it will get 401 errors until a new key is issued.`),
       async () => { await del('/api-keys/' + b.dataset.revokekey); toast('Đã thu hồi khoá', 'ok'); render(el); },
     ));
     const ac = el.querySelector('[data-addcfg]');
@@ -218,9 +221,9 @@ async function createSetupLink(userId, purpose, name) {
     const link = `${location.origin}/#/dat-mat-khau/${r.token}`;
     const { root } = modal({
       title: purpose === 'reset' ? 'Liên kết đặt lại mật khẩu' : 'Liên kết thiết lập mật khẩu',
-      html: `<p class="sm mut">Gửi liên kết dưới đây cho <b>${esc(name || '')}</b> qua Zalo/Slack. Liên kết chỉ dùng được 1 lần và hết hạn sau 48 giờ.</p>
-        <label class="f"><span>LIÊN KẾT</span><input data-setup-link type="text" readonly value="${esc(link)}"></label>
-        <button type="button" class="btn block mt" data-copy-link>${icon('copy', 14)} Copy link</button>`,
+      html: `<p class="sm mut">${tr('Gửi liên kết dưới đây cho')} <b>${esc(personName(name || ''))}</b> ${tr('qua Zalo/Slack. Liên kết chỉ dùng được 1 lần và hết hạn sau 48 giờ.')}</p>
+        <label class="f"><span>${tr('LIÊN KẾT')}</span><input data-setup-link type="text" readonly value="${esc(link)}"></label>
+        <button type="button" class="btn block mt" data-copy-link>${icon('copy', 14)} ${tr('Copy link')}</button>`,
       submitText: 'Đóng',
       onSubmit: () => {},
     });
@@ -243,7 +246,7 @@ function cfgModal(key, userId, value, after) {
     title: 'Cấu hình ngưỡng',
     fields: [
       { name: 'key', label: 'Khoá cấu hình', type: 'select', value: key, options: Object.keys(CFG_LABELS).map(k => ({ v: k, n: CFG_LABELS[k] })) },
-      { name: 'userId', label: 'Áp dụng cho', type: 'select', value: userId, options: [{ v: '', n: 'Toàn hệ thống' }, ...salesUsers().map(u => ({ v: u.id, n: u.name }))] },
+      { name: 'userId', label: 'Áp dụng cho', type: 'select', value: userId, options: [{ v: '', n: 'Toàn hệ thống' }, ...salesUsers().map(u => ({ v: u.id, n: personName(u.name) }))] },
       { name: 'value', label: 'Giá trị', value, required: true },
     ],
     submitText: 'Lưu cấu hình',
@@ -258,33 +261,32 @@ function cfgModal(key, userId, value, after) {
  */
 function apiKeysTab(d) {
   const active = d.keys.filter(k => k.active);
-  return `<div class="note mb">App ngoài gọi tới <code>${esc(location.origin)}/api/v1/…</code> kèm header
-    <code>Authorization: Bearer &lt;khoá&gt;</code>. Khoá chỉ chạm được đúng các đường dẫn trong danh sách bên dưới —
-    không đọc được người dùng, KPI, hoa hồng hay báo cáo nhân sự.</div>
+  return `<div class="note mb">${tr('App ngoài gọi tới')} <code>${esc(location.origin)}/api/v1/…</code> ${tr('kèm header')}
+    <code>Authorization: Bearer &lt;${tf(() => 'khoá', () => 'key')}&gt;</code>. ${tr('Khoá chỉ chạm được đúng các đường dẫn trong danh sách bên dưới — không đọc được người dùng, KPI, hoa hồng hay báo cáo nhân sự.')}</div>
 
-  <button class="btn block mb" data-addkey>+ Cấp khoá cho app mới</button>
+  <button class="btn block mb" data-addkey>+ ${tr('Cấp khoá cho app mới')}</button>
 
   <div class="card">
     ${d.keys.length ? d.keys.map(k => `<div class="item">
       <div class="dot-i">${icon('plug')}</div>
       <div class="grow"><div class="t">${esc(k.name)} ${chip(k.active ? 'Đang hoạt động' : 'Đã thu hồi', k.active ? 'green' : 'red')}</div>
-        <div class="d"><code>${esc(k.prefix)}…</code> · chạy dưới danh nghĩa ${esc(k.acts_as_name || k.acts_as)}</div>
-        <div class="d xs">${k.call_count} lượt gọi${k.last_used_at ? ' · gần nhất ' + fmtDT(k.last_used_at) : ' · chưa dùng lần nào'}${k.last_path ? ' · ' + esc(k.last_path) : ''}</div></div>
-      ${k.active ? `<button class="btn sm" data-revokekey="${esc(k.id)}" data-name="${esc(k.name)}">Thu hồi</button>` : ''}
-    </div>`).join('') : '<div class="sm mut">Chưa cấp khoá nào.</div>'}
+        <div class="d"><code>${esc(k.prefix)}…</code> · ${tr('chạy dưới danh nghĩa')} ${esc(k.acts_as_name || k.acts_as)}</div>
+        <div class="d xs">${k.call_count} ${tr('lượt gọi')}${k.last_used_at ? ' · ' + tr('gần nhất') + ' ' + fmtDT(k.last_used_at) : ' · ' + tr('chưa dùng lần nào')}${k.last_path ? ' · ' + esc(k.last_path) : ''}</div></div>
+      ${k.active ? `<button class="btn sm" data-revokekey="${esc(k.id)}" data-name="${esc(k.name)}">${tr('Thu hồi')}</button>` : ''}
+    </div>`).join('') : `<div class="sm mut">${tr('Chưa cấp khoá nào.')}</div>`}
   </div>
 
-  <div class="sec-title">Đường dẫn khoá API được phép gọi</div>
+  <div class="sec-title">${tr('Đường dẫn khoá API được phép gọi')}</div>
   <div class="tbl-wrap">
     <table>
-      <thead><tr><th style="width:74px">Method</th><th>Đường dẫn</th></tr></thead>
+      <thead><tr><th style="width:74px">Method</th><th>${tr('Đường dẫn')}</th></tr></thead>
       <tbody>${d.allowlist.map(e => `<tr>
         <td>${chip(e.method, e.method === 'GET' ? 'blue' : 'amber')}</td>
         <td><code>${esc(e.path)}</code></td></tr>`).join('')}</tbody>
     </table>
   </div>
-  <div class="xs mut mt">Muốn mở thêm đường dẫn: sửa ALLOWLIST trong <code>server/routes/gateway.js</code> —
-    thêm route mới cho app không tự động mở ra ngoài Internet.</div>`;
+  <div class="xs mut mt">${tr('Muốn mở thêm đường dẫn: sửa ALLOWLIST trong')} <code>server/routes/gateway.js</code> —
+    ${tr('thêm route mới cho app không tự động mở ra ngoài Internet.')}</div>`;
 }
 
 /** Cấp khoá mới. Khoá gốc chỉ hiện ĐÚNG MỘT LẦN ở màn này — server chỉ lưu bản băm. */
@@ -296,7 +298,7 @@ function newKeyModal(d, after) {
       { name: 'name', label: 'Tên app', required: true, placeholder: 'VD: App Báo giá NetViet' },
       {
         name: 'actsAs', label: 'Chạy dưới danh nghĩa', type: 'select', value: state.me.id,
-        options: d.users.filter(u => u.active).map(u => ({ v: u.id, n: u.name + ' — ' + roleLabel(u) })),
+        options: d.users.filter(u => u.active).map(u => ({ v: u.id, n: personName(u.name) + ' — ' + roleLabel(u) })),
         hint: 'Khoá nhìn thấy đúng phạm vi dữ liệu của người này.',
       },
     ],
@@ -305,9 +307,9 @@ function newKeyModal(d, after) {
       const r = await post('/api-keys', v);
       const { root } = modal({
         title: 'Khoá API mới',
-        html: `<div class="note red mb">Sao chép ngay — khoá này không hiển thị lại lần nào nữa.</div>
-          <label class="f"><span>KHOÁ</span><input data-key type="text" readonly value="${esc(r.key)}"></label>
-          <button type="button" class="btn block mt" data-copy-key>${icon('copy', 14)} Copy khoá</button>`,
+        html: `<div class="note red mb">${tr('Sao chép ngay — khoá này không hiển thị lại lần nào nữa.')}</div>
+          <label class="f"><span>${tr('KHOÁ')}</span><input data-key type="text" readonly value="${esc(r.key)}"></label>
+          <button type="button" class="btn block mt" data-copy-key>${icon('copy', 14)} ${tr('Copy khoá')}</button>`,
         submitText: 'Tôi đã lưu khoá',
         onSubmit: () => { after(); },
       });

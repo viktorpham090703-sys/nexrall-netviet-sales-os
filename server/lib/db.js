@@ -310,6 +310,16 @@ const MIGRATIONS = [
   // CSDL mới (đã tạo đúng ở 73-74) chạy lại cũng không sao.
   `CREATE TABLE IF NOT EXISTS nv_push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, user_agent TEXT, platform TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_used_at INTEGER)`,
   `CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user ON nv_push_subscriptions(user_id)`,
+
+  // 77-78: tên hiển thị THẬT cho 2 tài khoản còn lại vẫn mang mã nhân viên làm tên (tạo ở migration
+  // 33 và 44 với name = id) — cùng lý do với 67-69: `name` là nguồn duy nhất cho mọi màn hình, đăng
+  // nhập dùng id/email nên đổi tên không ảnh hưởng xác thực.
+  `UPDATE nv_users SET name='Nguyễn Thu Hương' WHERE id='HUONGNT'`,
+  `UPDATE nv_users SET name='Doãn Thị Thuỷ' WHERE id='THUYDT'`,
+
+  // 79: bộ nhớ bản dịch EN cho dữ liệu người dùng nhập (POST /api/i18n/translate) — khoá là CHÍNH đoạn
+  // chữ tiếng Việt gốc (tối đa 500 ký tự), để mỗi đoạn chỉ gọi AI dịch một lần cho toàn hệ thống.
+  `CREATE TABLE IF NOT EXISTS nv_translations (src TEXT PRIMARY KEY, en TEXT NOT NULL, created_at INTEGER NOT NULL)`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'

@@ -8,6 +8,8 @@ import {
 import { aiModal } from '../aiPref.js';
 import { icon } from '../icons.js';
 import { openCustomerImport } from '../customerImport.js';
+import { t as tr, tf } from '../i18n.js';
+import { translateText } from '../autoTranslate.js';
 
 /* Bộ lọc danh sách khách hàng (yêu cầu bổ sung: lọc theo sale phụ trách và theo các trường thông
  * tin khách hàng). Giữ ở module scope để không mất lựa chọn khi vào xem chi tiết rồi quay lại. */
@@ -66,38 +68,38 @@ export async function render(el, params) {
     const expired = d.summary.expired || 0;
     const more = d.total - d.items.length;
     const nFilters = activeFilterCount();
-    const sel = (name, label, value, options) => `<label class="f"><span>${esc(label)}</span>
+    const sel = (name, label, value, options) => `<label class="f"><span>${esc(tr(label))}</span>
       <select data-f="${name}">${options.map(o => {
-      const v = typeof o === 'string' ? o : o.v, n = typeof o === 'string' ? o : o.n;
+      const v = typeof o === 'string' ? o : o.v, n = tr(typeof o === 'string' ? o : o.n);
       return `<option value="${esc(v)}" ${String(v) === String(value) ? 'selected' : ''}>${esc(n)}</option>`;
     }).join('')}</select></label>`;
 
     return `
     <div class="page-head">
       <div class="grow"><h2>CRM 360°</h2>
-        <p>${d.total} khách hàng ${isLead() ? 'toàn đội' : 'của bạn'} · trạng thái theo quy trình · ĐKKH 1 tháng</p></div>
-      <div class="right"><button class="btn primary sm" data-add>+ Khách hàng</button>
-        <div class="mt"><button class="btn sm" data-import>${icon('fileSpreadsheet', 14)} Nhập Excel</button></div>
+        <p>${d.total} ${tr('khách hàng')} ${isLead() ? tr('toàn đội') : tr('của bạn')} · ${tr('trạng thái theo quy trình · ĐKKH 1 tháng')}</p></div>
+      <div class="right"><button class="btn primary sm" data-add>+ ${tr('Khách hàng')}</button>
+        <div class="mt"><button class="btn sm" data-import>${icon('fileSpreadsheet', 14)} ${tr('Nhập Excel')}</button></div>
         <div class="mt"><button class="btn sm" data-addpartner>+ Partner</button></div></div>
     </div>
 
     <div class="grid g3 mb">
-      ${stat('Khách đang quản lý', d.total, nFilters ? nFilters + ' bộ lọc đang bật' : 'Không lọc', 'blue')}
-      ${stat('ĐKKH sắp hết hạn', expiring, 'Còn ≤ 5 ngày — gia hạn hoặc đẩy ký', expiring ? 'amber' : '')}
-      ${stat('ĐKKH đã hết hạn', expired, 'Sale khác được phép nhận', expired ? 'red' : '')}
+      ${stat('Khách đang quản lý', d.total, nFilters ? nFilters + ' ' + tr('bộ lọc đang bật') : tr('Không lọc'), 'blue')}
+      ${stat('ĐKKH sắp hết hạn', expiring, tr('Còn ≤ 5 ngày — gia hạn hoặc đẩy ký'), expiring ? 'amber' : '')}
+      ${stat('ĐKKH đã hết hạn', expired, tr('Sale khác được phép nhận'), expired ? 'red' : '')}
     </div>
 
     <div class="seg mb">
-      <button data-crmtab="customers" class="${crmTab === 'customers' ? 'on' : ''}">Khách hàng</button>
-      ${!isLead() ? `<button data-crmtab="claimable" class="${crmTab === 'claimable' ? 'on' : ''}">Khách có thể nhận (${d.claimable.length})</button>` : ''}
+      <button data-crmtab="customers" class="${crmTab === 'customers' ? 'on' : ''}">${tr('Khách hàng')}</button>
+      ${!isLead() ? `<button data-crmtab="claimable" class="${crmTab === 'claimable' ? 'on' : ''}">${tr('Khách có thể nhận')} (${d.claimable.length})</button>` : ''}
       <button data-crmtab="partners" class="${crmTab === 'partners' ? 'on' : ''}">Partner (${d.partners.length})</button>
     </div>
 
     ${crmTab === 'customers' ? `
     <div class="card mb">
-      <div class="row mb"><div class="grow b sm">Bộ lọc khách hàng</div>
-        ${nFilters ? `<button class="btn sm ghost" data-clearf>Xoá lọc (${nFilters})</button>` : ''}</div>
-      <input placeholder="Tìm theo tên, ngành hoặc số điện thoại…" value="${esc(filter.q)}" data-q class="mb">
+      <div class="row mb"><div class="grow b sm">${tr('Bộ lọc khách hàng')}</div>
+        ${nFilters ? `<button class="btn sm ghost" data-clearf>${tr('Xoá lọc')} (${nFilters})</button>` : ''}</div>
+      <input placeholder="${esc(tr('Tìm theo tên, ngành hoặc số điện thoại…'))}" value="${esc(filter.q)}" data-q class="mb">
       <div class="grid g3">
         ${isLead() ? sel('owner', 'Sale phụ trách', filter.owner, [{ v: '', n: 'All' }, ...d.sales.map(salesTeamOption)]) : ''}
         ${sel('industry', 'Ngành hàng', filter.industry, [{ v: '', n: 'All' }, ...industries.map(i => ({ v: i, n: i }))])}
@@ -105,35 +107,35 @@ export async function render(el, params) {
         ${sel('source', 'Nguồn khách hàng', filter.source, [{ v: '', n: 'All' }, ...LEAD_SOURCES.map(s => ({ v: s.v, n: s.n }))])}
         ${sel('dkkh', 'Tình trạng ĐKKH', filter.dkkh, [{ v: '', n: 'All' }, { v: 'expiring', n: 'Sắp hết hạn (≤5 ngày)' }, { v: 'expired', n: 'Đã hết hạn' }, ...(isLead() ? [{ v: 'mine', n: 'Do tôi phụ trách' }] : [])])}
       </div>
-      <div class="sec-title" style="margin-top:12px">Trạng thái — quy trình bán hàng</div>
+      <div class="sec-title" style="margin-top:12px">${tr('Trạng thái — quy trình bán hàng')}</div>
       <div class="row wrap" style="gap:5px">${saleStatuses().map(s => statusFilterBtn(s)).join('')}</div>
-      <div class="sec-title">Trạng thái — quy trình đấu thầu</div>
+      <div class="sec-title">${tr('Trạng thái — quy trình đấu thầu')}</div>
       <div class="row wrap" style="gap:5px">${tenderStatuses().map(s => statusFilterBtn(s)).join('')}</div>
     </div>
 
     ${d.items.length ? `<div class="card">${d.items.map(c => customerRow(c)).join('')}</div>
         ${more > 0 ? `<div class="row mt" style="justify-content:center;gap:10px">
-          <span class="sm mut">Đang hiện ${d.items.length}/${d.total} khách</span>
-          <button class="btn sm" data-more>Xem thêm ${Math.min(PAGE, more)} khách</button></div>` : ''}`
+          <span class="sm mut">${tr('Đang hiện')} ${d.items.length}/${d.total} ${tr('khách')}</span>
+          <button class="btn sm" data-more>${tr('Xem thêm')} ${Math.min(PAGE, more)} ${tr('khách')}</button></div>` : ''}`
         : empty('folderOpen', 'Chưa có khách hàng nào khớp bộ lọc.')}
     ` : crmTab === 'claimable' ? `
-    <div class="note mb sm">Khách đã <b>quá hạn ĐKKH 1 tháng</b> mà sale phụ trách chưa ký hợp đồng và không tái đăng ký.
-      Bạn được phép nhận về chăm sóc — sale cũ sẽ nhận được thông báo.</div>
+    <div class="note mb sm">${tr('Khách đã <b>quá hạn ĐKKH 1 tháng</b> mà sale phụ trách chưa ký hợp đồng và không tái đăng ký.')}
+      ${tr('Bạn được phép nhận về chăm sóc — sale cũ sẽ nhận được thông báo.')}</div>
     ${d.claimable.length ? `<div class="card">${d.claimable.map(c => `<div class="item">
         <div class="avatar" style="border-radius:11px">${esc(initials(c.name))}</div>
         <div class="grow"><div class="t">${esc(c.name)}</div>
-          <div class="d">${esc(c.industry || 'Chưa phân ngành')} · đang thuộc ${esc(c.owner_name || '—')}</div>
-          <div class="d xs">Hết hạn ĐKKH ${fmtDate(c.dkkh.expiresAt)} · tương tác gần nhất ${rel(c.last_touch_at)}</div>
+          <div class="d">${esc(tr(c.industry || 'Chưa phân ngành'))} · ${tr('đang thuộc')} ${esc(c.owner_name || '—')}</div>
+          <div class="d xs">${tr('Hết hạn ĐKKH')} ${fmtDate(c.dkkh.expiresAt)} · ${tr('tương tác gần nhất')} ${rel(c.last_touch_at)}</div>
           <div class="mt">${statusChips(c)}</div></div>
-        <button class="btn sm amber" data-claim="${esc(c.id)}">Nhận khách</button>
+        <button class="btn sm amber" data-claim="${esc(c.id)}">${tr('Nhận khách')}</button>
       </div>`).join('')}</div>` : empty('handshake', 'Không có khách nào đang hết hạn ĐKKH để nhận.')}
     ` : `
     ${d.partners.length ? `<div class="card">${d.partners.map(pt => `<div class="item">
         <div class="dot-i">${icon('handshake')}</div>
         <div class="grow"><div class="t">${esc(pt.name)}</div>
-          <div class="d">${esc(pt.phone || '—')}${pt.email ? ' · ' + esc(pt.email) : ''} · phụ trách ${esc(pt.sale_name || '—')}</div>
+          <div class="d">${esc(pt.phone || '—')}${pt.email ? ' · ' + esc(pt.email) : ''} · ${tr('phụ trách')} ${esc(pt.sale_name || '—')}</div>
           ${pt.note ? `<div class="d xs">${esc(pt.note)}</div>` : ''}</div>
-        <button class="btn sm" data-editpartner="${esc(pt.id)}">Sửa</button>
+        <button class="btn sm" data-editpartner="${esc(pt.id)}">${tr('Sửa')}</button>
       </div>`).join('')}</div>` : empty('handshake', 'Chưa có partner nào — thêm partner để gán làm nguồn khách hàng.')}
     `}`;
   };
@@ -161,7 +163,7 @@ export async function render(el, params) {
       e.preventDefault(); e.stopPropagation();
       try {
         const r = await post('/customers/' + b.dataset.renew + '/dkkh/renew', {});
-        toast(`Đã tái ĐKKH — giữ thêm ${r.dkkh.daysLeft} ngày.`, 'ok');
+        toast(tf(() => `Đã tái ĐKKH — giữ thêm ${r.dkkh.daysLeft} ngày.`, () => `Registration renewed — ${r.dkkh.daysLeft} more days.`), 'ok');
         render(el);
       } catch (err) { toast(err.message, 'err'); }
     });
@@ -191,15 +193,15 @@ function customerRow(c) {
     <a class="avatar" style="border-radius:11px" href="#/crm/${esc(c.id)}">${esc(initials(c.name))}</a>
     <div class="grow" style="min-width:0">
       <a class="t" href="#/crm/${esc(c.id)}" style="display:block">${esc(c.name)}</a>
-      <div class="d">${esc(c.industry || 'Chưa phân ngành')} · ${c.open_deals} deal mở · đã ký ${money(c.won_value)}</div>
-      <div class="d xs">Tương tác gần nhất: ${rel(c.last_touch_at)}${c.nguon_khach_hang ? ' · ' + esc(leadSourceName(c.nguon_khach_hang)) : ''}</div>
-      ${isLead() ? `<div class="d xs mt">Sales phụ trách: <b>${esc(c.owner_name || 'Chưa gán')}</b></div>` : ''}
+      <div class="d">${esc(tr(c.industry || 'Chưa phân ngành'))} · ${c.open_deals} ${tr('deal mở')} · ${tr('đã ký')} ${money(c.won_value)}</div>
+      <div class="d xs">${tr('Tương tác gần nhất:')} ${rel(c.last_touch_at)}${c.nguon_khach_hang ? ' · ' + esc(leadSourceName(c.nguon_khach_hang)) : ''}</div>
+      ${isLead() ? `<div class="d xs mt">${tr('Sales phụ trách:')} <b>${esc(c.owner_name || tr('Chưa gán'))}</b></div>` : ''}
       <div class="row wrap mt" style="gap:4px">${statusChips(c)}</div>
     </div>
     <div class="right">
       ${dkkhChip(dk)}
-      ${dk.kind && dk.kind !== 'locked' ? `<div class="xs mut mt">Hạn ${fmtDate(dk.expiresAt)}</div>
-      <div class="mt"><button class="btn sm" data-renew="${esc(c.id)}">Gia hạn ĐKKH</button></div>` : ''}
+      ${dk.kind && dk.kind !== 'locked' ? `<div class="xs mut mt">${tr('Hạn')} ${fmtDate(dk.expiresAt)}</div>
+      <div class="mt"><button class="btn sm" data-renew="${esc(c.id)}">${tr('Gia hạn ĐKKH')}</button></div>` : ''}
     </div>
   </div>`;
 }
@@ -215,73 +217,74 @@ async function detail(el, id) {
     return `<div class="page-head">
       <a class="btn sm" href="#/crm">${icon('arrowLeft', 15)}</a>
       <div class="grow"><h2>${esc(c.name)}</h2>
-        <p>${esc(c.industry || '—')} · ${esc(c.scale || 'Chưa rõ quy mô')} <button class="btn sm" data-scale style="padding:1px 6px;margin-left:4px">${icon('pencil', 11)}</button> · nguồn ${esc(leadSourceName(c.nguon_khach_hang))}</p></div>
+        <p>${esc(c.industry || '—')} · ${esc(tr(c.scale || 'Chưa rõ quy mô'))} <button class="btn sm" data-scale style="padding:1px 6px;margin-left:4px">${icon('pencil', 11)}</button> · ${tr('nguồn')} ${esc(leadSourceName(c.nguon_khach_hang))}</p></div>
       <div class="right">${dkkhChip(dk)}</div>
     </div>
 
     <div class="card">
-      <div class="row wrap"><div class="grow b sm">Trạng thái</div>
-        <button class="btn sm" data-editstatus>Đổi trạng thái</button></div>
-      <div class="row wrap mt" style="gap:5px">${statusChips(c) || '<span class="sm mut">Chưa gắn trạng thái nào.</span>'}</div>
-      <div class="xs mut mt">Một khách có thể mang nhiều trạng thái cùng lúc — ví dụ vừa "Đã mua hàng" vừa "Chào hàng" gói tiếp theo.</div>
+      <div class="row wrap"><div class="grow b sm">${tr('Trạng thái')}</div>
+        <button class="btn sm" data-editstatus>${tr('Đổi trạng thái')}</button></div>
+      <div class="row wrap mt" style="gap:5px">${statusChips(c) || `<span class="sm mut">${tr('Chưa gắn trạng thái nào.')}</span>`}</div>
+      <div class="xs mut mt">${tr('Một khách có thể mang nhiều trạng thái cùng lúc — ví dụ vừa "Đã mua hàng" vừa "Chào hàng" gói tiếp theo.')}</div>
     </div>
 
     <div class="card mt">
-      <div class="row wrap"><div class="grow b sm">Đăng ký khách hàng (ĐKKH)</div>${dkkhChip(dk)}</div>
+      <div class="row wrap"><div class="grow b sm">${tr('Đăng ký khách hàng (ĐKKH)')}</div>${dkkhChip(dk)}</div>
       ${dk.kind === 'locked'
-        ? '<div class="sm mut mt">Khách đã ký hợp đồng — quyền chăm sóc được giữ vĩnh viễn, không cần gia hạn.</div>'
-        : `<div class="sm mut mt">Đăng ký ${fmtDate(dk.at)} · hết hạn ${fmtDate(dk.expiresAt)}${dk.count ? ` · đã tái đăng ký ${dk.count} lần` : ''}.
+        ? `<div class="sm mut mt">${tr('Khách đã ký hợp đồng — quyền chăm sóc được giữ vĩnh viễn, không cần gia hạn.')}</div>`
+        : `<div class="sm mut mt">${tr('Đăng ký')} ${fmtDate(dk.at)} · ${tr('hết hạn')} ${fmtDate(dk.expiresAt)}${dk.count ? ` · ${tr('đã tái đăng ký')} ${dk.count} ${tr('lần')}` : ''}.
            ${dk.kind === 'expired'
-            ? 'Đã quá hạn — sale khác được phép nhận khách này.'
-            : `Còn ${dk.daysLeft} ngày. Quá hạn mà chưa ký hợp đồng, sale khác sẽ được phép nhận.`}</div>
-           <button class="btn sm amber mt" data-renew>Tái ĐKKH thêm 30 ngày</button>`}
+            ? tr('Đã quá hạn — sale khác được phép nhận khách này.')
+            : tf(() => `Còn ${dk.daysLeft} ngày. Quá hạn mà chưa ký hợp đồng, sale khác sẽ được phép nhận.`,
+                () => `${dk.daysLeft} days left. If it expires before the contract is signed, another sales rep can claim this customer.`)}</div>
+           <button class="btn sm amber mt" data-renew>${tr('Tái ĐKKH thêm 30 ngày')}</button>`}
     </div>
 
     <div class="card mt">
       <div class="row wrap sm"><div class="grow">${icon('phone', 14)} ${esc(c.phone || '—')}</div><div>${icon('mail', 14)} ${esc(c.email || '—')}</div></div>
-      <div class="sm mut mt">${esc(c.note || 'Chưa có ghi chú.')}</div>
+      <div class="sm mut mt">${esc(tr(c.note || 'Chưa có ghi chú.'))}</div>
       <div class="row mt" style="gap:8px">
-        <button class="btn sm grow" data-act>+ Ghi hoạt động</button>
-        <button class="btn sm grow" data-deal>+ Tạo deal</button>
-        <button class="btn sm grow" data-contact>+ Người liên hệ</button>
+        <button class="btn sm grow" data-act>+ ${tr('Ghi hoạt động')}</button>
+        <button class="btn sm grow" data-deal>+ ${tr('Tạo deal')}</button>
+        <button class="btn sm grow" data-contact>+ ${tr('Người liên hệ')}</button>
       </div>
     </div>
 
-    <div class="sec-title">Phương án kinh doanh (${d.plans.length})</div>
+    <div class="sec-title">${tr('Phương án kinh doanh')} (${d.plans.length})</div>
     <div class="card">
-      <div class="sm mut mb">Báo giá · Hợp đồng · Nghiệm thu · Thanh lý — lập chứng từ và trình duyệt ngay trong phương án, phản hồi quay lại đúng luồng đã trình.</div>
+      <div class="sm mut mb">${tr('Báo giá · Hợp đồng · Nghiệm thu · Thanh lý — lập chứng từ và trình duyệt ngay trong phương án, phản hồi quay lại đúng luồng đã trình.')}</div>
       ${d.plans.length ? d.plans.map(pl => `<a class="item" href="#/plans/${esc(pl.id)}">
         <div class="dot-i">${icon('clipboardList')}</div>
         <div class="grow"><div class="t">${esc(pl.title)}</div>
-          <div class="d">${pl.approved_n}/4 hạng mục đã duyệt · cập nhật ${rel(pl.updated_at)}</div></div>
-        <div class="right">${pl.revise_n ? chip(pl.revise_n + ' cần sửa', 'red') : ''}${pl.pending_n ? chip(pl.pending_n + ' chờ duyệt', 'amber') : ''}</div>
-      </a>`).join('') : '<div class="sm mut">Chưa có phương án nào.</div>'}
-      <button class="btn sm primary mt" data-addplan>+ Tạo phương án kinh doanh</button>
+          <div class="d">${pl.approved_n}/4 ${tr('hạng mục đã duyệt')} · ${tr('cập nhật')} ${rel(pl.updated_at)}</div></div>
+        <div class="right">${pl.revise_n ? chip(pl.revise_n + ' ' + tr('cần sửa'), 'red') : ''}${pl.pending_n ? chip(pl.pending_n + ' ' + tr('chờ duyệt'), 'amber') : ''}</div>
+      </a>`).join('') : `<div class="sm mut">${tr('Chưa có phương án nào.')}</div>`}
+      <button class="btn sm primary mt" data-addplan>+ ${tr('Tạo phương án kinh doanh')}</button>
     </div>
 
-    <div class="sec-title">Gợi ý AI: cross-sell & tái ký</div>
+    <div class="sec-title">${tr('Gợi ý AI: cross-sell & tái ký')}</div>
     <div class="card">${d.suggestions.length ? d.suggestions.map(s => `<div class="item">
         <div class="dot-i">${icon(s.type === 're-sign' ? 'repeat' : s.type === 'warm-up' ? 'thermometer' : 'lightbulb')}</div>
         <div class="grow"><div class="t">${esc(s.text)}</div></div>
-        <button class="btn sm" data-aidraft="${esc(s.text)}">Soạn</button>
+        <button class="btn sm" data-aidraft="${esc(s.text)}">${tr('Soạn')}</button>
       </div>`).join('') : empty('bot', 'Chưa có gợi ý.')}</div>
 
-    <div class="sec-title">Người liên hệ (${d.contacts.length})</div>
+    <div class="sec-title">${tr('Người liên hệ')} (${d.contacts.length})</div>
     <div class="card">${d.contacts.length ? d.contacts.map(ct => `<div class="item">
         <div class="dot-i">${icon('user')}</div><div class="grow"><div class="t">${esc(ct.name)} ${ct.is_primary ? chip('Chính', 'amber') : ''}</div>
         <div class="d">${esc(ct.title || '')} · ${esc(ct.phone || '')} · ${esc(ct.email || '')}</div></div></div>`).join('') : empty('users', 'Chưa có người liên hệ.')}</div>
 
-    <div class="sec-title">Cơ hội (${d.deals.length})</div>
+    <div class="sec-title">${tr('Cơ hội')} (${d.deals.length})</div>
     <div class="card">${d.deals.length ? d.deals.map(dl => `<div class="item">
         <div class="dot-i">${icon(dl.status === 'won' ? 'trophy' : 'trendingUp')}</div>
         <div class="grow"><div class="t">${esc(dl.title)}</div>
-        <div class="d">${stageName(dl.stage)} · ${money(dl.value)} · xác suất ${dl.probability}%</div></div>
+        <div class="d">${stageName(dl.stage)} · ${money(dl.value)} · ${tr('xác suất')} ${dl.probability}%</div></div>
         <a class="btn sm" href="#/pipeline">Pipeline</a></div>`).join('') : empty('trendingUp', 'Chưa có cơ hội nào.')}</div>
 
-    <div class="sec-title">Dòng thời gian tương tác</div>
+    <div class="sec-title">${tr('Dòng thời gian tương tác')}</div>
     <div class="card"><div class="tl">${d.activities.length ? d.activities.map(a => `<div class="ev">
         <div class="b sm">${actIcon(a.type)} ${esc(a.subject || actName(a.type))}</div>
-        <div class="xs mut">${fmtDT(a.happened_at)} · ${esc(a.user_name || '')}${a.outcome ? ' · ' + esc(a.outcome) : ''}</div>
+        <div class="xs mut">${fmtDT(a.happened_at)} · ${esc(a.user_name || '')}${a.outcome ? ' · ' + esc(tr(a.outcome)) : ''}</div>
         ${a.note ? `<div class="sm mut">${esc(a.note)}</div>` : ''}
       </div>`).join('') : empty('clock', 'Chưa có tương tác nào.')}</div></div>`;
   };
@@ -291,7 +294,7 @@ async function detail(el, id) {
     if (renew) renew.onclick = async () => {
       try {
         const r = await post('/customers/' + id + '/dkkh/renew', {});
-        toast(`Đã tái ĐKKH — giữ thêm ${r.dkkh.daysLeft} ngày.`, 'ok');
+        toast(tf(() => `Đã tái ĐKKH — giữ thêm ${r.dkkh.daysLeft} ngày.`, () => `Registration renewed — ${r.dkkh.daysLeft} more days.`), 'ok');
         detail(el, id);
       } catch (e) { toast(e.message, 'err'); }
     };
@@ -335,8 +338,9 @@ async function detail(el, id) {
       kind: 'email',
       customerId: id,
       promptLabel: 'Gợi ý cho AI',
-      prompt: `${d.customer.name} — ${b.dataset.aidraft}`,
-      extra: `Ngành: ${d.customer.industry || 'chưa rõ'}; trạng thái: ${(d.customer.statuses || []).map(k => statusDef(k).n).join(', ') || 'chưa rõ'}; dịch vụ đã dùng: ${d.customer.services || 'chưa có'}`,
+      prompt: tf(() => `${d.customer.name} — ${b.dataset.aidraft}`, () => `${translateText(d.customer.name)} - ${translateText(b.dataset.aidraft)}`),
+      extra: tf(() => `Ngành: ${d.customer.industry || 'chưa rõ'}; trạng thái: ${(d.customer.statuses || []).map(k => statusDef(k).n).join(', ') || 'chưa rõ'}; dịch vụ đã dùng: ${d.customer.services || 'chưa có'}`,
+        () => `Industry: ${d.customer.industry ? translateText(d.customer.industry) : 'unknown'}; status: ${(d.customer.statuses || []).map(k => statusDef(k).n).join(', ') || 'unknown'}; services used: ${d.customer.services || 'none'}`),
     }));
   };
   await mount(el, load, draw, bind);
@@ -346,13 +350,13 @@ async function detail(el, id) {
  * modal() (FormData chỉ giữ được 1 giá trị cho các input trùng tên). */
 function statusModal(c, after) {
   const cur = new Set(c.statuses || []);
-  const group = (title, list) => `<div class="sec-title">${esc(title)}</div>
+  const group = (title, list) => `<div class="sec-title">${esc(tr(title))}</div>
     <div class="row wrap" style="gap:6px">${list.map(s => `<label class="chip ${cur.has(s.k) ? s.c : 'grey'}" style="cursor:pointer;padding:5px 10px">
       <input type="checkbox" name="st" value="${esc(s.k)}" ${cur.has(s.k) ? 'checked' : ''} style="margin-right:5px;vertical-align:middle">${esc(s.n)}</label>`).join('')}</div>`;
   modal({
     title: 'Trạng thái khách hàng',
     wide: true,
-    html: `<div class="sm mut mb">Chọn tất cả trạng thái đang đúng với khách này — được chọn nhiều.</div>
+    html: `<div class="sm mut mb">${tr('Chọn tất cả trạng thái đang đúng với khách này — được chọn nhiều.')}</div>
       ${group('Quy trình bán hàng', saleStatuses())}
       ${group('Quy trình đấu thầu', tenderStatuses())}`,
     submitText: 'Lưu trạng thái',
@@ -456,10 +460,12 @@ function bindDuplicateWarning(root, excludeId) {
     if (!dup) return hide();
     warn.style.display = '';
     warn.innerHTML = `${dup.mine
-      ? `Khách <b>${esc(dup.name)}</b> đã có trong danh sách của bạn.`
-      : `Khách <b>${esc(dup.name)}</b> đã được <b>${esc(dup.ownerName || 'sales khác')}</b> đăng ký.
-         Vui lòng trao đổi trước khi tiếp cận (deal registration).`}
-      ${dup.matchedPhone ? '<div class="xs mut mt">Trùng theo <b>số điện thoại</b>, không phải theo tên.</div>' : ''}`;
+      ? tf(() => `Khách <b>${esc(dup.name)}</b> đã có trong danh sách của bạn.`, () => `Customer <b>${esc(dup.name)}</b> is already in your list.`)
+      : tf(() => `Khách <b>${esc(dup.name)}</b> đã được <b>${esc(dup.ownerName || 'sales khác')}</b> đăng ký.
+         Vui lòng trao đổi trước khi tiếp cận (deal registration).`,
+        () => `Customer <b>${esc(dup.name)}</b> is already registered by <b>${esc(dup.ownerName || 'another sales rep')}</b>.
+         Please coordinate before reaching out (deal registration).`)}
+      ${dup.matchedPhone ? `<div class="xs mut mt">${tr('Trùng theo <b>số điện thoại</b>, không phải theo tên.')}</div>` : ''}`;
   };
 
   const schedule = () => { clearTimeout(timer); timer = setTimeout(check, 400); };

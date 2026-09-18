@@ -2,6 +2,7 @@ import { get, post } from '../api.js';
 import { isLead, salesUsers } from '../state.js';
 import { esc, mount, chip, bar, empty, toast, modal, stat, fmtDate } from '../ui.js';
 import { icon } from '../icons.js';
+import { t as tr, personName } from '../i18n.js';
 
 export async function render(el) {
   const load = () => get('/trainings');
@@ -10,39 +11,39 @@ export async function render(el) {
     const mine = d.items.filter(t => t.role_target === (isLead() ? 'manager' : 'sales') || t.prog_status);
     const done = mine.filter(t => t.prog_status === 'completed').length;
     return `<div class="page-head">
-      <div class="grow"><h2>NetViet Academy</h2><p>Lộ trình học theo vai trò · khoá bắt buộc · theo dõi hoàn thành</p></div>
-      ${isLead() ? '<button class="btn primary sm" data-add>+ Bài giảng</button>' : ''}
+      <div class="grow"><h2>NetViet Academy</h2><p>${tr('Lộ trình học theo vai trò · khoá bắt buộc · theo dõi hoàn thành')}</p></div>
+      ${isLead() ? `<button class="btn primary sm" data-add>+ ${tr('Bài giảng')}</button>` : ''}
     </div>
 
     <div class="card mb">
-      <div class="badge-line"><span class="sm">Tiến độ lộ trình của bạn</span><span class="sm b">${done}/${mine.length} bài</span></div>
+      <div class="badge-line"><span class="sm">${tr('Tiến độ lộ trình của bạn')}</span><span class="sm b">${done}/${mine.length} ${tr('bài')}</span></div>
       ${bar(done, mine.length || 1, 'green')}
-      <div class="xs mut mt">Hoàn thành đào tạo đóng góp 4 điểm vào nhóm "Chủ động" của thẻ điểm KPI.</div>
+      <div class="xs mut mt">${tr('Hoàn thành đào tạo đóng góp 4 điểm vào nhóm "Chủ động" của thẻ điểm KPI.')}</div>
     </div>
 
     ${['Sản phẩm', 'Kỹ năng', 'Quy trình', 'Chuyên sâu', 'Quản lý'].map(cat => {
       const arr = d.items.filter(t => t.category === cat);
       if (!arr.length) return '';
-      return `<div class="sec-title">${esc(cat)}</div><div class="card">${arr.map(t => `<div class="item">
+      return `<div class="sec-title">${esc(tr(cat))}</div><div class="card">${arr.map(t => `<div class="item">
         <div class="dot-i">${icon(t.prog_status === 'completed' ? 'circleCheck' : t.required ? 'star' : 'clapperboard')}</div>
         <div class="grow"><div class="t">${esc(t.title)}</div>
-          <div class="d">${t.duration_min} phút · ${t.required ? 'Bắt buộc' : 'Tự chọn'} · dành cho ${esc(t.role_target)}</div>
+          <div class="d">${t.duration_min} ${tr('phút')} · ${t.required ? tr('Bắt buộc') : tr('Tự chọn')} · ${tr('dành cho')} ${esc(t.role_target)}</div>
           <div class="d xs">${esc(t.description || '')}</div>
           <div class="row wrap mt" style="gap:6px">
-            ${chip(t.prog_status === 'completed' ? 'Đã hoàn thành' : t.prog_status === 'in_progress' ? 'Đang học ' + (t.progress || 0) + '%' : 'Chưa học',
+            ${chip(t.prog_status === 'completed' ? 'Đã hoàn thành' : t.prog_status === 'in_progress' ? tr('Đang học') + ' ' + (t.progress || 0) + '%' : 'Chưa học',
               t.prog_status === 'completed' ? 'green' : t.prog_status === 'in_progress' ? 'amber' : 'grey')}
             ${t.completed_at ? chip(fmtDate(t.completed_at), 'grey') : ''}</div></div>
         <div class="right">
-          <a class="btn sm blue" href="${esc(t.url)}" target="_blank" rel="noopener" data-watch="${esc(t.id)}">Xem</a>
-          ${t.prog_status !== 'completed' ? `<div class="mt"><button class="btn sm" data-done="${esc(t.id)}">Hoàn thành</button></div>` : ''}
-          ${isLead() ? `<div class="mt"><button class="btn sm" data-assign="${esc(t.id)}">Giao</button></div>` : ''}
+          <a class="btn sm blue" href="${esc(t.url)}" target="_blank" rel="noopener" data-watch="${esc(t.id)}">${tr('Xem')}</a>
+          ${t.prog_status !== 'completed' ? `<div class="mt"><button class="btn sm" data-done="${esc(t.id)}">${tr('Hoàn thành')}</button></div>` : ''}
+          ${isLead() ? `<div class="mt"><button class="btn sm" data-assign="${esc(t.id)}">${tr('Giao')}</button></div>` : ''}
         </div></div>`).join('')}</div>`;
     }).join('')}
 
-    ${isLead() && d.team.length ? `<div class="sec-title">Tiến độ đội</div><div class="card">${d.team.map(m => `<div class="item">
-      <div class="dot-i">${icon('user')}</div><div class="grow"><div class="t">${esc(m.name)}</div>
+    ${isLead() && d.team.length ? `<div class="sec-title">${tr('Tiến độ đội')}</div><div class="card">${d.team.map(m => `<div class="item">
+      <div class="dot-i">${icon('user')}</div><div class="grow"><div class="t">${esc(personName(m.name))}</div>
       <div class="mt">${bar(m.done || 0, m.total || 1, 'green')}</div>
-      <div class="d xs">${m.done || 0}/${m.total || 0} bài hoàn thành</div></div></div>`).join('')}</div>` : ''}`;
+      <div class="d xs">${m.done || 0}/${m.total || 0} ${tr('bài hoàn thành')}</div></div></div>`).join('')}</div>` : ''}`;
   };
 
   const bind = (d) => {
@@ -55,7 +56,7 @@ export async function render(el) {
     });
     el.querySelectorAll('[data-assign]').forEach(b => b.onclick = () => modal({
       title: 'Giao khoá học bắt buộc',
-      fields: [{ name: 'userId', label: 'Nhân sự', type: 'select', options: salesUsers().map(u => ({ v: u.id, n: u.name })) }],
+      fields: [{ name: 'userId', label: 'Nhân sự', type: 'select', options: salesUsers().map(u => ({ v: u.id, n: personName(u.name) })) }],
       submitText: 'Giao khoá',
       onSubmit: async (v) => { await post('/trainings/assign', { ...v, trainingId: b.dataset.assign }); toast('Đã giao khoá học', 'ok'); },
     }));

@@ -1,4 +1,5 @@
 import { get, post, del, setToken, sessionToken, clearLegacy } from './api.js';
+import { personName, tf } from './i18n.js';
 
 export const state = {
   me: null,
@@ -79,7 +80,7 @@ export const salesUsers = () => state.users.filter(u => u.role === 'sales');
 export const salesTeamUsers = () => state.users.filter(u => u.role === 'sales' || u.role === 'manager');
 /** Nhãn 1 dòng cho các bộ chọn dùng salesTeamUsers(): ghi rõ chức danh của Trưởng phòng để không
  * bị đọc nhầm thành "thêm một sale nữa". Nhận cả hàng user từ máy chủ (có sẵn cột `role`). */
-export const salesTeamOption = (u) => ({ v: u.id, n: u.role === 'manager' ? `${u.name} (TPKD)` : u.name });
+export const salesTeamOption = (u) => ({ v: u.id, n: u.role === 'manager' ? personName(u.name) + tf(() => ' (TPKD)', () => ' (Sales Manager)') : personName(u.name) });
 /** Trường "Giao cho" trong modal tạo mới — chỉ hiện với TP/Admin, ẩn với sales. Mặc định chỉ liệt
  * kê nhân viên sales; truyền `users` để mở rộng cho loại bản ghi mà Trưởng phòng cũng tự đứng tên
  * (deal — xem salesTeamUsers). */

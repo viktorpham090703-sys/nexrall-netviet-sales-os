@@ -5,6 +5,7 @@ import { actIcon, actName } from '../const.js';
 import { logActivity } from './crm.js';
 import { quickContact } from './cockpit.js';
 import { icon } from '../icons.js';
+import { t as tr, tf } from '../i18n.js';
 
 let tab = 'activities';
 
@@ -25,29 +26,29 @@ export async function render(el) {
       (byDay[k] = byDay[k] || []).push(a);
     });
     return `<div class="page-head">
-      <div class="grow"><h2>Lịch & Hoạt động</h2><p>Nguồn dữ liệu duy nhất nuôi định mức · KPI · báo cáo</p></div>
-      <button class="btn primary sm" data-log>+ Hoạt động</button>
+      <div class="grow"><h2>${tr('Lịch & Hoạt động')}</h2><p>${tr('Nguồn dữ liệu duy nhất nuôi định mức · KPI · báo cáo')}</p></div>
+      <button class="btn primary sm" data-log>+ ${tr('Hoạt động')}</button>
     </div>
 
     <div class="grid g3 mb">
-      ${stat('Hoạt động hôm nay', d.stats.today, '14 ngày: ' + d.stats.total, 'red')}
-      ${stat('Liên hệ mới (14 ngày)', d.contacts.length, 'Tính vào định mức', 'amber')}
-      ${stat('Việc chưa xong', d.tasks.length, 'Lịch nhắc tự động', 'blue')}
+      ${stat('Hoạt động hôm nay', d.stats.today, tr('14 ngày:') + ' ' + d.stats.total, 'red')}
+      ${stat('Liên hệ mới (14 ngày)', d.contacts.length, tr('Tính vào định mức'), 'amber')}
+      ${stat('Việc chưa xong', d.tasks.length, tr('Lịch nhắc tự động'), 'blue')}
     </div>
 
     <div class="row mb" style="gap:8px">
-      <button class="btn sm grow" data-sync>${icon('phone', 14)} Đồng bộ call log (mock)</button>
-      <button class="btn sm grow amber" data-newcontact>+ Liên hệ mới</button>
+      <button class="btn sm grow" data-sync>${icon('phone', 14)} ${tr('Đồng bộ call log (mock)')}</button>
+      <button class="btn sm grow amber" data-newcontact>+ ${tr('Liên hệ mới')}</button>
     </div>
 
     <div class="seg mb">
-      <button data-tab="activities" class="${tab === 'activities' ? 'on' : ''}">Nhật ký hoạt động</button>
-      <button data-tab="contacts" class="${tab === 'contacts' ? 'on' : ''}">Liên hệ mới</button>
-      <button data-tab="calendar" class="${tab === 'calendar' ? 'on' : ''}">Lịch & nhắc việc</button>
+      <button data-tab="activities" class="${tab === 'activities' ? 'on' : ''}">${tr('Nhật ký hoạt động')}</button>
+      <button data-tab="contacts" class="${tab === 'contacts' ? 'on' : ''}">${tr('Liên hệ mới')}</button>
+      <button data-tab="calendar" class="${tab === 'calendar' ? 'on' : ''}">${tr('Lịch & nhắc việc')}</button>
     </div>
 
     ${tab === 'activities' ? (Object.keys(byDay).length ? Object.entries(byDay).map(([day, arr]) => `
-      <div class="sec-title">${esc(day)} · ${arr.length} hoạt động</div>
+      <div class="sec-title">${esc(day)} · ${arr.length} ${tr('hoạt động')}</div>
       <div class="card">${arr.map(a => `<div class="item">
         <div class="dot-i">${actIcon(a.type)}</div>
         <div class="grow"><div class="t">${esc(a.subject || actName(a.type))}</div>
@@ -62,8 +63,8 @@ export async function render(el) {
       : (d.tasks.length ? `<div class="card">${d.tasks.map(t => `<div class="item">
           <div class="dot-i">${icon(t.due_at && t.due_at < Date.now() / 1000 ? 'alarmClock' : 'calendarDays')}</div>
           <div class="grow"><div class="t">${esc(t.title)}</div>
-          <div class="d">Hạn ${fmtDT(t.due_at)}${t.assigner_name ? ' · giao bởi ' + esc(t.assigner_name) : ''}</div></div>
-          <a class="btn sm" href="#/tasks">Mở</a></div>`).join('')}</div>` : empty('calendarDays', 'Không có lịch nhắc nào.'))}`;
+          <div class="d">${tr('Hạn')} ${fmtDT(t.due_at)}${t.assigner_name ? ' · ' + tr('giao bởi') + ' ' + esc(t.assigner_name) : ''}</div></div>
+          <a class="btn sm" href="#/tasks">${tr('Mở')}</a></div>`).join('')}</div>` : empty('calendarDays', 'Không có lịch nhắc nào.'))}`;
   };
 
   const bind = () => {
@@ -74,7 +75,8 @@ export async function render(el) {
       e.target.disabled = true;
       try {
         const r = await post('/activities/sync-calls', {});
-        toast('Đã đồng bộ ' + (r.imported || 0) + ' cuộc gọi từ tổng đài (mock)', 'ok');
+        toast(tf(() => 'Đã đồng bộ ' + (r.imported || 0) + ' cuộc gọi từ tổng đài (mock)',
+          () => 'Synced ' + (r.imported || 0) + ' calls from PBX (mock)'), 'ok');
         render(el);
       } catch (err) { toast(err.message, 'err'); e.target.disabled = false; }
     };

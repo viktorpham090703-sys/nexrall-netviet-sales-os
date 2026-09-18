@@ -3,6 +3,7 @@ import { state, isLead, assigneeField, salesTeamUsers } from '../state.js';
 import { esc, mount, chip, empty, fmtDT, toast, modal, stat } from '../ui.js';
 import { PRIO, TASK_STATUS } from '../const.js';
 import { icon } from '../icons.js';
+import { t as tr } from '../i18n.js';
 
 export async function render(el) {
   const load = async () => {
@@ -15,23 +16,23 @@ export async function render(el) {
     const assigned = open.filter(x => x.assigner_id);
     const late = open.filter(x => x.overdue || x.acceptOverdue);
     return `<div class="page-head">
-      <div class="grow"><h2>${isLead() ? 'Giao việc & Phân bổ' : 'Việc của tôi'}</h2>
-        <p>${isLead() ? 'Giao lead/deal/việc con xuống sale · SLA nhận việc · leo thang khi quá hạn' : 'Việc tự tạo và việc lãnh đạo giao · xác nhận nhận việc trong SLA'}</p></div>
-      <button class="btn primary sm" data-add>+ ${isLead() ? 'Giao việc' : 'Thêm việc'}</button>
+      <div class="grow"><h2>${isLead() ? tr('Giao việc & Phân bổ') : tr('Việc của tôi')}</h2>
+        <p>${isLead() ? tr('Giao lead/deal/việc con xuống sale · SLA nhận việc · leo thang khi quá hạn') : tr('Việc tự tạo và việc lãnh đạo giao · xác nhận nhận việc trong SLA')}</p></div>
+      <button class="btn primary sm" data-add>+ ${isLead() ? tr('Giao việc') : tr('Thêm việc')}</button>
     </div>
 
     <div class="grid g3 mb">
       ${stat('Đang mở', open.length, '', 'blue')}
-      ${stat('Việc được giao', assigned.length, 'Chưa nhận: ' + assigned.filter(x => !x.accepted_at).length, 'amber')}
-      ${stat('Quá hạn / leo thang', late.length, late.length ? 'Cần xử lý' : 'Ổn định', late.length ? 'red' : '')}
+      ${stat('Việc được giao', assigned.length, tr('Chưa nhận:') + ' ' + assigned.filter(x => !x.accepted_at).length, 'amber')}
+      ${stat('Quá hạn / leo thang', late.length, late.length ? tr('Cần xử lý') : tr('Ổn định'), late.length ? 'red' : '')}
     </div>
 
     ${open.length ? `<div class="card">${open.map(t => row(t)).join('')}</div>` : empty('circleCheck', 'Không còn việc tồn.')}
 
-    <div class="sec-title">Đã hoàn thành</div>
+    <div class="sec-title">${tr('Đã hoàn thành')}</div>
     <div class="card">${d.items.filter(x => x.status === 'done').slice(0, 10).map(t => `<div class="item">
       <div class="dot-i">${icon('circleCheck')}</div><div class="grow"><div class="t">${esc(t.title)}</div>
-      <div class="d">Hoàn thành ${fmtDT(t.done_at)}${isLead() ? ' · ' + esc(t.user_name || '') : ''}</div></div></div>`).join('') || empty('circleCheck', 'Chưa có việc hoàn thành.')}</div>`;
+      <div class="d">${tr('Hoàn thành')} ${fmtDT(t.done_at)}${isLead() ? ' · ' + esc(t.user_name || '') : ''}</div></div></div>`).join('') || empty('circleCheck', 'Chưa có việc hoàn thành.')}</div>`;
   };
 
   /* Nút "Nhận" chỉ hiện với CHÍNH nhân sự được giao: TP/Admin nhìn thấy việc của cả đội (scope
@@ -42,7 +43,7 @@ export async function render(el) {
   const row = (t) => `<div class="item">
     <div class="dot-i">${icon(t.assigner_id ? 'inbox' : 'notepadText')}</div>
     <div class="grow"><div class="t">${esc(t.title)}</div>
-      <div class="d">${t.deal_title ? icon('target', 12) + ' ' + esc(t.deal_title) + ' · ' : ''}Hạn ${fmtDT(t.due_at)}${t.assigner_name ? ' · giao bởi ' + esc(t.assigner_name) : ''}${isLead() && t.user_name ? ' → ' + esc(t.user_name) : ''}</div>
+      <div class="d">${t.deal_title ? icon('target', 12) + ' ' + esc(t.deal_title) + ' · ' : ''}${tr('Hạn')} ${fmtDT(t.due_at)}${t.assigner_name ? ' · ' + tr('giao bởi') + ' ' + esc(t.assigner_name) : ''}${isLead() && t.user_name ? ' → ' + esc(t.user_name) : ''}</div>
       ${t.detail ? `<div class="d xs">${esc(t.detail)}</div>` : ''}
       <div class="row wrap mt" style="gap:6px">
         ${chip(PRIO[t.priority]?.n || t.priority, PRIO[t.priority]?.c)}
@@ -52,8 +53,8 @@ export async function render(el) {
       </div>
     </div>
     <div class="right">
-      ${t.assigner_id && !t.accepted_at && t.user_id === state.me?.id ? `<button class="btn sm amber" data-accept="${esc(t.id)}">Nhận</button>` : ''}
-      <div class="mt"><button class="btn sm" data-done="${esc(t.id)}">Xong</button></div>
+      ${t.assigner_id && !t.accepted_at && t.user_id === state.me?.id ? `<button class="btn sm amber" data-accept="${esc(t.id)}">${tr('Nhận')}</button>` : ''}
+      <div class="mt"><button class="btn sm" data-done="${esc(t.id)}">${tr('Xong')}</button></div>
     </div></div>`;
 
   const bind = (d) => {

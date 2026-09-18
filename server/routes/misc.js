@@ -1,5 +1,5 @@
 import { json, match, need, needAccountManage, uid, now, readBody, isLead, audit, notify, num, str, wsScope, wsBucket, sameWorkspaceUser, requireSameWorkspaceUser, LEAD_ROLES } from '../lib/util.js';
-import { askAI, AI_TASKS, providerStatus, pickProvider, testProvider } from '../lib/ai.js';
+import { askAI, AI_TASKS, providerStatus, pickProvider, testProvider, translateToEnglish } from '../lib/ai.js';
 import { getConfig } from '../lib/kpi.js';
 import { vEmail, vPhone, vText, vPassword } from '../lib/validate.js';
 import { hashPassword, newSetupToken, hashSetupToken } from '../lib/auth.js';
@@ -102,12 +102,51 @@ export async function miscRoutes(ctx) {
     let customerName = null;
     if (b.customerId) customerName = (await env.DB.prepare('SELECT name FROM nv_customers WHERE id=?').bind(String(b.customerId)).first())?.name || null;
     const res = await askAI(env, {
-      kind: b.kind, prompt, provider: b.provider,
+      kind: b.kind, prompt, provider: b.provider, lang: ctx.request.headers.get('X-Lang'),
       context: { products: products || [], userName: ctx.me.name, customerName, extra: str(b.extra, 800) || null },
     });
     await env.DB.prepare('INSERT INTO nv_ai_interactions (id,user_id,kind,prompt,response,created_at) VALUES (?,?,?,?,?,?)')
       .bind(uid('ai'), ctx.me.id, res.kind + (res.mock ? '' : '·' + res.provider), prompt.slice(0, 500), res.text.slice(0, 4000), now()).run();
     return json({ ...res, providers: providerStatus(env) });
+  }
+
+  // ===== Dịch dữ liệu người dùng sang tiếng Anh (giao diện EN) =====
+  // src/autoTranslate.js gửi các đoạn chữ tiếng Việt còn sót trên màn hình (tên deal, tên khách, ghi
+  // chú… — thứ từ điển cố định không dịch được). Tra bảng nv_translations trước; chỉ đoạn CHƯA từng
+  // dịch mới gọi AI, dịch xong lưu lại nên mỗi đoạn chỉ tốn AI đúng một lần cho cả hệ thống.
+  // available=false khi chưa cấu hình API key AI nào → client ngừng hỏi lại trong phiên đó.
+  if ((p = match(ctx, 'POST', '/api/i18n/translate'))) {
+    need(ctx);
+    const b = await readBody(ctx.request);
+    const texts = [...new Set((Array.isArray(b.texts) ? b.texts : [])
+      .map((s) => String(s == null ? '' : s).trim()).filter((s) => s && s.length <= 500))].slice(0, 60);
+    const translations = {};
+    if (!texts.length) return json({ translations, available: true });
+    const { results } = await env.DB.prepare(`SELECT src,en FROM nv_translations WHERE src IN (${texts.map(() => '?').join(',')})`)
+      .bind(...texts).all();
+    for (const r of results || []) translations[r.src] = r.en;
+    const missing = texts.filter((s) => !(s in translations));
+    let available = true;
+    if (missing.length) {
+      try {
+        const en = await translateToEnglish(env, missing);
+        if (!en) available = false;
+        else {
+          const t = now();
+          const stmts = [];
+          missing.forEach((s, i) => {
+            if (!en[i]) return;
+            translations[s] = en[i];
+            stmts.push(env.DB.prepare('INSERT OR REPLACE INTO nv_translations (src,en,created_at) VALUES (?,?,?)').bind(s, en[i], t));
+          });
+          if (stmts.length) await env.DB.batch(stmts);
+        }
+      } catch (e) {
+        console.error('translate error', e && e.message);
+        available = false;
+      }
+    }
+    return json({ translations, available });
   }
 
   // ===== Web Push =====

@@ -2,6 +2,7 @@ import { get, post, patch, del } from '../api.js';
 import { isLead, isAdmin } from '../state.js';
 import { esc, money, vnd, mount, chip, stat, modal, toast, bindTabs, confirmDialog } from '../ui.js';
 import { icon } from '../icons.js';
+import { t as tr, tf } from '../i18n.js';
 
 /**
  * Sales Kit — thư viện tra cứu của phòng kinh doanh: bảng gói dịch vụ và cơ chế hoa hồng Partner.
@@ -26,12 +27,12 @@ export async function render(el) {
   };
 
   const draw = (d) => `<div class="page-head">
-    <div class="grow"><h2>Sales Kit</h2><p>Bảng gói dịch vụ · công cụ nhẩm giá &amp; hoa hồng · cơ chế chia hoa hồng Partner</p></div>
+    <div class="grow"><h2>Sales Kit</h2><p>${tr('Bảng gói dịch vụ · công cụ nhẩm giá &amp; hoa hồng · cơ chế chia hoa hồng Partner')}</p></div>
   </div>
 
   <div class="seg mb">
-    <button data-tab="catalog" class="${tab === 'catalog' ? 'on' : ''}">Gói dịch vụ</button>
-    <button data-tab="partnerComm" class="${tab === 'partnerComm' ? 'on' : ''}">Hoa hồng Partner</button>
+    <button data-tab="catalog" class="${tab === 'catalog' ? 'on' : ''}">${tr('Gói dịch vụ')}</button>
+    <button data-tab="partnerComm" class="${tab === 'partnerComm' ? 'on' : ''}">${tr('Hoa hồng Partner')}</button>
   </div>
 
   ${tab === 'catalog' ? catalogTab(d) : ''}
@@ -51,9 +52,10 @@ export async function render(el) {
     el.querySelectorAll('[data-stopproduct]').forEach(b => b.onclick = () => {
       const pr = d.products.find(x => x.id === b.dataset.stopproduct);
       confirmDialog('Ngừng bán gói dịch vụ',
-        `"${pr.name}" sẽ không còn xuất hiện khi lập báo giá. Báo giá và hoa hồng đã ghi nhận giữ nguyên, và bạn bán lại được bất cứ lúc nào.`,
+        tf(() => `"${pr.name}" sẽ không còn xuất hiện khi lập báo giá. Báo giá và hoa hồng đã ghi nhận giữ nguyên, và bạn bán lại được bất cứ lúc nào.`,
+          () => `"${pr.name}" will no longer appear when creating quotes. Existing quotes and recorded commissions stay unchanged, and you can resume selling it anytime.`),
         async () => {
-          try { await del('/products/' + pr.id); toast('Đã ngừng bán ' + pr.name, 'ok'); render(el); }
+          try { await del('/products/' + pr.id); toast(tf(() => 'Đã ngừng bán ' + pr.name, () => 'Stopped selling ' + pr.name), 'ok'); render(el); }
           catch (e) { toast(e.message, 'err'); return false; }
         });
     });
@@ -85,26 +87,26 @@ function catalogTab(d) {
     <div class="dot-i">${icon(lineIcon(p.line))}</div>
     <div class="grow"><div class="t">${esc(p.name)} ${p.active ? '' : chip('Ngừng bán', 'grey')}</div>
       <div class="d">${esc(p.description || '')}</div>
-      <div class="row wrap mt" style="gap:6px">${chip(vnd(p.price) + '/' + esc(p.unit || 'gói'), 'blue')}
-        ${chip('HH ' + p.commission_rate + '%', 'green')}${chip('CK tối đa ' + p.max_discount + '%', 'amber')}</div></div>
+      <div class="row wrap mt" style="gap:6px">${chip(vnd(p.price) + '/' + esc(tr(p.unit || 'gói')), 'blue')}
+        ${chip(tr('HH') + ' ' + p.commission_rate + '%', 'green')}${chip(tr('CK tối đa') + ' ' + p.max_discount + '%', 'amber')}</div></div>
     <div class="right">
-      ${p.active ? `<button class="btn sm" data-calc="${esc(p.id)}">Tính giá</button>` : ''}
-      ${admin ? `<div class="mt"><button class="btn sm" data-editproduct="${esc(p.id)}">Sửa</button></div>
+      ${p.active ? `<button class="btn sm" data-calc="${esc(p.id)}">${tr('Tính giá')}</button>` : ''}
+      ${admin ? `<div class="mt"><button class="btn sm" data-editproduct="${esc(p.id)}">${tr('Sửa')}</button></div>
         <div class="mt">${p.active
-          ? `<button class="btn sm" data-stopproduct="${esc(p.id)}">Ngừng bán</button>`
-          : `<button class="btn sm amber" data-resellproduct="${esc(p.id)}">Bán lại</button>`}</div>` : ''}
+          ? `<button class="btn sm" data-stopproduct="${esc(p.id)}">${tr('Ngừng bán')}</button>`
+          : `<button class="btn sm amber" data-resellproduct="${esc(p.id)}">${tr('Bán lại')}</button>`}</div>` : ''}
     </div></div>`;
 
   return `${admin
-    ? '<button class="btn block mb" data-addproduct>+ Thêm gói dịch vụ</button>'
-    : '<div class="note mb">Bảng giá do Ban Giám đốc quản lý. Cần thêm hoặc sửa gói, đề nghị Admin/BGĐ cập nhật tại đây.</div>'}
+    ? `<button class="btn block mb" data-addproduct>+ ${tr('Thêm gói dịch vụ')}</button>`
+    : `<div class="note mb">${tr('Bảng giá do Ban Giám đốc quản lý. Cần thêm hoặc sửa gói, đề nghị Admin/BGĐ cập nhật tại đây.')}</div>`}
   ${groups.map(line => {
     const arr = d.products.filter(p => (p.line || '') === line);
     if (!arr.length) return '';
-    return `<div class="sec-title">${esc(line || 'Chưa phân dòng')}</div>
+    return `<div class="sec-title">${esc(tr(line || 'Chưa phân dòng'))}</div>
       <div class="card">${arr.map(row).join('')}</div>`;
   }).join('')}
-  ${d.products.length ? '' : '<div class="note">Chưa có gói dịch vụ nào trong bảng giá.</div>'}`;
+  ${d.products.length ? '' : `<div class="note">${tr('Chưa có gói dịch vụ nào trong bảng giá.')}</div>`}`;
 }
 
 /**
@@ -117,11 +119,11 @@ function productModal(d, product, after) {
   const edit = !!product;
   const lines = [...new Set([...LINES, ...d.products.map(p => p.line).filter(Boolean)])];
   modal({
-    title: edit ? 'Sửa gói: ' + product.name : 'Thêm gói dịch vụ',
+    title: edit ? tf(() => 'Sửa gói: ' + product.name, () => 'Edit package: ' + product.name) : 'Thêm gói dịch vụ',
     wide: true,
     html: `<div class="note mb">${edit
-      ? 'Đổi giá chỉ áp dụng cho báo giá lập <b>từ giờ trở đi</b> — báo giá cũ giữ nguyên đơn giá và hoa hồng đã chốt.'
-      : 'Gói mới xuất hiện ngay trong công cụ tính giá và khi lập báo giá ở Phương án kinh doanh.'}</div>`,
+      ? tr('Đổi giá chỉ áp dụng cho báo giá lập <b>từ giờ trở đi</b> — báo giá cũ giữ nguyên đơn giá và hoa hồng đã chốt.')
+      : tr('Gói mới xuất hiện ngay trong công cụ tính giá và khi lập báo giá ở Phương án kinh doanh.')}</div>`,
     fields: [
       { name: 'name', label: 'Tên gói', required: true, value: product?.name || '' },
       { name: 'line', label: 'Dòng dịch vụ', type: 'select', value: product?.line || LINES[0], options: lines.map(l => ({ v: l, n: l })) },
@@ -194,14 +196,15 @@ function estimateModal(d, presetProduct) {
 
     const overCap = lines.filter(l => disc > Number(l.p.max_discount ?? 100));
     out.innerHTML = `<div class="card mt">
-      <div class="sm">Tạm tính: <b>${vnd(subtotal)}</b></div>
-      <div class="sm">Chiết khấu: <b>${disc}%</b> (−${vnd(subtotal - total)})</div>
-      <div class="sm">Thành tiền: <b style="color:#F59E0B">${vnd(total)}</b></div>
-      <div class="sm">Hoa hồng dự kiến: <b>${vnd(commission)}</b></div>
+      <div class="sm">${tr('Tạm tính:')} <b>${vnd(subtotal)}</b></div>
+      <div class="sm">${tr('Chiết khấu:')} <b>${disc}%</b> (−${vnd(subtotal - total)})</div>
+      <div class="sm">${tr('Thành tiền:')} <b style="color:#F59E0B">${vnd(total)}</b></div>
+      <div class="sm">${tr('Hoa hồng dự kiến:')} <b>${vnd(commission)}</b></div>
     </div>
-    ${overCap.length ? `<div class="note red mt">Vượt trần chiết khấu riêng của gói: ${overCap.map(l => `${esc(l.p.name)} (trần ${l.p.max_discount}%)`).join('; ')}.</div>` : ''}
-    ${disc > d.threshold ? `<div class="note mt">Chiết khấu vượt ngưỡng ${d.threshold}% — báo giá thật sẽ phải qua TPKD duyệt (vòng 1). Lập tại <a href="#/plans">Phương án kinh doanh</a>.</div>` : ''}
-    <div class="xs mut mt">Đây chỉ là ước tính tại chỗ, không tạo báo giá và không lưu lại.</div>`;
+    ${overCap.length ? `<div class="note red mt">${tf(() => 'Vượt trần chiết khấu riêng của gói: ' + overCap.map(l => `${esc(l.p.name)} (trần ${l.p.max_discount}%)`).join('; ') + '.',
+      () => "Exceeds the package's own discount cap: " + overCap.map(l => `${esc(l.p.name)} (cap ${l.p.max_discount}%)`).join('; ') + '.')}</div>` : ''}
+    ${disc > d.threshold ? `<div class="note mt">${tf(() => `Chiết khấu vượt ngưỡng ${d.threshold}% — báo giá thật sẽ phải qua TPKD duyệt (vòng 1). Lập tại`, () => `Discount exceeds the ${d.threshold}% threshold — a real quote will require Sales Manager approval (round 1). Create one at`)} <a href="#/plans">${tr('Phương án kinh doanh')}</a>.</div>` : ''}
+    <div class="xs mut mt">${tr('Đây chỉ là ước tính tại chỗ, không tạo báo giá và không lưu lại.')}</div>`;
   };
 
   form.addEventListener('input', calc);
@@ -224,7 +227,7 @@ function estimateModal(d, presetProduct) {
 function rateModal(key, partnerRate, saleRate, after) {
   const prefix = `partner_${key.toLowerCase()}_`;
   const { root } = modal({
-    title: 'Điều chỉnh hoa hồng — ' + SCHEME_NAME[key],
+    title: tf(() => 'Điều chỉnh hoa hồng — ' + SCHEME_NAME[key], () => 'Adjust commission — ' + SCHEME_NAME[key]),
     fields: [
       { name: 'partnerRate', label: 'Partner nhận (%)', type: 'number', value: partnerRate, required: true },
       { name: 'saleRate', label: 'Sale nhận (%)', type: 'number', value: saleRate, required: true },
@@ -238,7 +241,7 @@ function rateModal(key, partnerRate, saleRate, after) {
       try {
         await post('/config', { key: prefix + 'partner_rate', value: pr });
         await post('/config', { key: prefix + 'sale_rate', value: sr });
-        toast(`Đã cập nhật ${SCHEME_NAME[key]}: partner ${pr}% · sale ${sr}%`, 'ok');
+        toast(tf(() => `Đã cập nhật ${SCHEME_NAME[key]}: partner ${pr}% · sale ${sr}%`, () => `Updated ${SCHEME_NAME[key]}: partner ${pr}% · sale ${sr}%`), 'ok');
         after();
       } catch (e) { toast(e.message, 'err'); return false; }
     },
@@ -253,11 +256,11 @@ function rateModal(key, partnerRate, saleRate, after) {
     const pr = Number(v.partnerRate) || 0, sr = Number(v.saleRate) || 0;
     const sample = 500000000;
     out.innerHTML = `<div class="card mt">
-      <div class="sm">Tổng chi hoa hồng: <b${pr + sr > 100 ? ' style="color:var(--red)"' : ''}>${(pr + sr).toFixed(1)}%</b></div>
-      <div class="sm mut">Trên hợp đồng mẫu ${vnd(sample)}: partner ${money(sample * pr / 100)} · sale ${money(sample * sr / 100)}
-        · còn lại cho công ty <b>${money(sample * (100 - pr - sr) / 100)}</b></div>
+      <div class="sm">${tr('Tổng chi hoa hồng:')} <b${pr + sr > 100 ? ' style="color:var(--red)"' : ''}>${(pr + sr).toFixed(1)}%</b></div>
+      <div class="sm mut">${tr('Trên hợp đồng mẫu')} ${vnd(sample)}: partner ${money(sample * pr / 100)} · sale ${money(sample * sr / 100)}
+        · ${tr('còn lại cho công ty')} <b>${money(sample * (100 - pr - sr) / 100)}</b></div>
     </div>
-    <div class="xs mut mt">Áp dụng cho deal chốt từ lúc lưu trở đi. Cùng giá trị với Quản trị → Ngưỡng &amp; SLA
+    <div class="xs mut mt">${tr('Áp dụng cho deal chốt từ lúc lưu trở đi. Cùng giá trị với Quản trị → Ngưỡng &amp; SLA')}
       (<code>${esc(prefix)}partner_rate</code>, <code>${esc(prefix)}sale_rate</code>).</div>`;
   };
   form.addEventListener('input', calc);
@@ -269,7 +272,7 @@ function rateModal(key, partnerRate, saleRate, after) {
  * cần biết ai làm gì và ăn bao nhiêu, mã nội bộ chỉ thêm một lớp phải dịch. Pipeline vẫn hiện mã
  * khi gắn phương án cho deal (src/const.js PA_OPTIONS) vì ở đó đang chọn đúng trường dữ liệu.
  */
-const SCHEME_NAME = { PA1: 'Partner giới thiệu', PA2: 'Partner tự chốt' };
+const SCHEME_NAME = { get PA1() { return tr('Partner giới thiệu'); }, get PA2() { return tr('Partner tự chốt'); } };
 
 /**
  * Hoa hồng khách hàng đến từ Partner — hai cơ chế chia tiền khác hẳn nhau, nên trình bày cạnh
@@ -290,34 +293,34 @@ function partnerCommissionTab(d) {
   const schemeCard = (key, s, who) => `<div class="card">
     <div class="row wrap"><div class="grow b">${esc(SCHEME_NAME[key])}</div>
       ${isLead() ? `<button class="btn sm" data-rate="${esc(key)}"
-        data-partner="${s.partnerRate}" data-sale="${s.saleRate}">${icon('slidersHorizontal', 14)} Điều chỉnh</button>` : ''}</div>
+        data-partner="${s.partnerRate}" data-sale="${s.saleRate}">${icon('slidersHorizontal', 14)} ${tr('Điều chỉnh')}</button>` : ''}</div>
     <div class="sm mut">${esc(who)}</div>
     <div class="grid g2 mt">
       ${stat('Partner nhận', s.partnerRate + '%', 'Trên giá trị hợp đồng', 'amber')}
       ${stat('Sale nhận', s.saleRate + '%', 'Trên giá trị hợp đồng', 'green')}
     </div>
-    <div class="sm mut mt">Tổng chi hoa hồng: <b>${(s.partnerRate + s.saleRate).toFixed(1)}%</b></div>
+    <div class="sm mut mt">${tr('Tổng chi hoa hồng:')} <b>${(s.partnerRate + s.saleRate).toFixed(1)}%</b></div>
   </div>`;
 
   // Bảng ví dụ trên một giá trị tròn để so sánh nhanh — không phải số của deal cụ thể nào.
   const sample = 500000000;
-  return `<div class="note mb">Cơ chế áp dụng khi <b>deal được gắn phương án hợp tác</b> ở Pipeline và khách hàng có gắn Partner trong CRM.
-    Khi deal chuyển sang "đã chốt", hệ thống ghi hoa hồng theo đúng cơ chế tương ứng thay vì tỉ lệ theo gói dịch vụ.
+  return `<div class="note mb">${tr('Cơ chế áp dụng khi')} <b>${tr('deal được gắn phương án hợp tác')}</b> ${tr('ở Pipeline và khách hàng có gắn Partner trong CRM.')}
+    ${tr('Khi deal chuyển sang "đã chốt", hệ thống ghi hoa hồng theo đúng cơ chế tương ứng thay vì tỉ lệ theo gói dịch vụ.')}
     ${isLead()
-      ? 'Đổi tỉ lệ bằng nút <b>Điều chỉnh</b> trên từng cơ chế — áp dụng cho các deal chốt <b>từ lúc đổi trở đi</b>, deal đã chốt giữ nguyên tỉ lệ tại thời điểm chốt.'
-      : 'Tỉ lệ do Trưởng phòng KD / Ban Giám đốc đặt.'}</div>
+      ? tr('Đổi tỉ lệ bằng nút <b>Điều chỉnh</b> trên từng cơ chế — áp dụng cho các deal chốt <b>từ lúc đổi trở đi</b>, deal đã chốt giữ nguyên tỉ lệ tại thời điểm chốt.')
+      : tr('Tỉ lệ do Trưởng phòng KD / Ban Giám đốc đặt.')}</div>
 
   <div class="grid g2">
-    ${schemeCard('PA1', pa1, 'Kinh doanh làm toàn bộ công đoạn bán hàng; partner hưởng phí giới thiệu.')}
-    ${schemeCard('PA2', pa2, 'Partner tự chăm sóc và chốt; sale hỗ trợ hồ sơ và đưa qua quy trình duyệt nội bộ.')}
+    ${schemeCard('PA1', pa1, tr('Kinh doanh làm toàn bộ công đoạn bán hàng; partner hưởng phí giới thiệu.'))}
+    ${schemeCard('PA2', pa2, tr('Partner tự chăm sóc và chốt; sale hỗ trợ hồ sơ và đưa qua quy trình duyệt nội bộ.'))}
   </div>
 
-  <div class="sec-title">So sánh trên hợp đồng mẫu ${vnd(sample)}</div>
+  <div class="sec-title">${tr('So sánh trên hợp đồng mẫu')} ${vnd(sample)}</div>
   <div class="tbl-wrap">
     <table>
-      <thead><tr><th>Phương án</th><th>Ai làm phần lớn</th><th>Partner nhận</th><th>Sale nhận</th><th>Tổng chi</th><th>Còn lại cho công ty</th></tr></thead>
+      <thead><tr><th>${tr('Phương án')}</th><th>${tr('Ai làm phần lớn')}</th><th>${tr('Partner nhận')}</th><th>${tr('Sale nhận')}</th><th>${tr('Tổng chi')}</th><th>${tr('Còn lại cho công ty')}</th></tr></thead>
       <tbody>
-        ${[['PA1', pa1, 'Kinh doanh'], ['PA2', pa2, 'Partner']].map(([k, s, who]) => {
+        ${[['PA1', pa1, tr('Kinh doanh')], ['PA2', pa2, 'Partner']].map(([k, s, who]) => {
           const pAmt = sample * s.partnerRate / 100, sAmt = sample * s.saleRate / 100;
           return `<tr>
             <td><b>${esc(SCHEME_NAME[k])}</b></td><td class="sm">${esc(who)}</td>
@@ -329,7 +332,7 @@ function partnerCommissionTab(d) {
     </table>
   </div>
 
-  <div class="sec-title">Deal đang áp cơ chế Partner (${paDeals.length})</div>
+  <div class="sec-title">${tr('Deal đang áp cơ chế Partner')} (${paDeals.length})</div>
   <div class="card">${paDeals.length ? paDeals.map(x => {
     const s = x.phuong_an_hop_tac === 'PA1' ? pa1 : pa2;
     return `<div class="item">
@@ -339,12 +342,12 @@ function partnerCommissionTab(d) {
         <div class="d xs">Partner ${s.partnerRate}% = ${money(x.value * s.partnerRate / 100)} · sale ${s.saleRate}% = ${money(x.value * s.saleRate / 100)}</div></div>
       ${chip(x.status === 'won' ? 'Đã chốt' : 'Đang mở', x.status === 'won' ? 'green' : 'grey')}
     </div>`;
-  }).join('') : '<div class="sm mut">Chưa có deal nào gắn phương án hợp tác nào.</div>'}</div>
+  }).join('') : `<div class="sm mut">${tr('Chưa có deal nào gắn phương án hợp tác nào.')}</div>`}</div>
 
-  <div class="sec-title">Khách hàng gắn Partner (${partnerCustomers.length})</div>
+  <div class="sec-title">${tr('Khách hàng gắn Partner')} (${partnerCustomers.length})</div>
   <div class="card">${partnerCustomers.length ? partnerCustomers.map(c => `<a class="item" href="#/crm/${esc(c.id)}">
       <div class="dot-i">${icon('folderOpen')}</div>
       <div class="grow"><div class="t">${esc(c.name)}</div>
         <div class="d">${esc(partnerName(c.partner_id))} · ${esc(c.owner_name || '')}</div></div>
-    </a>`).join('') : '<div class="sm mut">Chưa có khách hàng nào gắn Partner trong CRM.</div>'}</div>`;
+    </a>`).join('') : `<div class="sm mut">${tr('Chưa có khách hàng nào gắn Partner trong CRM.')}</div>`}</div>`;
 }

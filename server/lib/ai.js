@@ -190,7 +190,7 @@ function detect(kind, prompt) {
   return 'coach';
 }
 
-export async function askAI(env, { kind, prompt, context, provider, document }) {
+export async function askAI(env, { kind, prompt, context, provider, document, lang }) {
   const k = detect(kind, prompt);
   const ctx = context || {};
   const p = (prompt || '').trim();
@@ -202,7 +202,11 @@ export async function askAI(env, { kind, prompt, context, provider, document }) 
     return { ...m, provider: 'mock', providerLabel: 'AI mẫu (offline)', model: 'rule-based', notice: sel.notice };
   }
 
-  const system = buildSystem(k, ctx);
+  // Giao diện đang ở tiếng Anh (header X-Lang từ src/api.js) → trả lời bằng tiếng Anh. Đặt SAU toàn bộ
+  // hướng dẫn tiếng Việt của buildSystem để ghi đè các câu kiểu "viết bằng tiếng Việt" trong TASK_GUIDE.
+  const system = buildSystem(k, ctx) + (lang === 'en'
+    ? '\n\nIMPORTANT: The user interface is in English. Write the ENTIRE answer in natural English, regardless of any earlier instruction to write in Vietnamese. Keep product names, prices and numbers exact; write Vietnamese person names without diacritics.'
+    : '');
   const userMsg = [
     p ? `Yêu cầu của sales: ${p}` : `Thực hiện tác vụ "${k}" cho tình huống hiện tại.`,
     ctx.customerName ? `Khách hàng: ${ctx.customerName}` : '',
@@ -224,6 +228,31 @@ export async function askAI(env, { kind, prompt, context, provider, document }) 
       notice: `Không gọi được ${providerLabel(sel.key)}: ${e.message}. Đang hiển thị nội dung mẫu.`,
     };
   }
+}
+
+/* --------------------- Dịch dữ liệu người dùng sang EN --------------------- */
+
+const TRANSLATE_SYSTEM = [
+  'You translate short Vietnamese texts taken from the screens of a B2B sales CRM (NetViet, a Vietnamese media & video production company: TVC, AI video, gameshows, TikTok/YouTube channel building) into natural, concise English.',
+  'Rules:',
+  '- Translate every item completely into English. Never leave Vietnamese words in the output.',
+  '- Person names: keep the name but remove Vietnamese diacritics (Nguyễn Văn Hậu → Nguyen Van Hau).',
+  '- Company, brand and organisation names: translate the generic part and keep the proper-noun part without diacritics (Tập đoàn BĐS An Phát → An Phat Real Estate Group; Ngân hàng TMCP Đông Đô → Dong Do Joint Stock Commercial Bank).',
+  '- Keep numbers, amounts, dates, codes, #ids, URLs, emoji and punctuation exactly. "đ" after an amount means VND; "triệu" = million, "tỷ" = billion.',
+  '- Keep the same tone and length; do not add explanations.',
+  'Input: a JSON array of strings. Output: ONLY a JSON array of English strings with exactly the same length and order.',
+].join('\n');
+
+/** Dịch một lô chuỗi tiếng Việt sang tiếng Anh bằng nhà cung cấp AI đã cấu hình. Trả null khi chưa có
+ * API key nào (chế độ AI mẫu) để nơi gọi biết là "không dịch được" chứ không phải lỗi. */
+export async function translateToEnglish(env, texts) {
+  const sel = pickProvider(env, 'auto');
+  if (sel.key === 'mock') return null;
+  const r = await callProvider(env, sel.key, TRANSLATE_SYSTEM, JSON.stringify(texts), 4000);
+  const raw = String(r.text || '');
+  const arr = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1));
+  if (!Array.isArray(arr) || arr.length !== texts.length) throw new Error('AI trả về sai số lượng bản dịch');
+  return arr.map((x) => String(x == null ? '' : x).trim());
 }
 
 /** Kiểm tra kết nối nhanh tới 1 nhà cung cấp — dùng cho nút "Test kết nối" ở màn Quản trị. */

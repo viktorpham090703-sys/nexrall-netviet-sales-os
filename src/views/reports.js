@@ -3,6 +3,7 @@ import { esc, money, mount, chip, empty, toast, modal, stat, fmtDT } from '../ui
 import { roleLabel } from '../const.js';
 import { icon } from '../icons.js';
 import { initScrollFx } from '../scrollFx.js';
+import { t as tr, tf } from '../i18n.js';
 
 const pageRange = (page, pageSize, total) => {
   if (!total) return '0/0';
@@ -26,9 +27,9 @@ export async function render(el) {
       <div class="row"><div class="grow b">${esc(s.userName)}</div>${chip(roleLabel({ id: s.userId, role: s.role, title: s.title }))}</div>
       ${s.items.length ? s.items.map(r => `<div class="item">
         <div class="dot-i">${icon(r.kind === 'week' ? 'calendar' : r.kind === 'month' ? 'calendarDays' : 'notepadText')}</div>
-        <div class="grow"><div class="t">${r.kind === 'week' ? 'Báo cáo tuần' : r.kind === 'month' ? 'Tổng hợp tháng' : 'EOD'} ${esc(r.period)}</div>
-          <div class="d xs mut">Nộp lúc ${fmtDT(r.submitted_at)}</div>
-          <div class="d">${r.calls} gọi · ${r.meetings} gặp · ${r.new_contacts} liên hệ mới · ${r.deals_moved} deal chuyển GĐ${r.revenue ? ' · DT ' + money(r.revenue) : ''}</div>
+        <div class="grow"><div class="t">${r.kind === 'week' ? tr('Báo cáo tuần') : r.kind === 'month' ? tr('Tổng hợp tháng') : 'EOD'} ${esc(r.period)}</div>
+          <div class="d xs mut">${tr('Nộp lúc')} ${fmtDT(r.submitted_at)}</div>
+          <div class="d">${r.calls} ${tr('gọi')} · ${r.meetings} ${tr('gặp')} · ${r.new_contacts} ${tr('liên hệ mới')} · ${r.deals_moved} ${tr('deal chuyển GĐ')}${r.revenue ? ' · ' + tr('DT') + ' ' + money(r.revenue) : ''}</div>
           ${r.highlight ? `<div class="d xs">${icon('lightbulb', 12)} ${esc(r.highlight)}</div>` : ''}
           ${r.blocker ? `<div class="d xs">${icon('construction', 12)} ${esc(r.blocker)}</div>` : ''}</div>
         <div class="row" style="gap:6px">${r.highlight?.startsWith('Hệ thống tự tổng hợp và tự nộp') ? chip('Tự nộp', 'blue') : ''}
@@ -47,7 +48,7 @@ export async function render(el) {
   const draftCard = (label, dr, submitted, kind, deadlineHour, extra = '') => `<div class="card">
     <div class="row wrap"><div class="grow b">${esc(label)} (${esc(dr.period)})</div>
       ${chip('Tự tổng hợp', 'green')}
-      ${submitted ? chip('Đã nộp', 'green') : chip(kind === 'day' ? 'Chưa nộp · hạn ' + deadlineHour + 'h' : kind === 'week' ? 'Chưa nộp · hạn T6 17h' : 'Chưa nộp · hạn cuối tháng 17h', 'amber')}</div>
+      ${submitted ? chip('Đã nộp', 'green') : chip(kind === 'day' ? tr('Chưa nộp · hạn') + ' ' + deadlineHour + 'h' : kind === 'week' ? 'Chưa nộp · hạn T6 17h' : 'Chưa nộp · hạn cuối tháng 17h', 'amber')}</div>
     <div class="grid g4 mt">
       ${stat('Cuộc gọi', dr.calls)}${stat('Gặp/Demo', dr.meetings)}
       ${stat('Liên hệ mới', dr.new_contacts)}${stat('Tương tác với khách', dr.customer_touches)}
@@ -57,7 +58,7 @@ export async function render(el) {
       ${stat('Báo giá gửi đi', dr.quotes_sent)}${stat('Doanh thu ký', money(dr.revenue))}
     </div>
     ${extra}
-    <button class="btn primary block mt" data-post="${kind}">${submitted ? 'Cập nhật báo cáo' : 'Xác nhận & nộp báo cáo'}</button>
+    <button class="btn primary block mt" data-post="${kind}">${submitted ? tr('Cập nhật báo cáo') : tr('Xác nhận & nộp báo cáo')}</button>
   </div>`;
 
   /* Biểu đồ 7 ngày — cho thấy nhịp làm việc trong tuần chứ không chỉ một cục tổng. Cột cuối là
@@ -69,28 +70,28 @@ export async function render(el) {
       <div class="bx" style="height:${Math.round(x.activities / max * 62)}px"></div>
       <div class="cl">${esc(x.date.slice(8) + '/' + x.date.slice(5, 7))}</div>
     </div>`).join('')}</div>
-    <div class="xs mut mt">Số hoạt động ghi nhận theo ngày · cột cuối là hôm nay</div>`;
+    <div class="xs mut mt">${tr('Số hoạt động ghi nhận theo ngày · cột cuối là hôm nay')}</div>`;
   };
 
   const draw = (d) => `
     <div class="page-head">
-      <div class="grow"><h2>Báo cáo</h2>
-        <p>Ngày · tuần · tháng tự tổng hợp từ dữ liệu thêm mới và cập nhật — bạn chỉ bổ sung phần định tính</p></div>
+      <div class="grow"><h2>${tr('Báo cáo')}</h2>
+        <p>${tr('Ngày · tuần · tháng tự tổng hợp từ dữ liệu thêm mới và cập nhật — bạn chỉ bổ sung phần định tính')}</p></div>
     </div>
 
     <div class="seg mb">
-      <button data-rp="day" class="${rpTab === 'day' ? 'on' : ''}">Báo cáo ngày</button>
-      <button data-rp="week" class="${rpTab === 'week' ? 'on' : ''}">Báo cáo tuần</button>
-      <button data-rp="month" class="${rpTab === 'month' ? 'on' : ''}">Tổng hợp tháng</button>
+      <button data-rp="day" class="${rpTab === 'day' ? 'on' : ''}">${tr('Báo cáo ngày')}</button>
+      <button data-rp="week" class="${rpTab === 'week' ? 'on' : ''}">${tr('Báo cáo tuần')}</button>
+      <button data-rp="month" class="${rpTab === 'month' ? 'on' : ''}">${tr('Tổng hợp tháng')}</button>
     </div>
 
-    ${rpTab === 'day' ? draftCard('Báo cáo hôm nay', d.draft, d.submittedToday, 'day', d.deadlineHour,
-      `<div class="sm mut mt">Định mức ngày: liên hệ mới ${d.draft.new_contacts}/${d.quota.contacts_day} ·
-        gọi ${d.draft.calls}/${d.quota.calls_day} · gặp ${d.draft.meetings}/${d.quota.meetings_day}</div>`)
-      : rpTab === 'week' ? draftCard('Báo cáo tuần', d.weekDraft, d.submittedWeek, 'week', d.deadlineHour, sparkline(d.trend || []))
-        : draftCard('Tổng hợp tháng', d.monthDraft, d.submittedMonth, 'month', d.deadlineHour)}
+    ${rpTab === 'day' ? draftCard(tr('Báo cáo hôm nay'), d.draft, d.submittedToday, 'day', d.deadlineHour,
+      `<div class="sm mut mt">${tr('Định mức ngày:')} ${tr('liên hệ mới')} ${d.draft.new_contacts}/${d.quota.contacts_day} ·
+        ${tr('gọi')} ${d.draft.calls}/${d.quota.calls_day} · ${tr('gặp')} ${d.draft.meetings}/${d.quota.meetings_day}</div>`)
+      : rpTab === 'week' ? draftCard(tr('Báo cáo tuần'), d.weekDraft, d.submittedWeek, 'week', d.deadlineHour, sparkline(d.trend || []))
+        : draftCard(tr('Tổng hợp tháng'), d.monthDraft, d.submittedMonth, 'month', d.deadlineHour)}
 
-    <div class="sec-title">Lịch sử báo cáo</div>
+    <div class="sec-title">${tr('Lịch sử báo cáo')}</div>
     ${drawHistory(d)}`;
 
   // Nhiều nhân sự (TPKD/Admin) → chuyển sang tab chọn từng người thay vì xếp chồng dọc; 1 nhân sự
@@ -138,14 +139,14 @@ export async function render(el) {
  * hôm nay đi nộp (sai kỳ) và về nguyên tắc còn sửa được số bằng cách gọi thẳng API.
  */
 function openForm(kind, after) {
-  const label = kind === 'month' ? 'tháng' : kind === 'week' ? 'tuần' : 'ngày';
+  const label = kind === 'month' ? tr('tháng') : kind === 'week' ? tr('tuần') : tr('ngày');
   modal({
     title: kind === 'month' ? 'Tổng hợp tháng' : kind === 'week' ? 'Báo cáo tuần' : 'Báo cáo cuối ngày (EOD)',
-    html: `<div class="sm mut mb">Số liệu định lượng của kỳ này đã được hệ thống tự tổng hợp — không cần nhập lại.</div>`,
+    html: `<div class="sm mut mb">${tr('Số liệu định lượng của kỳ này đã được hệ thống tự tổng hợp — không cần nhập lại.')}</div>`,
     fields: [
       { name: 'highlight', label: 'Điểm nổi bật / kết quả đạt được', type: 'textarea', rows: 2, required: true },
       { name: 'blocker', label: 'Khó khăn cần hỗ trợ', type: 'textarea', rows: 2 },
-      { name: 'plan', label: `Kế hoạch ${label} tới`, type: 'textarea', rows: 2 },
+      { name: 'plan', label: tf(() => `Kế hoạch ${label} tới`, () => `Plan for next ${label}`), type: 'textarea', rows: 2 },
     ],
     submitText: 'Nộp báo cáo',
     onSubmit: async (v) => {

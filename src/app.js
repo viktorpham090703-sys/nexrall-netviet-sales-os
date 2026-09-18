@@ -4,6 +4,8 @@ import { esc, avatar, toast, modal, rel, empty, beginRender, closeOverlay } from
 import { openCreateSheet } from './create.js';
 import { roleLabel, BRAND_LOGO } from './const.js';
 import { icon, dot } from './icons.js';
+import { t, tf, isEn, toggleLang, personName } from './i18n.js';
+import { initAutoTranslate } from './autoTranslate.js';
 
 import * as VLogin from './views/login.js';
 import * as VSetPassword from './views/setPassword.js';
@@ -34,11 +36,11 @@ const VIEWS = {
 /* Thanh điều hướng dưới (điện thoại, vai trò sales): ưu tiên việc sale làm nhiều nhất trong ngày —
  * Trang chủ · Khách hàng · Tạo mới (nút nổi, mở sheet chọn loại) · Công việc · Báo cáo · Thêm (mở
  * ngăn kéo menu đầy đủ: Pipeline, Tìm khách, KPI, Sales Kit…). Menu desktop giữ nguyên. */
-const SALES_NAV = [
-  ['cockpit', icon('home', 20), 'Trang chủ'], ['crm', icon('users', 20), 'Khách hàng'],
-  ['create', icon('plus', 24), 'Tạo mới'],
-  ['tasks', icon('listChecks', 20), 'Công việc'], ['reports', icon('clipboardList', 20), 'Báo cáo'],
-  ['more', icon('moreHorizontal', 20), 'Thêm'],
+const SALES_NAV = () => [
+  ['cockpit', icon('home', 20), t('Trang chủ')], ['crm', icon('users', 20), t('Khách hàng')],
+  ['create', icon('plus', 24), t('Tạo mới')],
+  ['tasks', icon('listChecks', 20), t('Công việc')], ['reports', icon('clipboardList', 20), t('Báo cáo')],
+  ['more', icon('moreHorizontal', 20), t('Thêm')],
 ];
 /* MỌI vai trò đều phải có thanh dưới trên điện thoại. Trước đây thanh này chỉ dựng cho sales, nên
  * Trưởng phòng / BGĐ / HCNS mở app trên điện thoại là không thấy thanh nào — chỉ còn nút hamburger,
@@ -47,27 +49,27 @@ const SALES_NAV = [
  *
  * TP/BGĐ: ưu tiên việc điều hành đội — Console (duyệt, cảnh báo), Pipeline đội, giao việc. Vẫn có
  * "Tạo mới" vì TP cũng tự đứng tên khách/deal của mình và giao việc xuống sale. */
-const LEAD_NAV_BOTTOM = [
-  ['console', icon('slidersHorizontal', 20), 'Console'], ['pipeline', icon('barChart2', 20), 'Pipeline'],
-  ['create', icon('plus', 24), 'Tạo mới'],
-  ['tasks', icon('listChecks', 20), 'Giao việc'], ['reports', icon('clipboardList', 20), 'Báo cáo'],
-  ['more', icon('moreHorizontal', 20), 'Thêm'],
+const LEAD_NAV_BOTTOM = () => [
+  ['console', icon('slidersHorizontal', 20), t('Console')], ['pipeline', icon('barChart2', 20), t('Pipeline')],
+  ['create', icon('plus', 24), t('Tạo mới')],
+  ['tasks', icon('listChecks', 20), t('Giao việc')], ['reports', icon('clipboardList', 20), t('Báo cáo')],
+  ['more', icon('moreHorizontal', 20), t('Thêm')],
 ];
 /* HCNS chỉ xem / xét duyệt, không giữ khách hay deal nào — thanh dưới đúng 3 mục của HR_NAV kèm
  * "Thêm", KHÔNG có "Tạo mới" (không có bản ghi kinh doanh nào thuộc về HCNS để tạo). */
-const HR_NAV_BOTTOM = [
-  ['console', icon('home', 20), 'Trang chủ'], ['prospect', icon('search', 20), 'Duyệt Thầu'],
-  ['admin', icon('usersRound', 20), 'Quản trị'], ['more', icon('moreHorizontal', 20), 'Thêm'],
+const HR_NAV_BOTTOM = () => [
+  ['console', icon('home', 20), t('Trang chủ')], ['prospect', icon('search', 20), t('Duyệt Thầu')],
+  ['admin', icon('usersRound', 20), t('Quản trị')], ['more', icon('moreHorizontal', 20), t('Thêm')],
 ];
-const SALES_SIDE_NAV = [
-  { sec: 'Điều hành', items: [['cockpit', icon('home'), 'Trang chủ'], ['pipeline', icon('barChart2'), 'Pipeline'], ['prospect', icon('search'), 'Tìm khách'], ['tasks', icon('inbox'), 'Việc']] },
-  { sec: 'Khác', items: [['crm', icon('folderOpen'), 'CRM 360° Khách hàng'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['ai', icon('bot'), 'AI Trợ lý'], ['activities', icon('calendarDays'), 'Lịch & Hoạt động'], ['reports', icon('clipboardList'), 'Báo cáo EOD & Tuần'], ['kpi', icon('trophy'), 'KPI & Hoa hồng'], ['saleskit', icon('fileText'), 'Sales Kit'], ['training', icon('graduationCap'), 'Đào tạo']] },
+const SALES_SIDE_NAV = () => [
+  { sec: t('Điều hành'), items: [['cockpit', icon('home'), t('Trang chủ')], ['pipeline', icon('barChart2'), t('Pipeline')], ['prospect', icon('search'), t('Tìm khách')], ['tasks', icon('inbox'), t('Việc')]] },
+  { sec: t('Khác'), items: [['crm', icon('folderOpen'), t('CRM 360° Khách hàng')], ['plans', icon('clipboardList'), t('Phương án kinh doanh')], ['ai', icon('bot'), t('AI Trợ lý')], ['activities', icon('calendarDays'), t('Lịch & Hoạt động')], ['reports', icon('clipboardList'), t('Báo cáo EOD & Tuần')], ['kpi', icon('trophy'), t('KPI & Hoa hồng')], ['saleskit', icon('fileText'), t('Sales Kit')], ['training', icon('graduationCap'), t('Đào tạo')]] },
 ];
-const LEAD_NAV = [
-  { sec: 'Điều hành', items: [['console', icon('slidersHorizontal'), 'Console đội'], ['cockpit', icon('home'), 'Trang chủ cá nhân'], ['tasks', icon('inbox'), 'Giao việc & SLA']] },
-  { sec: 'Kinh doanh', items: [['pipeline', icon('barChart2'), 'Pipeline đội'], ['crm', icon('folderOpen'), 'CRM 360°'], ['plans', icon('clipboardList'), 'Phương án kinh doanh'], ['prospect', icon('search'), 'Tìm khách & Thầu'], ['saleskit', icon('fileText'), 'Sales Kit']] },
-  { sec: 'Đo lường', items: [['reports', icon('clipboardList'), 'Báo cáo'], ['kpi', icon('trophy'), 'KPI · Hoa hồng · PIP'], ['activities', icon('calendarDays'), 'Hoạt động']] },
-  { sec: 'Khác', items: [['training', icon('graduationCap'), 'Đào tạo'], ['ai', icon('bot'), 'AI Trợ lý'], ['admin', icon('usersRound'), 'Quản trị']] },
+const LEAD_NAV = () => [
+  { sec: t('Điều hành'), items: [['console', icon('slidersHorizontal'), t('Console đội')], ['cockpit', icon('home'), t('Trang chủ cá nhân')], ['tasks', icon('inbox'), t('Giao việc & SLA')]] },
+  { sec: t('Kinh doanh'), items: [['pipeline', icon('barChart2'), t('Pipeline đội')], ['crm', icon('folderOpen'), t('CRM 360°')], ['plans', icon('clipboardList'), t('Phương án kinh doanh')], ['prospect', icon('search'), t('Tìm khách & Thầu')], ['saleskit', icon('fileText'), t('Sales Kit')]] },
+  { sec: t('Đo lường'), items: [['reports', icon('clipboardList'), t('Báo cáo')], ['kpi', icon('trophy'), t('KPI · Hoa hồng · PIP')], ['activities', icon('calendarDays'), t('Hoạt động')]] },
+  { sec: t('Khác'), items: [['training', icon('graduationCap'), t('Đào tạo')], ['ai', icon('bot'), t('AI Trợ lý')], ['admin', icon('usersRound'), t('Quản trị')]] },
 ];
 /* HCNS chỉ cần xem/xét duyệt — không có nhiệm vụ điều hành đội sales (Pipeline, CRM, Báo cáo,
  * KPI, Đào tạo...), nên menu chỉ còn đúng 3 mục. "console" giữ nguyên route (đã là trang duyệt
@@ -75,11 +77,11 @@ const LEAD_NAV = [
  * Từng có thêm "Duyệt Báo giá" và "Duyệt Hợp đồng" trỏ vào route saleskit/activities của phòng
  * kinh doanh — bỏ đi vì Console HCNS đã gộp sẵn báo giá + hợp đồng + hồ sơ thầu vào một danh
  * sách duy nhất (mergedApproval ở views/console.js), hai mục kia chỉ là cùng dữ liệu tách đôi. */
-const HR_NAV = [
-  { sec: 'Điều hành', items: [
-    ['console', icon('home'), 'Trang chủ'],
-    ['prospect', icon('search'), 'Duyệt Thầu'],
-    ['admin', icon('usersRound'), 'Quản trị'],
+const HR_NAV = () => [
+  { sec: t('Điều hành'), items: [
+    ['console', icon('home'), t('Trang chủ')],
+    ['prospect', icon('search'), t('Duyệt Thầu')],
+    ['admin', icon('usersRound'), t('Quản trị')],
   ] },
 ];
 
@@ -108,8 +110,8 @@ const sideLink = (key, ic, label, view) =>
 function shell(view) {
   const me = state.me;
   const lead = isLead();
-  const navGroups = me.role === 'hr' ? HR_NAV : lead ? LEAD_NAV : SALES_SIDE_NAV;
-  const bottomNav = me.role === 'hr' ? HR_NAV_BOTTOM : lead ? LEAD_NAV_BOTTOM : SALES_NAV;
+  const navGroups = me.role === 'hr' ? HR_NAV() : lead ? LEAD_NAV() : SALES_SIDE_NAV();
+  const bottomNav = me.role === 'hr' ? HR_NAV_BOTTOM() : lead ? LEAD_NAV_BOTTOM() : SALES_NAV();
   const nav = navGroups.map(g => `<div class="sec">${esc(g.sec)}</div>` + g.items
     .filter(i => i[0] !== 'admin' || isLead())
     .map(i => sideLink(i[0], i[1], i[2], view)).join('')).join('');
@@ -119,15 +121,15 @@ function shell(view) {
       <a href="#/profile" class="side-profile-btn ${view === 'profile' ? 'active' : ''}">
         ${avatar(me)}
         <div class="side-profile-info">
-          <div class="side-profile-name">${esc(me.name)}</div>
+          <div class="side-profile-name">${esc(personName(me.name))}</div>
           <div class="side-profile-role">${esc(roleLabel(me))}</div>
         </div>
       </a>
       ${nav}
-      <div class="sec">Hệ thống</div>${sideLink('more', icon('settings', 15), 'Cài đặt', view)}
+      <div class="sec">${t('Hệ thống')}</div>${sideLink('more', icon('settings', 15), t('Cài đặt'), view)}
     </aside>
     <button class="side-toggle" data-side-toggle type="button"
-      aria-label="Thu gọn / mở rộng menu">${icon('chevronRight', 15)}</button>
+      aria-label="${t('Thu gọn / mở rộng menu')}">${icon('chevronRight', 15)}</button>
     <div class="grow" style="min-width:0;display:flex;flex-direction:column">
       <header class="topbar">
         <button class="icon-btn menu-btn" data-menu>${icon('menu', 18)}</button>
@@ -136,11 +138,12 @@ function shell(view) {
           <span class="clock-time"><span data-clock-time>${clockTime(new Date())}</span><span class="clock-zone" data-clock-zone>${clockZone(new Date())}</span></span>
         </div>
         <div class="grow"></div>
+        <button class="icon-btn lang-toggle" data-lang-toggle type="button" title="${esc(t('Ngôn ngữ'))}">${isEn() ? 'EN' : 'VI'}</button>
         <button class="icon-btn" data-noti>${notiBadge()}</button>
         ${avatar(me, 'data-me')}
       </header>
       <main id="main"></main>
-      <nav class="bottom-nav desktop-hide" aria-label="Điều hướng chính">${bottomNav.map(i => i[0] === 'more'
+      <nav class="bottom-nav desktop-hide" aria-label="${t('Điều hướng chính')}">${bottomNav.map(i => i[0] === 'more'
         ? `<a href="#" data-menu><span class="ic">${i[1]}</span>${esc(i[2])}</a>`
         : i[0] === 'create'
           ? `<button type="button" class="nav-create" data-create><span class="ic">${i[1]}</span>${esc(i[2])}</button>`
@@ -154,13 +157,13 @@ async function showNotifications() {
   try {
     const d = await get('/notifications');
     modal({
-      title: 'Thông báo',
-      submitText: 'Đánh dấu đã đọc tất cả',
+      title: t('Thông báo'),
+      submitText: t('Đánh dấu đã đọc tất cả'),
       html: d.items.length ? `<div>${d.items.slice(0, 30).map(n => `<div class="item">
         <div class="dot-i">${dot(n.level === 'danger' ? '#DC2626' : n.level === 'warn' ? '#F59E0B' : '#2563EB')}</div>
         <div class="grow"><div class="t">${esc(n.title)}</div>
           <div class="d">${esc(n.body || '')}</div><div class="d xs">${rel(n.created_at)}</div></div>
-        ${n.link ? `<a class="btn sm" href="${esc(n.link)}">Xem</a>` : ''}</div>`).join('')}</div>` : empty('bell', 'Chưa có thông báo.'),
+        ${n.link ? `<a class="btn sm" href="${esc(n.link)}">${t('Xem')}</a>` : ''}</div>`).join('')}</div>` : empty('bell', t('Chưa có thông báo.')),
       onSubmit: async () => { await post('/notifications/read', {}); state.unread = 0; render(); },
     });
   } catch (e) { toast(e.message, 'err'); }
@@ -238,9 +241,9 @@ async function render() {
   if (!view || view === 'login') { view = homeView(); location.replace('#/' + view); }
   // Điều hướng minh bạch: không âm thầm rơi về Cockpit nữa
   let block = null;
-  if (!VIEWS[view]) block = { icon: 'compass', title: 'Không tìm thấy trang', desc: `Đường dẫn "#/${view}" không tồn tại trong ứng dụng.` };
+  if (!VIEWS[view]) block = { icon: 'compass', title: t('Không tìm thấy trang'), desc: tf(() => `Đường dẫn "#/${view}" không tồn tại trong ứng dụng.`, () => `The path "#/${view}" does not exist in this app.`) };
   else if ((view === 'console' || view === 'admin') && !isLead()) {
-    block = { icon: 'lock', title: 'Bạn không có quyền truy cập', desc: 'Màn hình này dành cho Trưởng phòng / Ban Giám đốc. Nếu cần quyền, vui lòng liên hệ quản trị viên.' };
+    block = { icon: 'lock', title: t('Bạn không có quyền truy cập'), desc: t('Màn hình này dành cho Trưởng phòng / Ban Giám đốc. Nếu cần quyền, vui lòng liên hệ quản trị viên.') };
   }
 
   const shellView = block ? homeView() : view;
@@ -270,7 +273,7 @@ async function render() {
         <div style="margin-bottom:8px">${icon(block.icon, 40)}</div>
         <div class="b">${esc(block.title)}</div>
         <div class="sm mut mt">${esc(block.desc)}</div>
-        <div class="mt"><a class="btn primary sm" href="#/${homeView()}">Về trang chính</a></div>
+        <div class="mt"><a class="btn primary sm" href="#/${homeView()}">${t('Về trang chính')}</a></div>
       </div>`;
     return;
   }
@@ -280,7 +283,7 @@ async function render() {
     await VIEWS[view].render(main, { id });
   } catch (e) {
     console.error(e);
-    main.innerHTML = `<div class="err-box">${icon('triangleAlert', 15)} ${esc(e.message || 'Lỗi hiển thị')}</div>`;
+    main.innerHTML = `<div class="err-box">${icon('triangleAlert', 15)} ${esc(e.message || t('Lỗi hiển thị'))}</div>`;
   }
 }
 
@@ -302,6 +305,7 @@ function bindShell() {
   wire('[data-me]', () => { location.hash = '#/profile'; });
   wire('[data-create]', openCreateSheet);
   wire('[data-scrim]', () => setDrawer(false));
+  wire('[data-lang-toggle]', () => toggleLang());
   app.querySelectorAll('[data-menu]').forEach(el => el.onclick = (e) => {
     e.preventDefault();
     setDrawer(!document.getElementById('sidebar').classList.contains('open'));
@@ -316,6 +320,14 @@ function bindShell() {
 
 window.addEventListener('hashchange', render);
 
+/* Đổi ngôn ngữ (nút VI/EN ở topbar, hoặc mục Ngôn ngữ ở Cài đặt) phải vẽ lại TOÀN BỘ khung app —
+ * nav sidebar/bottom-nav và view hiện tại đều có chuỗi tiếng Việt cứng trong HTML đã render, đổi
+ * ngôn ngữ xong mà không dựng lại thì các chuỗi đó vẫn kẹt nguyên ngôn ngữ cũ. */
+window.addEventListener('nv:lang-changed', () => {
+  currentShellRole = null;
+  render();
+});
+
 /* Phiên hết hạn / bị thu hồi khi app VẪN ĐANG MỞ (bản cài trên điện thoại có thể nằm nền nhiều ngày) —
  * src/api.js phát sự kiện này khi đã gửi token mà vẫn bị 401. Dọn trạng thái đăng nhập trong bộ nhớ và
  * về màn đăng nhập, thay vì để giao diện trông như còn đăng nhập trong khi mọi API đều bị từ chối. */
@@ -326,7 +338,7 @@ window.addEventListener('nv:session-expired', async () => {
   state.me = null;
   state.unread = 0;
   closeOverlay();
-  toast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'err');
+  toast(t('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.'), 'err');
   // Nạp lại bootstrap ở trạng thái chưa đăng nhập, giống state.logout().
   try { await boot(); } catch (e) { /* mất mạng: vẫn về màn đăng nhập */ }
   sessionExpiring = false;
@@ -349,6 +361,7 @@ window.addEventListener('nv:push-received', async () => {
 window.addEventListener('error', (e) => console.error('Runtime error:', e.message));
 
 (async function start() {
+  initAutoTranslate();
   try {
     await boot();
   } catch (e) {
@@ -356,7 +369,7 @@ window.addEventListener('error', (e) => console.error('Runtime error:', e.messag
     // không có dữ liệu — báo rõ và cho thử lại, tuyệt đối không hiện số liệu cũ như số liệu thật.
     const app = document.getElementById('app');
     app.innerHTML = `<div class="boot"><div class="err-box" style="max-width:340px;text-align:center">${esc(e.message)}
-      <div class="mt"><button class="btn primary sm" data-retry>Thử lại</button></div></div></div>`;
+      <div class="mt"><button class="btn primary sm" data-retry>${t('Thử lại')}</button></div></div></div>`;
     app.querySelector('[data-retry]').onclick = () => location.reload();
     return;
   }

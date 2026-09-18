@@ -57,6 +57,7 @@ export async function documentRoutes(ctx) {
       context: { products: products || [], userName: ctx.me.name, customerName: null, extra: parent.title },
       provider: b.provider,
       document: { mime, data: base64 },
+      lang: ctx.request.headers.get('X-Lang'),
     });
 
     const t = now();

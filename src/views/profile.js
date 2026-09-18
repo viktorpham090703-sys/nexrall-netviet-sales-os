@@ -3,11 +3,19 @@ import { state, logout } from '../state.js';
 import { esc, avatar, mount, modal, toast, confirmDialog, refreshShellAvatars } from '../ui.js';
 import { roleDefaultLabel } from '../const.js';
 import { icon } from '../icons.js';
+import { t as tr, personName, jobTitle } from '../i18n.js';
 
 const fmtDateStr = (s) => {
   if (!s) return '—';
   const [y, m, d] = String(s).split('-').map(Number);
   return y && m && d ? `${d}/${m}/${y}` : '—';
+};
+
+/* Email trên trang hồ sơ chỉ hiện dạng che: ký tự đầu + *** + phần từ @ trở đi
+ * (haunguyen.me@gmail.com → h***@gmail.com). Ô sửa hồ sơ vẫn điền đầy đủ để còn sửa được. */
+const maskEmail = (e) => {
+  const at = String(e).indexOf('@');
+  return at > 0 ? String(e).charAt(0) + '***' + String(e).slice(at) : e;
 };
 
 export async function render(el) {
@@ -16,15 +24,15 @@ export async function render(el) {
     const p = d.profile;
     return `
       <div class="page-head">
-        <div class="grow"><h2>${icon('user', 19, { style: 'margin-right:6px' })}Hồ sơ nhân sự</h2>
-        <p>Thông tin cá nhân của bạn — dùng cho hồ sơ nội bộ phòng kinh doanh.</p></div>
+        <div class="grow"><h2>${icon('user', 19, { style: 'margin-right:6px' })}${tr('Hồ sơ nhân sự')}</h2>
+        <p>${tr('Thông tin cá nhân của bạn — dùng cho hồ sơ nội bộ phòng kinh doanh.')}</p></div>
       </div>
 
       <div class="card">
         <div class="row" style="gap:14px;align-items:flex-start">
           <div class="avatar-edit">
-            ${avatar(p, 'data-pick title="Đổi ảnh đại diện" style="width:72px;height:72px;font-size:24px"')}
-            <button type="button" class="avatar-cam" data-pick title="Đổi ảnh đại diện">${icon('camera', 14)}</button>
+            ${avatar(p, `data-pick title="${esc(tr('Đổi ảnh đại diện'))}" style="width:72px;height:72px;font-size:24px"`)}
+            <button type="button" class="avatar-cam" data-pick title="${esc(tr('Đổi ảnh đại diện'))}">${icon('camera', 14)}</button>
             <input type="file" accept="image/png,image/jpeg,image/webp" hidden data-file>
           </div>
           <div class="grow">
@@ -32,50 +40,50 @@ export async function render(el) {
               <span class="chip blue">${esc(p.id)}</span>
               <span class="chip">${esc(roleDefaultLabel(p))}</span>
             </div>
-            <div class="b" style="font-size:19px;margin-top:6px">${esc(p.name)}</div>
-            <div class="sm mut mt">${p.title ? esc(p.title) : '—'}</div>
+            <div class="b" style="font-size:19px;margin-top:6px">${esc(personName(p.name))}</div>
+            <div class="sm mut mt">${p.title ? esc(jobTitle(p.title, () => roleDefaultLabel(p))) : '—'}</div>
             <div class="row wrap mt" style="gap:6px">
-              <button class="btn sm" data-pick>${icon('camera', 13)}${p.avatar ? 'Đổi ảnh đại diện' : 'Tải ảnh đại diện'}</button>
-              ${p.avatar ? `<button class="btn sm" data-rm-avatar>${icon('trash2', 13)}Xoá ảnh</button>` : ''}
+              <button class="btn sm" data-pick>${icon('camera', 13)}${p.avatar ? tr('Đổi ảnh đại diện') : tr('Tải ảnh đại diện')}</button>
+              ${p.avatar ? `<button class="btn sm" data-rm-avatar>${icon('trash2', 13)}${tr('Xoá ảnh')}</button>` : ''}
             </div>
-            <div class="xs mut mt">Ảnh JPG, PNG hoặc WEBP — tối đa 8MB, hệ thống tự cắt vuông và thu nhỏ.</div>
+            <div class="xs mut mt">${tr('Ảnh JPG, PNG hoặc WEBP — tối đa 8MB, hệ thống tự cắt vuông và thu nhỏ.')}</div>
           </div>
           <div class="right">
             <div class="row" style="gap:6px;justify-content:flex-end">
-              <button class="icon-btn" data-edit title="Chỉnh sửa hồ sơ" style="width:28px;height:28px">${icon('pencil', 14)}</button>
+              <button class="icon-btn" data-edit title="${esc(tr('Chỉnh sửa hồ sơ'))}" style="width:28px;height:28px">${icon('pencil', 14)}</button>
             </div>
-            <div class="xs mut">Chỉnh sửa hồ sơ nhân sự</div>
+            <div class="xs mut">${tr('Chỉnh sửa hồ sơ nhân sự')}</div>
           </div>
         </div>
       </div>
 
-      <div class="sec-title">Thông tin cá nhân</div>
+      <div class="sec-title">${tr('Thông tin cá nhân')}</div>
       <div class="card">
         <div class="grid g3">
-          ${info('Mã nhân viên', esc(p.id))}
-          ${info('Họ và tên', esc(p.name))}
-          ${info('Email', esc(p.email || '—'))}
-          ${info('Số điện thoại', esc(p.phone || '—'))}
-          ${info('Ngày sinh', fmtDateStr(p.birth_date))}
-          ${info('Số CCCD', esc(p.id_number || '—'))}
-          ${info('Hạn CCCD', fmtDateStr(p.id_expiry))}
-          ${info('Địa chỉ liên hệ', esc(p.address || '—'))}
-          ${info('Trường học', esc(p.school || '—'))}
+          ${info(tr('Mã nhân viên'), esc(p.id))}
+          ${info(tr('Họ và tên'), esc(personName(p.name)))}
+          ${info('Email', esc(p.email ? maskEmail(p.email) : '—'))}
+          ${info(tr('Số điện thoại'), esc(p.phone || '—'))}
+          ${info(tr('Ngày sinh'), fmtDateStr(p.birth_date))}
+          ${info(tr('Số CCCD'), esc(p.id_number || '—'))}
+          ${info(tr('Hạn CCCD'), fmtDateStr(p.id_expiry))}
+          ${info(tr('Địa chỉ liên hệ'), esc(p.address || '—'))}
+          ${info(tr('Trường học'), esc(p.school || '—'))}
         </div>
-        <div class="mt">${info('Liên hệ khẩn cấp', esc(p.emergency_contact || '—'))}</div>
+        <div class="mt">${info(tr('Liên hệ khẩn cấp'), esc(p.emergency_contact || '—'))}</div>
       </div>
 
-      <div class="sec-title">Bảo mật tài khoản</div>
+      <div class="sec-title">${tr('Bảo mật tài khoản')}</div>
       <div class="card">
         <div class="item">
           <div class="dot-i">${icon('lock')}</div>
-          <div class="grow"><div class="t">Đổi mật khẩu</div><div class="d">Cập nhật mật khẩu đăng nhập của bạn</div></div>
-          <button class="btn sm" data-change-pw>Đổi mật khẩu</button>
+          <div class="grow"><div class="t">${tr('Đổi mật khẩu')}</div><div class="d">${tr('Cập nhật mật khẩu đăng nhập của bạn')}</div></div>
+          <button class="btn sm" data-change-pw>${tr('Đổi mật khẩu')}</button>
         </div>
         <div class="item">
           <div class="dot-i">${icon('logOut')}</div>
-          <div class="grow"><div class="t">Đăng xuất</div><div class="d">Thoát khỏi phiên đăng nhập hiện tại</div></div>
-          <button class="btn sm" data-logout>Đăng xuất</button>
+          <div class="grow"><div class="t">${tr('Đăng xuất')}</div><div class="d">${tr('Thoát khỏi phiên đăng nhập hiện tại')}</div></div>
+          <button class="btn sm" data-logout>${tr('Đăng xuất')}</button>
         </div>
       </div>`;
   };

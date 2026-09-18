@@ -9,6 +9,7 @@ import { esc, money, vnd, chip, empty, fmtDate, toast, modal } from './ui.js';
 import { QUOTE_STATUS, CONTRACT_STATUS } from './const.js';
 import { aiModal } from './aiPref.js';
 import { icon } from './icons.js';
+import { t as tr, tf } from './i18n.js';
 
 /**
  * Chứng từ bán hàng dùng chung: BÁO GIÁ (nv_quotes) và HỢP ĐỒNG (nv_contracts).
@@ -39,17 +40,17 @@ export function quoteItem(q) {
       <div class="dot-i">${icon('fileText')}</div>
       <div class="grow"><div class="t">${esc(q.title)}</div>
         <div class="d">${esc(q.customer_name || '')}${q.owner_name ? ' · ' + esc(q.owner_name) : ''} · ${fmtDate(q.created_at)}</div>
-        <div class="d xs">Gốc ${money(q.subtotal)} → CK ${q.discount_pct}% → <b>${vnd(q.total)}</b> · HH ${vnd(q.commission)}</div>
+        <div class="d xs">${tr('Gốc')} ${money(q.subtotal)} → ${tr('CK')} ${q.discount_pct}% → <b>${vnd(q.total)}</b> · HH ${vnd(q.commission)}</div>
         <div class="row wrap mt" style="gap:6px">${chip(QUOTE_STATUS[q.status]?.n, QUOTE_STATUS[q.status]?.c)}</div>
-        ${revise ? `<div class="sm mt" style="color:var(--red)">✏️ ${esc((q.status === 'pending_v1' ? q.v1_note : q.v2_note) || 'Cần điều chỉnh lại báo giá.')}</div>` : ''}
+        ${revise ? `<div class="sm mt" style="color:var(--red)">✏️ ${esc(tr((q.status === 'pending_v1' ? q.v1_note : q.v2_note) || 'Cần điều chỉnh lại báo giá.'))}</div>` : ''}
       </div>
       <div class="right">
-        <button class="btn sm" data-view="${esc(q.id)}">Xem</button>
+        <button class="btn sm" data-view="${esc(q.id)}">${tr('Xem')}</button>
         <div class="mt"><button class="btn sm" data-aiq="${esc(q.id)}">${icon('bot', 14)} AI</button></div>
-        <div class="mt"><button class="btn sm" data-docs="${esc(q.id)}">${icon('fileText', 14)} Tài liệu</button></div>
-        ${revise ? `<div class="mt"><button class="btn sm amber" data-resubmit="${esc(q.id)}">Sửa & gửi lại</button></div>` : ''}
-        ${canDecide(q) ? `<div class="mt"><button class="btn sm amber" data-ok="${esc(q.id)}">Duyệt</button></div>
-          <div class="mt"><button class="btn sm" data-revise="${esc(q.id)}">Yêu cầu điều chỉnh</button></div>` : ''}
+        <div class="mt"><button class="btn sm" data-docs="${esc(q.id)}">${icon('fileText', 14)} ${tr('Tài liệu')}</button></div>
+        ${revise ? `<div class="mt"><button class="btn sm amber" data-resubmit="${esc(q.id)}">${tr('Sửa & gửi lại')}</button></div>` : ''}
+        ${canDecide(q) ? `<div class="mt"><button class="btn sm amber" data-ok="${esc(q.id)}">${tr('Duyệt')}</button></div>
+          <div class="mt"><button class="btn sm" data-revise="${esc(q.id)}">${tr('Yêu cầu điều chỉnh')}</button></div>` : ''}
       </div></div>`;
 }
 
@@ -59,16 +60,16 @@ export function contractItem(c) {
       <div class="dot-i">${icon('penLine')}</div>
       <div class="grow"><div class="t">${esc(c.title)}</div>
         <div class="d">${esc(c.customer_name || '')}${c.owner_name ? ' · ' + esc(c.owner_name) : ''} · ${fmtDate(c.created_at)}</div>
-        <div class="d xs">Giá trị: <b>${vnd(c.value)}</b></div>
+        <div class="d xs">${tr('Giá trị:')} <b>${vnd(c.value)}</b></div>
         <div class="row wrap mt" style="gap:6px">${chip(CONTRACT_STATUS[c.status]?.n, CONTRACT_STATUS[c.status]?.c)}</div>
-        ${revise ? `<div class="sm mt" style="color:var(--red)">✏️ ${esc((c.status === 'pending_v1' ? c.v1_note : c.v2_note) || 'Cần điều chỉnh lại hợp đồng.')}</div>` : ''}
+        ${revise ? `<div class="sm mt" style="color:var(--red)">✏️ ${esc(tr((c.status === 'pending_v1' ? c.v1_note : c.v2_note) || 'Cần điều chỉnh lại hợp đồng.'))}</div>` : ''}
       </div>
       <div class="right">
-        <button class="btn sm" data-view-contract="${esc(c.id)}">Xem</button>
-        <div class="mt"><button class="btn sm" data-docs-contract="${esc(c.id)}">${icon('fileText', 14)} Tài liệu</button></div>
-        ${revise ? `<div class="mt"><button class="btn sm amber" data-resubmit-contract="${esc(c.id)}">Sửa & gửi lại</button></div>` : ''}
-        ${canDecideContract(c) ? `<div class="mt"><button class="btn sm amber" data-ok-contract="${esc(c.id)}">Duyệt</button></div>
-          <div class="mt"><button class="btn sm" data-revise-contract="${esc(c.id)}">Yêu cầu điều chỉnh</button></div>` : ''}
+        <button class="btn sm" data-view-contract="${esc(c.id)}">${tr('Xem')}</button>
+        <div class="mt"><button class="btn sm" data-docs-contract="${esc(c.id)}">${icon('fileText', 14)} ${tr('Tài liệu')}</button></div>
+        ${revise ? `<div class="mt"><button class="btn sm amber" data-resubmit-contract="${esc(c.id)}">${tr('Sửa & gửi lại')}</button></div>` : ''}
+        ${canDecideContract(c) ? `<div class="mt"><button class="btn sm amber" data-ok-contract="${esc(c.id)}">${tr('Duyệt')}</button></div>
+          <div class="mt"><button class="btn sm" data-revise-contract="${esc(c.id)}">${tr('Yêu cầu điều chỉnh')}</button></div>` : ''}
       </div></div>`;
 }
 
@@ -80,15 +81,15 @@ export function viewQuoteModal(q) {
   modal({
     title: q.title, submitText: 'Đóng', onSubmit: () => true,
     html: `<div class="sm mut mb">${esc(q.customer_name || '')} · ${fmtDate(q.created_at)}</div>
-      <table class="tbl"><tr><th>Hạng mục</th><th class="right">SL</th><th class="right">Đơn giá</th></tr>
+      <table class="tbl"><tr><th>${tr('Hạng mục')}</th><th class="right">${tr('SL')}</th><th class="right">${tr('Đơn giá')}</th></tr>
       ${items.map(i => `<tr><td>${esc(i.name)}</td><td class="right">${i.qty}</td><td class="right">${vnd(i.price)}</td></tr>`).join('')}
       </table>
-      <div class="mt sm">Tạm tính: <b>${vnd(q.subtotal)}</b></div>
-      <div class="sm">Chiết khấu: <b>${q.discount_pct}%</b></div>
-      <div class="sm">Thành tiền: <b style="color:#F59E0B">${vnd(q.total)}</b></div>
-      <div class="sm">Hoa hồng dự kiến: <b>${vnd(q.commission)}</b></div>
-      ${q.v1_note ? `<div class="sm mt">Ghi chú V1: ${esc(q.v1_note)}</div>` : ''}
-      ${q.v2_note ? `<div class="sm mt">Ghi chú V2: ${esc(q.v2_note)}</div>` : ''}`,
+      <div class="mt sm">${tr('Tạm tính:')} <b>${vnd(q.subtotal)}</b></div>
+      <div class="sm">${tr('Chiết khấu:')} <b>${q.discount_pct}%</b></div>
+      <div class="sm">${tr('Thành tiền:')} <b style="color:#F59E0B">${vnd(q.total)}</b></div>
+      <div class="sm">${tr('Hoa hồng dự kiến:')} <b>${vnd(q.commission)}</b></div>
+      ${q.v1_note ? `<div class="sm mt">${tr('Ghi chú V1:')} ${esc(q.v1_note)}</div>` : ''}
+      ${q.v2_note ? `<div class="sm mt">${tr('Ghi chú V2:')} ${esc(q.v2_note)}</div>` : ''}`,
   });
 }
 
@@ -96,12 +97,12 @@ export function viewContractModal(c) {
   modal({
     title: c.title, submitText: 'Đóng', onSubmit: () => true,
     html: `<div class="sm mut mb">${esc(c.customer_name || '')}${c.deal_title ? ' · ' + esc(c.deal_title) : ''} · ${fmtDate(c.created_at)}</div>
-      <div class="sm">Giá trị hợp đồng: <b style="color:#F59E0B">${vnd(c.value)}</b></div>
-      ${c.payment_schedule ? `<div class="sm mt">Tiến độ thanh toán: ${esc(c.payment_schedule)}</div>` : ''}
-      ${c.penalty_terms ? `<div class="sm mt">Điều khoản phạt vi phạm: ${esc(c.penalty_terms)}</div>` : ''}
-      ${c.note ? `<div class="sm mt">Ghi chú: ${esc(c.note)}</div>` : ''}
-      ${c.v1_note ? `<div class="sm mt">Ghi chú V1: ${esc(c.v1_note)}</div>` : ''}
-      ${c.v2_note ? `<div class="sm mt">Ghi chú V2: ${esc(c.v2_note)}</div>` : ''}`,
+      <div class="sm">${tr('Giá trị hợp đồng:')} <b style="color:#F59E0B">${vnd(c.value)}</b></div>
+      ${c.payment_schedule ? `<div class="sm mt">${tr('Tiến độ thanh toán:')} ${esc(c.payment_schedule)}</div>` : ''}
+      ${c.penalty_terms ? `<div class="sm mt">${tr('Điều khoản phạt vi phạm:')} ${esc(c.penalty_terms)}</div>` : ''}
+      ${c.note ? `<div class="sm mt">${tr('Ghi chú:')} ${esc(c.note)}</div>` : ''}
+      ${c.v1_note ? `<div class="sm mt">${tr('Ghi chú V1:')} ${esc(c.v1_note)}</div>` : ''}
+      ${c.v2_note ? `<div class="sm mt">${tr('Ghi chú V2:')} ${esc(c.v2_note)}</div>` : ''}`,
   });
 }
 
@@ -116,15 +117,15 @@ export function viewContractModal(c) {
  * ghi đè lần gọi 'quotes' khiến nút Duyệt báo giá lại gọi nhầm PATCH /api/contracts/:id
  * (404 "Không tìm thấy hợp đồng"). */
 export function bindApprovalActions(el, path, after) {
-  const label = path === 'contracts' ? 'hợp đồng' : 'báo giá';
+  const label = path === 'contracts' ? tr('hợp đồng') : tr('báo giá');
   const okAttr = path === 'contracts' ? 'ok-contract' : 'ok';
   const reviseAttr = path === 'contracts' ? 'revise-contract' : 'revise';
   el.querySelectorAll(`[data-${okAttr}]`).forEach(b => b.onclick = async () => {
-    try { await patch(`/${path}/` + b.dataset[path === 'contracts' ? 'okContract' : 'ok'], { decision: 'approved' }); toast('Đã duyệt ' + label, 'ok'); after(); }
+    try { await patch(`/${path}/` + b.dataset[path === 'contracts' ? 'okContract' : 'ok'], { decision: 'approved' }); toast(tf(() => 'Đã duyệt ' + label, () => 'Approved the ' + label), 'ok'); after(); }
     catch (e) { toast(e.message, 'err'); }
   });
   el.querySelectorAll(`[data-${reviseAttr}]`).forEach(b => b.onclick = () => modal({
-    title: 'Yêu cầu điều chỉnh ' + label, fields: [{ name: 'note', label: 'Ghi chú cho sale', required: true }],
+    title: tf(() => 'Yêu cầu điều chỉnh ' + label, () => 'Request revision for the ' + label), fields: [{ name: 'note', label: 'Ghi chú cho sale', required: true }],
     submitText: 'Gửi yêu cầu điều chỉnh',
     onSubmit: async (v) => {
       try {
@@ -164,11 +165,11 @@ export function bindDocActions(el, d, after) {
   });
   el.querySelectorAll('[data-docs]').forEach(b => b.onclick = () => {
     const q = quotes.find(x => x.id === b.dataset.docs);
-    documentsModal('quote', b.dataset.docs, q?.title || 'Báo giá');
+    documentsModal('quote', b.dataset.docs, q?.title || tr('Báo giá'));
   });
   el.querySelectorAll('[data-docs-contract]').forEach(b => b.onclick = () => {
     const c = contracts.find(x => x.id === b.dataset.docsContract);
-    documentsModal('contract', b.dataset.docsContract, c?.title || 'Hợp đồng');
+    documentsModal('contract', b.dataset.docsContract, c?.title || tr('Hợp đồng'));
   });
   el.querySelectorAll('[data-resubmit]').forEach(b => b.onclick = () => {
     const q = quotes.find(x => x.id === b.dataset.resubmit);
@@ -194,21 +195,21 @@ export async function documentsModal(kind, id, label) {
   const listHTML = (items) => items.length ? items.map(doc => `<div class="item">
       <div class="dot-i">${icon('fileText')}</div>
       <div class="grow"><div class="t">${esc(doc.filename)}</div>
-        <div class="d xs">${fmtDate(doc.created_at)} · ${Math.round((doc.size || 0) / 1024)} KB${doc.status === 'mock' ? ' · <span style="color:var(--red)">chưa phân tích được (thiếu API key AI)</span>' : ''}</div>
+        <div class="d xs">${fmtDate(doc.created_at)} · ${Math.round((doc.size || 0) / 1024)} KB${doc.status === 'mock' ? ` · <span style="color:var(--red)">${tr('chưa phân tích được (thiếu API key AI)')}</span>` : ''}</div>
         ${doc.ai_summary ? `<div class="ai-bubble mt xs">${esc(doc.ai_summary)}</div>` : ''}
       </div>
-      <a class="btn sm" href="/api/documents/${esc(doc.id)}/file" target="_blank" rel="noopener">Xem file</a>
+      <a class="btn sm" href="/api/documents/${esc(doc.id)}/file" target="_blank" rel="noopener">${tr('Xem file')}</a>
     </div>`).join('') : empty('fileText', 'Chưa có tài liệu nào được đính kèm.');
 
   const { root } = modal({
-    title: 'Tài liệu đính kèm — ' + label, titleIcon: 'fileText', wide: true,
+    title: tf(() => 'Tài liệu đính kèm — ' + label, () => 'Attached documents — ' + label), titleIcon: 'fileText', wide: true,
     submitText: 'Đóng', onSubmit: () => true,
     html: `<div data-doclist>${await load().then(listHTML)}</div>
       <div class="row mt" style="gap:8px">
         <input type="file" data-docfile accept=".pdf,image/png,image/jpeg,image/webp" class="grow">
-        <button type="button" class="btn primary sm" data-docupload>${icon('bot', 14)} Tải lên & AI phân tích</button>
+        <button type="button" class="btn primary sm" data-docupload>${icon('bot', 14)} ${tr('Tải lên & AI phân tích')}</button>
       </div>
-      <div class="xs mut mt">Chỉ nhận file PDF hoặc ảnh (PNG/JPG/WEBP), tối đa 8MB.</div>`,
+      <div class="xs mut mt">${tr('Chỉ nhận file PDF hoặc ảnh (PNG/JPG/WEBP), tối đa 8MB.')}</div>`,
   });
 
   root.querySelector('[data-docupload]').onclick = async () => {
@@ -219,7 +220,7 @@ export async function documentsModal(kind, id, label) {
     if (file.size > 8 * 1024 * 1024) { toast('File vượt quá 8MB', 'err'); return; }
     const btn = root.querySelector('[data-docupload]');
     btn.disabled = true;
-    btn.innerHTML = `${icon('loaderCircle', 14, { class: 'spin' })} Đang tải lên & AI phân tích…`;
+    btn.innerHTML = `${icon('loaderCircle', 14, { class: 'spin' })} ${tr('Đang tải lên & AI phân tích…')}`;
     try {
       const dataBase64 = await new Promise((res, rej) => {
         const r = new FileReader();
@@ -237,7 +238,7 @@ export async function documentsModal(kind, id, label) {
       toast(e.message, 'err');
     } finally {
       btn.disabled = false;
-      btn.innerHTML = `${icon('bot', 14)} Tải lên & AI phân tích`;
+      btn.innerHTML = `${icon('bot', 14)} ${tr('Tải lên & AI phân tích')}`;
     }
   };
 }
@@ -261,7 +262,8 @@ export function quoteBuilder(d, preset = {}, after) {
     title: 'Công cụ tính giá & tạo báo giá',
     wide: true,
     html: preset.lockTarget && preset.customerName
-      ? `<div class="note mb">Báo giá này gắn vào phương án <b>${esc(preset.planTitle || '')}</b> — khách hàng ${esc(preset.customerName)}.</div>` : '',
+      ? `<div class="note mb">${tf(() => `Báo giá này gắn vào phương án <b>${esc(preset.planTitle || '')}</b> — khách hàng ${esc(preset.customerName)}.`,
+          () => `This quote is linked to the plan <b>${esc(preset.planTitle || '')}</b> — customer ${esc(preset.customerName)}.`)}</div>` : '',
     fields: [
       { name: 'title', label: 'Tiêu đề báo giá', value: 'Báo giá dịch vụ NetViet' },
       ...target,
@@ -269,9 +271,10 @@ export function quoteBuilder(d, preset = {}, after) {
       { name: 'qty', label: 'Số lượng', type: 'number', value: 1 },
       { name: 'productId2', label: 'Gói thứ hai (tuỳ chọn)', type: 'select', options: [{ v: '', n: '— không —' }, ...opts] },
       { name: 'discountPct', label: 'Chiết khấu (%)', type: 'number', value: 0,
-        hint: isAdmin() ? 'Bạn là Admin/BGĐ — báo giá duyệt thẳng, không qua vòng nào.'
-          : isManager() ? 'Vượt ' + d.threshold + '% sẽ đẩy thẳng Giám đốc duyệt (V2) — bỏ vòng 1 vì bạn là TPKD.'
-            : 'Vượt ' + d.threshold + '% sẽ tự đẩy TPKD duyệt (vòng 1)' },
+        hint: isAdmin() ? tr('Bạn là Admin/BGĐ — báo giá duyệt thẳng, không qua vòng nào.')
+          : isManager() ? tf(() => 'Vượt ' + d.threshold + '% sẽ đẩy thẳng Giám đốc duyệt (V2) — bỏ vòng 1 vì bạn là TPKD.',
+              () => 'Exceeding ' + d.threshold + '% goes straight to Director approval (V2) — round 1 is skipped since you are the Sales Manager.')
+            : tf(() => 'Vượt ' + d.threshold + '% sẽ tự đẩy TPKD duyệt (vòng 1)', () => 'Exceeding ' + d.threshold + '% automatically requires Sales Manager approval (round 1)') },
     ],
     submitText: 'Tạo báo giá',
     onSubmit: async (v) => {
@@ -286,9 +289,12 @@ export function quoteBuilder(d, preset = {}, after) {
         items,
       });
       const pending = ['pending_v1', 'pending_v2'].includes(r.status);
-      toast(pending
+      toast(tf(() => pending
         ? `Chiết khấu vượt ngưỡng ${r.threshold}% → đã gửi ${r.status === 'pending_v1' ? 'TPKD duyệt (V1)' : 'Giám đốc duyệt (V2)'}`
         : `Đã tạo báo giá ${vnd(r.total)} · hoa hồng ${vnd(r.commission)}${r.status === 'approved' ? ' · duyệt thẳng' : ''}`,
+        () => pending
+        ? `Discount exceeds the ${r.threshold}% threshold → sent for ${r.status === 'pending_v1' ? 'Sales Manager approval (V1)' : 'Director approval (V2)'}`
+        : `Quote created for ${vnd(r.total)} · commission ${vnd(r.commission)}${r.status === 'approved' ? ' · auto-approved' : ''}`),
         pending ? 'err' : 'ok');
       after(r);
     },
@@ -302,7 +308,7 @@ export function resubmitQuoteBuilder(d, q, after) {
   try { items = JSON.parse(q.items || '[]'); } catch (e) { items = []; }
   const opts = d.products.map(p => ({ v: p.id, n: p.name + ' — ' + money(p.price) }));
   modal({
-    title: 'Sửa & trình lại: ' + q.title,
+    title: tf(() => 'Sửa & trình lại: ' + q.title, () => 'Revise & resubmit: ' + q.title),
     wide: true,
     fields: [
       { name: 'title', label: 'Tiêu đề báo giá', value: q.title },
@@ -338,7 +344,8 @@ export function contractBuilder(d, preset = {}, after) {
     title: 'Lập hợp đồng sản xuất',
     wide: true,
     html: preset.lockTarget && preset.customerName
-      ? `<div class="note mb">Hợp đồng này gắn vào phương án <b>${esc(preset.planTitle || '')}</b> — khách hàng ${esc(preset.customerName)}.</div>` : '',
+      ? `<div class="note mb">${tf(() => `Hợp đồng này gắn vào phương án <b>${esc(preset.planTitle || '')}</b> — khách hàng ${esc(preset.customerName)}.`,
+          () => `This contract is linked to the plan <b>${esc(preset.planTitle || '')}</b> — customer ${esc(preset.customerName)}.`)}</div>` : '',
     fields: [
       { name: 'title', label: 'Tên hợp đồng', value: 'Hợp đồng dịch vụ NetViet' },
       ...target,
@@ -357,9 +364,9 @@ export function contractBuilder(d, preset = {}, after) {
         planId: preset.planId || '',
         value: Number(v.value) || 0,
       });
-      toast(r.status === 'approved' ? 'Đã lập hợp đồng — duyệt thẳng, không qua vòng nào.'
-        : r.status === 'pending_v2' ? 'Đã lập hợp đồng — gửi HCNS duyệt (V2), đã bỏ vòng 1.'
-          : 'Đã lập hợp đồng — gửi TPKD duyệt (V1)', 'ok');
+      toast(r.status === 'approved' ? tr('Đã lập hợp đồng — duyệt thẳng, không qua vòng nào.')
+        : r.status === 'pending_v2' ? tr('Đã lập hợp đồng — gửi HCNS duyệt (V2), đã bỏ vòng 1.')
+          : tr('Đã lập hợp đồng — gửi TPKD duyệt (V1)'), 'ok');
       after();
     },
   });
@@ -368,7 +375,7 @@ export function contractBuilder(d, preset = {}, after) {
 /** Sửa & trình lại hợp đồng bị yêu cầu điều chỉnh — giữ nguyên khách hàng/deal/báo giá đã gắn. */
 export function resubmitContractBuilder(c, after) {
   modal({
-    title: 'Sửa & trình lại: ' + c.title,
+    title: tf(() => 'Sửa & trình lại: ' + c.title, () => 'Revise & resubmit: ' + c.title),
     wide: true,
     fields: [
       { name: 'title', label: 'Tên hợp đồng', value: c.title },

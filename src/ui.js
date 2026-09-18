@@ -1,19 +1,24 @@
 import { icon } from './icons.js';
 import { initScrollFx } from './scrollFx.js';
+import { t, tf, isEn, personName } from './i18n.js';
 
 export const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-export const vnd = (n) => new Intl.NumberFormat('vi-VN').format(Math.round(Number(n) || 0)) + ' đ';
+// Loại tiền luôn là VND dù đổi ngôn ngữ (doanh nghiệp Việt Nam giao dịch bằng VND) — chỉ đổi cách
+// viết: "đ" ở giao diện VI, "VND" ở giao diện EN (không để lọt ký tự tiếng Việt ra màn EN).
+// Dấu ngăn cách hàng nghìn theo ngôn ngữ: 45.000.000 đ (VI) · 45,000,000 VND (EN).
+const numFmt = () => new Intl.NumberFormat(isEn() ? 'en-US' : 'vi-VN');
+export const vnd = (n) => numFmt().format(Math.round(Number(n) || 0)) + (isEn() ? ' VND' : ' đ');
 export function money(n) {
   n = Number(n);
   if (!Number.isFinite(n)) return '—';
   const a = Math.abs(n);
-  if (a >= 1e15) return (n / 1e12).toFixed(0) + ' nghìn tỷ';
-  if (a >= 1e12) return (n / 1e12).toFixed(n % 1e12 === 0 ? 0 : 1) + ' nghìn tỷ';
-  if (a >= 1e9) return (n / 1e9).toFixed(n % 1e9 === 0 ? 0 : 2) + ' tỷ';
-  if (a >= 1e6) return Math.round(n / 1e6) + ' tr';
-  return new Intl.NumberFormat('vi-VN').format(Math.round(n));
+  if (a >= 1e15) return (n / 1e12).toFixed(0) + ' ' + t('nghìn tỷ');
+  if (a >= 1e12) return (n / 1e12).toFixed(n % 1e12 === 0 ? 0 : 1) + ' ' + t('nghìn tỷ');
+  if (a >= 1e9) return (n / 1e9).toFixed(n % 1e9 === 0 ? 0 : 2) + ' ' + t('tỷ');
+  if (a >= 1e6) return Math.round(n / 1e6) + ' ' + t('tr');
+  return numFmt().format(Math.round(n));
 }
 export const pct = (a, b) => b ? Math.min(999, Math.round(a / b * 100)) : 0;
 
@@ -23,13 +28,13 @@ export const fmtDT = (ts) => ts ? D(ts).toLocaleString('vi-VN', { day: '2-digit'
 export function rel(ts) {
   if (!ts) return '—';
   const s = Math.floor(Date.now() / 1000) - ts;
-  if (s < 60) return 'vừa xong';
-  if (s < 3600) return Math.floor(s / 60) + ' phút trước';
-  if (s < 86400) return Math.floor(s / 3600) + ' giờ trước';
-  if (s < 86400 * 30) return Math.floor(s / 86400) + ' ngày trước';
+  if (s < 60) return t('vừa xong');
+  if (s < 3600) return tf(() => Math.floor(s / 60) + ' phút trước', () => Math.floor(s / 60) + ' min ago');
+  if (s < 86400) return tf(() => Math.floor(s / 3600) + ' giờ trước', () => Math.floor(s / 3600) + ' hours ago');
+  if (s < 86400 * 30) return tf(() => Math.floor(s / 86400) + ' ngày trước', () => Math.floor(s / 86400) + ' days ago');
   return fmtDate(ts);
 }
-export const initials = (name) => String(name || '?').trim().split(/\s+/).slice(-2).map(x => x[0]).join('').toUpperCase();
+export const initials = (name) => String(personName(name) || '?').trim().split(/\s+/).slice(-2).map(x => x[0]).join('').toUpperCase();
 
 /** Vòng tròn đại diện: ảnh thật nếu người dùng đã tải lên, không thì viết tắt tên như trước.
  * `u` là bản ghi người dùng bất kỳ có {name, avatar}; `attrs` để gắn thêm class/style/data-*. */
@@ -58,11 +63,15 @@ export function refreshShellRole(label) {
   document.querySelectorAll('.side-profile-role').forEach(el => { el.textContent = label; });
 }
 
-export const chip = (text, tone = '') => `<span class="chip ${tone}">${esc(text)}</span>`;
+// t() ở đây là điểm đòn bẩy: chip()/stat() được gọi từ khắp mọi view để hiện nhãn trạng thái/thống
+// kê — bọc dịch NGAY TẠI ĐÂY nghĩa là mọi lời gọi chip('Đã duyệt', ...) hay stat('Doanh thu', ...)
+// rải rác trong 20 file view đều tự động dịch được, không phải sửa từng nơi gọi. Khớp không thấy
+// trong từ điển (vd tên riêng, ghi chú người dùng nhập) thì t() rơi về đúng nguyên văn — an toàn.
+export const chip = (text, tone = '') => `<span class="chip ${tone}">${esc(t(text))}</span>`;
 export const bar = (val, max, cls = '') => `<div class="bar ${cls}"><i style="width:${Math.min(100, pct(val, max))}%"></i></div>`;
 
 export function stat(label, value, sub = '', tone = '') {
-  return `<div class="stat fade-in ${tone}"><div class="l">${esc(label)}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+  return `<div class="stat fade-in ${tone}"><div class="l">${esc(t(label))}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
 }
 
 // Số chạy đếm lên khi lướt vào tầm nhìn (dùng trong value truyền cho stat()).
@@ -79,16 +88,16 @@ export function ring(value, max, label) {
 }
 
 export const empty = (ic, text, action = '') =>
-  `<div class="empty"><span class="e">${icon(ic, 30)}</span>${esc(text)}${action ? `<div class="mt">${action}</div>` : ''}</div>`;
+  `<div class="empty"><span class="e">${icon(ic, 30)}</span>${esc(t(text))}${action ? `<div class="mt">${action}</div>` : ''}</div>`;
 export const loading = () => `<div class="boot" style="height:200px"><div class="spinner"></div></div>`;
-export const errBox = (msg) => `<div class="err-box">${icon('triangleAlert', 15)} ${esc(msg)} <button class="btn sm mt" data-retry>Thử lại</button></div>`;
+export const errBox = (msg) => `<div class="err-box">${icon('triangleAlert', 15)} ${esc(msg)} <button class="btn sm mt" data-retry>${t('Thử lại')}</button></div>`;
 
 export function toast(msg, tone = '') {
   const root = document.getElementById('toast-root');
   if (!root) return;
   const el = document.createElement('div');
   el.className = 'toast ' + tone;
-  el.textContent = msg;
+  el.textContent = t(msg);
   root.appendChild(el);
   setTimeout(() => el.remove(), 3200);
 }
@@ -177,28 +186,29 @@ function bindSwipeDown(el, close) {
  * onSubmit(values) — trả về false để giữ modal mở.
  * wide: true = rộng 680px; 'xl' = rộng 1000px (bảng xem trước nhiều cột, vd nhập Excel).
  */
-export function modal({ title, titleIcon = '', fields = [], html = '', submitText = 'Lưu', onSubmit, wide }) {
+export function modal({ title, titleIcon = '', fields = [], html = '', submitText, onSubmit, wide }) {
+  submitText = submitText || t('Lưu');
   const body = fields.map(f => {
     const v = f.value == null ? '' : f.value;
     let input;
     if (f.type === 'select') {
       input = `<select name="${f.name}">${(f.options || []).map(o => {
-        const val = typeof o === 'string' ? o : o.v, lab = typeof o === 'string' ? o : o.n;
+        const val = typeof o === 'string' ? o : o.v, lab = t(typeof o === 'string' ? o : o.n);
         return `<option value="${esc(val)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(lab)}</option>`;
       }).join('')}</select>`;
     } else if (f.type === 'textarea') {
-      input = `<textarea name="${f.name}" rows="${f.rows || 3}" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
+      input = `<textarea name="${f.name}" rows="${f.rows || 3}" placeholder="${esc(t(f.placeholder || ''))}">${esc(v)}</textarea>`;
     } else {
-      input = `<input name="${f.name}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}">`;
+      input = `<input name="${f.name}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(t(f.placeholder || ''))}">`;
     }
-    return `<label class="f"><span>${esc(f.label)}${f.required ? ' *' : ''}</span>${input}${f.hint ? `<div class="xs mut mt">${esc(f.hint)}</div>` : ''}</label>`;
+    return `<label class="f"><span>${esc(t(f.label))}${f.required ? ' *' : ''}</span>${input}${f.hint ? `<div class="xs mut mt">${esc(t(f.hint))}</div>` : ''}</label>`;
   }).join('');
 
   const { root, close } = openOverlay(`<div class="modal-scrim"><div class="modal" role="dialog" aria-modal="true" ${wide ? `style="max-width:${wide === 'xl' ? 1000 : 680}px"` : ''}>
-    <h3>${titleIcon ? icon(titleIcon, 17, { style: 'margin-right:6px' }) : ''}${esc(title)}</h3>
+    <h3>${titleIcon ? icon(titleIcon, 17, { style: 'margin-right:6px' }) : ''}${esc(t(title))}</h3>
     <form data-form>${body}${html}
       <div class="row mt" style="gap:8px">
-        <button type="button" class="btn grow" data-cancel>Huỷ</button>
+        <button type="button" class="btn grow" data-cancel>${t('Huỷ')}</button>
         <button type="submit" class="btn primary grow">${esc(submitText)}</button>
       </div>
     </form></div></div>`);
@@ -214,7 +224,7 @@ export function modal({ title, titleIcon = '', fields = [], html = '', submitTex
       const r = await onSubmit(values, root);
       if (r !== false) close();
     } catch (err) {
-      toast(err.message || 'Có lỗi xảy ra', 'err');
+      toast(err.message || t('Có lỗi xảy ra'), 'err');
     } finally { btn.disabled = false; }
   });
   return { close, root };
@@ -226,15 +236,15 @@ export function modal({ title, titleIcon = '', fields = [], html = '', submitTex
  * onSelect thường mở tiếp một modal, nên đóng theo kiểu handoff (xem chú thích đầu mục lớp phủ).
  */
 export function sheet({ title, subtitle = '', items = [] }) {
-  const { root, close } = openOverlay(`<div class="modal-scrim sheet-scrim"><div class="modal sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+  const { root, close } = openOverlay(`<div class="modal-scrim sheet-scrim"><div class="modal sheet" role="dialog" aria-modal="true" aria-label="${esc(t(title))}">
     <div class="sheet-grip" aria-hidden="true"></div>
     <div class="sheet-head">
-      <div class="grow"><h3>${esc(title)}</h3>${subtitle ? `<p class="sheet-sub">${esc(subtitle)}</p>` : ''}</div>
-      <button type="button" class="icon-btn sheet-close" data-cancel aria-label="Đóng">${icon('x', 18)}</button>
+      <div class="grow"><h3>${esc(t(title))}</h3>${subtitle ? `<p class="sheet-sub">${esc(t(subtitle))}</p>` : ''}</div>
+      <button type="button" class="icon-btn sheet-close" data-cancel aria-label="${t('Đóng')}">${icon('x', 18)}</button>
     </div>
     <div class="sheet-list">${items.map(it => `<button type="button" class="sheet-item" data-sheet-item="${esc(it.key)}">
       <span class="sheet-ic ${esc(it.tone || '')}">${icon(it.icon, 21)}</span>
-      <span class="grow"><span class="sheet-t">${esc(it.title)}</span><span class="sheet-d">${esc(it.desc || '')}</span></span>
+      <span class="grow"><span class="sheet-t">${esc(t(it.title))}</span><span class="sheet-d">${esc(t(it.desc || ''))}</span></span>
       ${icon('chevronRight', 18, { class: 'sheet-chev' })}</button>`).join('')}</div>
   </div></div>`);
 
@@ -249,7 +259,7 @@ export function sheet({ title, subtitle = '', items = [] }) {
 }
 
 export function confirmDialog(title, text, onOk) {
-  modal({ title, html: `<p class="sm mut">${esc(text)}</p>`, submitText: 'Xác nhận', onSubmit: onOk });
+  modal({ title, html: `<p class="sm mut">${esc(t(text))}</p>`, submitText: t('Xác nhận'), onSubmit: onOk });
 }
 
 export const bindTabs = (el, setTab, render) =>
@@ -281,7 +291,7 @@ export async function mount(el, loader, renderer, after) {
     return data;
   } catch (e) {
     if (renderTokens.get(el) !== token) return null;
-    el.innerHTML = errBox(e.message || 'Không tải được dữ liệu');
+    el.innerHTML = errBox(e.message || t('Không tải được dữ liệu'));
     const b = el.querySelector('[data-retry]');
     if (b) b.onclick = () => mount(el, loader, renderer, after);
     return null;

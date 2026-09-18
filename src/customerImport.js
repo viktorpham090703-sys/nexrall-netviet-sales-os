@@ -15,6 +15,7 @@ import { isLead, salesTeamOption, state } from './state.js';
 import { esc, chip, toast, modal } from './ui.js';
 import { CUSTOMER_STATUSES, statusDef, LEAD_SOURCES, CUSTOMER_SCALE_OPTIONS } from './const.js';
 import { readSpreadsheet, buildXlsx, downloadBlob } from './xlsx.js';
+import { t as tr, tf } from './i18n.js';
 
 const MAX_ROWS = 500;   // khớp IMPORT_MAX_ROWS ở server/routes/crm.js
 
@@ -76,7 +77,7 @@ function detectHeader(rows) {
 function toCustomerRows(sheet) {
   const head = detectHeader(sheet.rows);
   if (!head) {
-    throw new Error('Không tìm thấy dòng tiêu đề. Dòng đầu của file cần có cột "Doanh nghiệp" và các cột như file mẫu (Người liên hệ, SĐT, Email, Trạng thái, Ghi chú).');
+    throw new Error(tr('Không tìm thấy dòng tiêu đề. Dòng đầu của file cần có cột "Doanh nghiệp" và các cột như file mẫu (Người liên hệ, SĐT, Email, Trạng thái, Ghi chú).'));
   }
   const get = (cells, f) => head.map[f] == null ? '' : String(cells[head.map[f]] ?? '').trim();
   const out = [];
@@ -126,13 +127,13 @@ export function openCustomerImport(ctx, after) {
     title: 'Nhập danh sách khách hàng từ Excel',
     titleIcon: 'fileSpreadsheet',
     html: `
-      <div class="note mb sm">Dùng file theo mẫu của công ty. Cột bắt buộc: <b>Doanh nghiệp</b>. Các cột khác:
-        Người liên hệ, SĐT, Email, Trạng thái, Ghi chú. Có thể thêm Chức vụ, Ngành hàng, Quy mô, Địa chỉ.
-        Thứ tự cột không quan trọng, app đọc theo tên cột ở dòng tiêu đề.</div>
-      <button type="button" class="btn sm mb" data-tpl>Tải file mẫu (.xlsx)</button>
-      <label class="f"><span>Chọn file Excel (.xlsx) hoặc CSV *</span>
+      <div class="note mb sm">${tr('Dùng file theo mẫu của công ty. Cột bắt buộc:')} <b>${tr('Doanh nghiệp')}</b>. ${tr('Các cột khác:')}
+        ${tr('Người liên hệ, SĐT, Email, Trạng thái, Ghi chú. Có thể thêm Chức vụ, Ngành hàng, Quy mô, Địa chỉ.')}
+        ${tr('Thứ tự cột không quan trọng, app đọc theo tên cột ở dòng tiêu đề.')}</div>
+      <button type="button" class="btn sm mb" data-tpl>${tr('Tải file mẫu (.xlsx)')}</button>
+      <label class="f"><span>${tr('Chọn file Excel (.xlsx) hoặc CSV *')}</span>
         <input type="file" name="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"></label>
-      <div class="xs mut">Tối đa ${MAX_ROWS} khách hàng mỗi lần. Bạn sẽ xem lại toàn bộ danh sách trước khi lưu.</div>`,
+      <div class="xs mut">${tf(() => `Tối đa ${MAX_ROWS} khách hàng mỗi lần. Bạn sẽ xem lại toàn bộ danh sách trước khi lưu.`, () => `Up to ${MAX_ROWS} customers per import. You'll review the full list before saving.`)}</div>`,
     submitText: 'Đọc file',
     onSubmit: async (_v, r) => {
       const file = r.querySelector('input[type=file]').files[0];
@@ -140,7 +141,8 @@ export function openCustomerImport(ctx, after) {
       const parsed = toCustomerRows(await readSpreadsheet(file));
       if (!parsed.rows.length) { toast('File không có dòng khách hàng nào dưới dòng tiêu đề', 'err'); return false; }
       if (parsed.rows.length > MAX_ROWS) {
-        toast(`File có ${parsed.rows.length} dòng — mỗi lần chỉ nhập tối đa ${MAX_ROWS}. Chia file nhỏ hơn.`, 'err');
+        toast(tf(() => `File có ${parsed.rows.length} dòng — mỗi lần chỉ nhập tối đa ${MAX_ROWS}. Chia file nhỏ hơn.`,
+          () => `The file has ${parsed.rows.length} rows — each import allows up to ${MAX_ROWS}. Please split the file.`), 'err');
         return false;
       }
       await openPreview({ ...ctx, file, parsed }, after);
@@ -206,11 +208,11 @@ async function openPreview({ sales = [], file, parsed }, after) {
   const verdict = (x) => {
     if (!x) return chip('Chưa kiểm tra', 'grey');
     if (x.ok) return chip('Hợp lệ', 'green');
-    if (x.duplicate?.inFileLine) return `${chip('Trùng trong file', 'amber')}<div class="xs mut">giống dòng ${esc(x.duplicate.inFileLine)}</div>`;
+    if (x.duplicate?.inFileLine) return `${chip('Trùng trong file', 'amber')}<div class="xs mut">${tr('giống dòng')} ${esc(x.duplicate.inFileLine)}</div>`;
     if (x.duplicate) {
       return `${chip('Đã có', 'amber')}<div class="xs mut">${x.duplicate.mine
-        ? `trong danh sách của bạn (${esc(x.duplicate.name)})`
-        : `${esc(x.duplicate.ownerName || 'sale khác')} đang giữ "${esc(x.duplicate.name)}"`}</div>`;
+        ? tf(() => `trong danh sách của bạn (${esc(x.duplicate.name)})`, () => `in your list (${esc(x.duplicate.name)})`)
+        : tf(() => `${esc(x.duplicate.ownerName || 'sale khác')} đang giữ "${esc(x.duplicate.name)}"`, () => `${esc(x.duplicate.ownerName || 'another sales rep')} already holds "${esc(x.duplicate.name)}"`)}</div>`;
     }
     return `${chip('Lỗi', 'red')}<div class="xs mut">${esc(x.error)}</div>`;
   };
@@ -226,54 +228,54 @@ async function openPreview({ sales = [], file, parsed }, after) {
       <td style="white-space:nowrap">${cell(r.phone)}</td>
       <td>${cell(r.email)}</td>
       <td>${rowStatuses(r).map(k => chip(statusDef(k).n, statusDef(k).c)).join(' ')}
-        ${r.statusRaw ? `<div class="xs mut">file: ${esc(r.statusRaw)}</div>` : ''}</td>
+        ${r.statusRaw ? `<div class="xs mut">${tr('file:')} ${esc(r.statusRaw)}</div>` : ''}</td>
       <td class="imp-note">${cell(r.note)}</td>
     </tr>`;
   }).join('');
 
   const statusOptions = (cur) => CUSTOMER_STATUSES.map(s => `<option value="${s.k}" ${s.k === cur ? 'selected' : ''}>${esc(s.n)}</option>`).join('');
-  const submitLabel = () => selected.size ? `Lưu ${selected.size} khách hàng vào hệ thống`
-    : counts.ok ? 'Chọn ít nhất 1 dòng để lưu' : 'Không có dòng nào lưu được';
+  const submitLabel = () => selected.size ? tf(() => `Lưu ${selected.size} khách hàng vào hệ thống`, () => `Save ${selected.size} customers to the system`)
+    : counts.ok ? tr('Chọn ít nhất 1 dòng để lưu') : tr('Không có dòng nào lưu được');
 
   const { root } = modal({
     title: 'Xem trước danh sách khách hàng',
     titleIcon: 'fileSpreadsheet',
     wide: 'xl',
     html: `
-      <div class="sm mut mb">${esc(file.name)} · ${rows.length} dòng khách hàng</div>
+      <div class="sm mut mb">${esc(file.name)} · ${rows.length} ${tr('dòng khách hàng')}</div>
       <div class="row wrap mb" style="gap:6px">
-        ${chip(counts.ok + ' hợp lệ', 'green')}
-        ${counts.dup ? chip(counts.dup + ' trùng — sẽ bỏ qua', 'amber') : ''}
-        ${counts.err ? chip(counts.err + ' lỗi — sửa trong file rồi nhập lại', 'red') : ''}
+        ${chip(counts.ok + ' ' + tr('hợp lệ'), 'green')}
+        ${counts.dup ? chip(counts.dup + ' ' + tr('trùng — sẽ bỏ qua'), 'amber') : ''}
+        ${counts.err ? chip(counts.err + ' ' + tr('lỗi — sửa trong file rồi nhập lại'), 'red') : ''}
       </div>
-      ${counts.ok ? '' : `<div class="note red sm mb">Không có dòng nào lưu được: mọi dòng đều trùng khách đã có hoặc bị lỗi.
-        Xem lý do ở cột <b>Kiểm tra</b>, sửa file rồi nhập lại.</div>`}
+      ${counts.ok ? '' : `<div class="note red sm mb">${tr('Không có dòng nào lưu được: mọi dòng đều trùng khách đã có hoặc bị lỗi.')}
+        ${tr('Xem lý do ở cột')} <b>${tr('Kiểm tra')}</b>, ${tr('sửa file rồi nhập lại.')}</div>`}
 
       <div class="grid g2">
-        ${lead ? `<label class="f"><span>Sale phụ trách cả danh sách</span><select data-owner>${sales.map(salesTeamOption)
+        ${lead ? `<label class="f"><span>${tr('Sale phụ trách cả danh sách')}</span><select data-owner>${sales.map(salesTeamOption)
           .map(o => `<option value="${esc(o.v)}" ${o.v === ownerId ? 'selected' : ''}>${esc(o.n)}</option>`).join('')}</select></label>` : ''}
-        <label class="f"><span>Nguồn khách hàng</span><select data-source>
-          <option value="">— chưa rõ —</option>${LEAD_SOURCES.map(s => `<option value="${esc(s.v)}">${esc(s.n)}</option>`).join('')}</select></label>
+        <label class="f"><span>${tr('Nguồn khách hàng')}</span><select data-source>
+          <option value="">${tr('— chưa rõ —')}</option>${LEAD_SOURCES.map(s => `<option value="${esc(s.v)}">${esc(s.n)}</option>`).join('')}</select></label>
       </div>
 
       ${toConfirm.size ? `<div class="card mb">
-        <div class="b sm">Quy đổi trạng thái trong file</div>
-        <div class="xs mut mb">Các chữ dưới đây không trùng tên trạng thái của app — chọn trạng thái tương ứng.</div>
-        ${[...toConfirm].map(([k, t]) => `<label class="f imp-map"><span>"${esc(t.raw)}" · ${t.count} dòng</span>
+        <div class="b sm">${tr('Quy đổi trạng thái trong file')}</div>
+        <div class="xs mut mb">${tr('Các chữ dưới đây không trùng tên trạng thái của app — chọn trạng thái tương ứng.')}</div>
+        ${[...toConfirm].map(([k, t]) => `<label class="f imp-map"><span>"${esc(t.raw)}" · ${t.count} ${tr('dòng')}</span>
           <select data-map="${esc(k)}">${statusOptions(statusMap.get(k))}</select></label>`).join('')}
       </div>` : ''}
 
       <div class="scroll-x imp-wrap">
         <table class="tbl imp-tbl">
           <thead><tr>
-            <th><input type="checkbox" data-all ${selected.size ? 'checked' : ''} aria-label="Chọn tất cả dòng hợp lệ"></th>
-            <th>Dòng</th><th>Kiểm tra</th><th>Doanh nghiệp</th><th>Người liên hệ</th><th>SĐT</th><th>Email</th><th>Trạng thái</th><th>Ghi chú</th>
+            <th><input type="checkbox" data-all ${selected.size ? 'checked' : ''} aria-label="${esc(tr('Chọn tất cả dòng hợp lệ'))}"></th>
+            <th>${tr('Dòng')}</th><th>${tr('Kiểm tra')}</th><th>${tr('Doanh nghiệp')}</th><th>${tr('Người liên hệ')}</th><th>SĐT</th><th>Email</th><th>${tr('Trạng thái')}</th><th>${tr('Ghi chú')}</th>
           </tr></thead>
           <tbody data-body>${bodyHtml()}</tbody>
         </table>
       </div>
-      <div class="xs mut mt">Khách trùng (theo tên hoặc SĐT) luôn bị bỏ qua để giữ quyền ĐKKH của sale đang chăm sóc.
-        ĐKKH của khách mới tính từ hôm nay. Người liên hệ trong file được lưu là người liên hệ chính.</div>`,
+      <div class="xs mut mt">${tr('Khách trùng (theo tên hoặc SĐT) luôn bị bỏ qua để giữ quyền ĐKKH của sale đang chăm sóc.')}
+        ${tr('ĐKKH của khách mới tính từ hôm nay. Người liên hệ trong file được lưu là người liên hệ chính.')}</div>`,
     submitText: submitLabel(),
     onSubmit: async () => {
       if (!selected.size) { toast('Chưa chọn dòng nào để lưu', 'err'); return false; }
@@ -322,21 +324,24 @@ function showResult(picked, res) {
   const created = res.results.filter(x => x.ok && x.id);
   const skipped = res.results.filter(x => !x.ok);
   modal({
-    title: created.length ? `Đã lưu ${created.length} khách hàng` : 'Chưa lưu được khách hàng nào',
+    title: tf(() => created.length ? `Đã lưu ${created.length} khách hàng` : 'Chưa lưu được khách hàng nào',
+      () => created.length ? `Saved ${created.length} customers` : 'No customers were saved'),
     titleIcon: created.length ? 'circleCheck' : 'triangleAlert',
     wide: true,
     html: `
-      ${created.length ? `<div class="sm mut mb">Khách đã vào CRM và đứng đầu danh sách. Bấm tên khách để mở chi tiết.</div>
+      ${created.length ? `<div class="sm mut mb">${tr('Khách đã vào CRM và đứng đầu danh sách. Bấm tên khách để mở chi tiết.')}</div>
       <div class="card mb">${created.map(x => {
         const r = byLine.get(x.line) || {};
         return `<a class="item" href="#/crm/${esc(x.id)}">
           <div class="grow"><div class="t">${esc(r.name)}</div>
-            <div class="d">${[r.contactName, r.phone, r.email].filter(Boolean).map(esc).join(' · ') || 'Chưa có thông tin liên hệ'}</div></div>
+            <div class="d">${[r.contactName, r.phone, r.email].filter(Boolean).map(esc).join(' · ') || tr('Chưa có thông tin liên hệ')}</div></div>
         </a>`;
       }).join('')}</div>` : ''}
-      ${skipped.length ? `<div class="note red sm">${skipped.length} dòng không được lưu (có thể vừa có người đăng ký trùng):
-        <ul style="margin:6px 0 0;padding-left:18px">${skipped.map(x => `<li>Dòng ${esc(x.line)} — ${esc(byLine.get(x.line)?.name || '')}:
-          ${esc(x.error || (x.duplicate?.inFileLine ? 'trùng dòng ' + x.duplicate.inFileLine : 'đã có trong hệ thống'))}</li>`).join('')}</ul></div>` : ''}`,
+      ${skipped.length ? `<div class="note red sm">${tf(() => `${skipped.length} dòng không được lưu (có thể vừa có người đăng ký trùng):`, () => `${skipped.length} row(s) were not saved (someone may have just registered a duplicate):`)}
+        <ul style="margin:6px 0 0;padding-left:18px">${skipped.map(x => tf(() => `<li>Dòng ${esc(x.line)} — ${esc(byLine.get(x.line)?.name || '')}:
+          ${esc(x.error || (x.duplicate?.inFileLine ? 'trùng dòng ' + x.duplicate.inFileLine : 'đã có trong hệ thống'))}</li>`,
+          () => `<li>Row ${esc(x.line)} — ${esc(byLine.get(x.line)?.name || '')}:
+          ${esc(x.error || (x.duplicate?.inFileLine ? 'duplicate of row ' + x.duplicate.inFileLine : 'already in the system'))}</li>`)).join('')}</ul></div>` : ''}`,
     submitText: 'Đóng',
     onSubmit: () => {},
   });

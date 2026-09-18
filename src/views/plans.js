@@ -8,6 +8,8 @@ import {
 } from '../salesDocs.js';
 import { aiModal } from '../aiPref.js';
 import { icon } from '../icons.js';
+import { t as tr, tf } from '../i18n.js';
+import { translateText } from '../autoTranslate.js';
 
 /**
  * Phương án kinh doanh — nơi chạy trọn vòng đời một thương vụ: Báo giá · Hợp đồng · Nghiệm thu ·
@@ -25,7 +27,7 @@ let tab = 'plans';
 const MANUAL_KINDS = ['nghiem_thu', 'thanh_ly'];
 /** Ai duyệt bước nào — ghi rõ ngay trên từng bước vì hai nhóm bước có số vòng duyệt khác nhau,
  * để người dùng không phải đoán vì sao bước 1-2 đi qua nhiều người hơn bước 3-4. */
-const DOC_APPROVERS = { bao_gia: 'TPKD (V1) → Giám đốc (V2)', hop_dong: 'TPKD (V1) → HCNS (V2)' };
+const DOC_APPROVERS = () => ({ bao_gia: tr('TPKD (V1) → Giám đốc (V2)'), hop_dong: tr('TPKD (V1) → HCNS (V2)') });
 
 /** Chứng từ thuộc bước `kind` của phương án đang mở. */
 const docsFor = (d, kind) => (kind === 'bao_gia' ? d.quotes : d.contracts) || [];
@@ -71,39 +73,39 @@ export async function render(el, params) {
     const pending = d.plans.reduce((s, x) => s + x.pending_n, 0);
     const revise = d.plans.reduce((s, x) => s + x.revise_n, 0);
     return `<div class="page-head">
-      <div class="grow"><h2>Phương án kinh doanh</h2>
-        <p>Báo giá · Hợp đồng · Nghiệm thu · Thanh lý — lập chứng từ, trình duyệt và nhận phản hồi trên cùng một luồng</p></div>
+      <div class="grow"><h2>${tr('Phương án kinh doanh')}</h2>
+        <p>${tr('Báo giá · Hợp đồng · Nghiệm thu · Thanh lý — lập chứng từ, trình duyệt và nhận phản hồi trên cùng một luồng')}</p></div>
       <div class="right"><button class="btn primary sm" data-new>+ Báo giá</button>
         <div class="mt"><button class="btn sm" data-newcontract>+ Hợp đồng</button></div>
-        <div class="mt"><button class="btn sm" data-aiprop>${icon('bot', 14)} AI soạn proposal</button></div></div>
+        <div class="mt"><button class="btn sm" data-aiprop>${icon('bot', 14)} ${tr('AI soạn proposal')}</button></div></div>
     </div>
 
     <div class="grid g3 mb">
-      ${stat('Phương án đang theo dõi', d.plans.length, isLead() ? 'Toàn đội' : 'Của bạn', 'blue')}
-      ${stat('Hạng mục chờ duyệt', pending, isLead() ? 'Cần bạn xử lý' : 'Đang chờ TP/GĐ/HCNS', pending ? 'amber' : '')}
-      ${stat('Hạng mục cần chỉnh sửa', revise, 'Bị trả lại, cần sửa và trình lại', revise ? 'red' : '')}
+      ${stat('Phương án đang theo dõi', d.plans.length, isLead() ? tr('Toàn đội') : tr('Của bạn'), 'blue')}
+      ${stat('Hạng mục chờ duyệt', pending, isLead() ? tr('Cần bạn xử lý') : tr('Đang chờ TP/GĐ/HCNS'), pending ? 'amber' : '')}
+      ${stat('Hạng mục cần chỉnh sửa', revise, tr('Bị trả lại, cần sửa và trình lại'), revise ? 'red' : '')}
     </div>
 
     <div class="seg mb">
-      <button data-tab="plans" class="${tab === 'plans' ? 'on' : ''}">Phương án (${d.plans.length})</button>
-      <button data-tab="quotes" class="${tab === 'quotes' ? 'on' : ''}">Báo giá (${d.quotes.length})</button>
-      ${isLead() ? `<button data-tab="approve" class="${tab === 'approve' ? 'on' : ''}">Chờ duyệt giá (${d.quotes.filter(canDecide).length})</button>` : ''}
-      <button data-tab="contracts" class="${tab === 'contracts' ? 'on' : ''}">Hợp đồng (${d.contracts.length})</button>
-      ${isLead() ? `<button data-tab="approveContracts" class="${tab === 'approveContracts' ? 'on' : ''}">Chờ duyệt HĐ (${d.contracts.filter(canDecideContract).length})</button>` : ''}
+      <button data-tab="plans" class="${tab === 'plans' ? 'on' : ''}">${tr('Phương án')} (${d.plans.length})</button>
+      <button data-tab="quotes" class="${tab === 'quotes' ? 'on' : ''}">${tr('Báo giá')} (${d.quotes.length})</button>
+      ${isLead() ? `<button data-tab="approve" class="${tab === 'approve' ? 'on' : ''}">${tr('Chờ duyệt giá')} (${d.quotes.filter(canDecide).length})</button>` : ''}
+      <button data-tab="contracts" class="${tab === 'contracts' ? 'on' : ''}">${tr('Hợp đồng')} (${d.contracts.length})</button>
+      ${isLead() ? `<button data-tab="approveContracts" class="${tab === 'approveContracts' ? 'on' : ''}">${tr('Chờ duyệt HĐ')} (${d.contracts.filter(canDecideContract).length})</button>` : ''}
     </div>
 
-    ${tab === 'plans' ? `<div class="note mb">Tạo phương án từ <b>CRM 360° → mở khách hàng → Tạo phương án kinh doanh</b>.
-      Mỗi phương án có sẵn 4 hạng mục theo đúng thứ tự vòng đời thương vụ; báo giá và hợp đồng lập ngay tại bước 1 và bước 2.
-      Cần báo giá nhanh chưa gắn phương án nào thì dùng nút <b>+ Báo giá</b> ở trên.</div>
+    ${tab === 'plans' ? `<div class="note mb">${tr('Tạo phương án từ')} <b>CRM 360° → ${tr('mở khách hàng')} → ${tr('Tạo phương án kinh doanh')}</b>.
+      ${tr('Mỗi phương án có sẵn 4 hạng mục theo đúng thứ tự vòng đời thương vụ; báo giá và hợp đồng lập ngay tại bước 1 và bước 2.')}
+      ${tr('Cần báo giá nhanh chưa gắn phương án nào thì dùng nút')} <b>+ ${tr('Báo giá')}</b> ${tr('ở trên.')}</div>
 
       ${d.plans.length ? `<div class="card">${d.plans.map(pl => `<a class="item" href="#/plans/${esc(pl.id)}">
         <div class="dot-i">${icon('clipboardList')}</div>
         <div class="grow"><div class="t">${esc(pl.title)}</div>
           <div class="d">${esc(pl.customer_name || '—')}${isLead() ? ' · ' + esc(pl.owner_name || '') : ''}</div>
-          <div class="d xs">${pl.approved_n}/4 hạng mục đã duyệt · cập nhật ${rel(pl.updated_at)}</div></div>
+          <div class="d xs">${pl.approved_n}/4 ${tr('hạng mục đã duyệt')} · ${tr('cập nhật')} ${rel(pl.updated_at)}</div></div>
         <div class="right">
-          ${pl.revise_n ? chip(pl.revise_n + ' cần sửa', 'red') : ''}
-          ${pl.pending_n ? chip(pl.pending_n + ' chờ duyệt', 'amber') : ''}
+          ${pl.revise_n ? chip(pl.revise_n + ' ' + tr('cần sửa'), 'red') : ''}
+          ${pl.pending_n ? chip(pl.pending_n + ' ' + tr('chờ duyệt'), 'amber') : ''}
           ${!pl.revise_n && !pl.pending_n && pl.approved_n === 4 ? chip('Hoàn tất', 'green') : ''}
         </div>
       </a>`).join('')}</div>` : empty('clipboardList', 'Chưa có phương án nào. Tạo từ CRM 360° trên trang khách hàng.')}` : ''}
@@ -147,21 +149,21 @@ async function detail(el, id) {
     <a class="btn sm" href="#/plans">${icon('arrowLeft', 15)}</a>
     <div class="grow"><h2>${esc(d.plan.title)}</h2>
       <p>${esc(d.customer?.name || '—')}${d.customer?.industry ? ' · ' + esc(d.customer.industry) : ''}</p></div>
-    <a class="btn sm" href="#/crm/${esc(d.plan.customer_id)}">Hồ sơ khách</a>
+    <a class="btn sm" href="#/crm/${esc(d.plan.customer_id)}">${tr('Hồ sơ khách')}</a>
   </div>
 
   ${d.plan.note ? `<div class="note mb">${esc(d.plan.note)}</div>` : ''}
 
   <div class="card">
-    <div class="b sm mb">Luồng trình duyệt</div>
+    <div class="b sm mb">${tr('Luồng trình duyệt')}</div>
     ${d.items.map((it, i) => flowStep(it, i === d.items.length - 1, d)).join('')}
   </div>
 
-  <div class="sec-title">Nhật ký trao đổi</div>
+  <div class="sec-title">${tr('Nhật ký trao đổi')}</div>
   <div class="card">
     <div class="row mb" style="gap:8px">
-      <input placeholder="Viết phản hồi hoặc cập nhật cho phương án này…" data-msg class="grow">
-      <button class="btn sm primary" data-send>Gửi</button>
+      <input placeholder="${esc(tr('Viết phản hồi hoặc cập nhật cho phương án này…'))}" data-msg class="grow">
+      <button class="btn sm primary" data-send>${tr('Gửi')}</button>
     </div>
     ${d.events.length ? d.events.map(e => `<div class="item">
       <div class="dot-i">${icon(eventIcon(e.kind))}</div>
@@ -189,7 +191,8 @@ async function detail(el, id) {
       kind: 'proposal',
       customerId: d.plan.customer_id,
       promptLabel: 'Mô tả nhu cầu & ngân sách',
-      prompt: `Soạn proposal cho ${d.customer?.name || 'khách hàng'} theo phương án "${d.plan.title}".`,
+      prompt: tf(() => `Soạn proposal cho ${d.customer?.name || 'khách hàng'} theo phương án "${d.plan.title}".`,
+        () => `Draft a proposal for ${d.customer?.name ? translateText(d.customer.name) : 'the customer'} based on the plan "${translateText(d.plan.title)}".`),
       extra: d.plan.note || '',
     });
 
@@ -235,7 +238,7 @@ function flowStep(it, last, d) {
     <div class="flow-body">
       <div class="row wrap" style="gap:7px">
         <b style="font-size:13.7px">${esc(planKindName(it.kind))}</b>${chip(st.n, st.c)}
-        <span class="xs mut">duyệt: ${esc(isDoc ? DOC_APPROVERS[it.kind] : approverLabel(it))}</span>
+        <span class="xs mut">${tr('duyệt:')} ${esc(isDoc ? DOC_APPROVERS()[it.kind] : approverLabel(it))}</span>
       </div>
       ${isDoc ? docStepBody(it, docs) : manualStepBody(it, d.plan)}
     </div>
@@ -251,19 +254,19 @@ function docStepBody(it, docs) {
   // phản hồi của người duyệt trong nv_plan_items. Giữ lại dạng chỉ-đọc thay vì để biến mất —
   // đó là trao đổi thật giữa kinh doanh và TPKD, không phải rác dữ liệu.
   const legacy = it.summary || it.decision_note ? `<div class="note mt">
-      <div class="xs mut">Nội dung nhập tay trước đây (đã ngừng dùng, giữ để tham khảo)</div>
+      <div class="xs mut">${tr('Nội dung nhập tay trước đây (đã ngừng dùng, giữ để tham khảo)')}</div>
       ${it.summary ? `<div class="sm">${esc(it.summary)}${it.value ? ' · ' + money(it.value) : ''}</div>` : ''}
-      ${it.decision_note ? `<div class="sm"><b>Phản hồi:</b> ${esc(it.decision_note)}</div>` : ''}
+      ${it.decision_note ? `<div class="sm"><b>${tr('Phản hồi:')}</b> ${esc(it.decision_note)}</div>` : ''}
     </div>` : '';
   // Danh sách chứng từ vẽ trần bên trong bước, KHÔNG bọc .card: .card có hiệu ứng nhấc lên khi
   // hover, lồng trong một .card khác thì cả khối bước nhảy theo con trỏ. .item đã tự có đường kẻ
   // phân cách nên vẫn đọc ra danh sách.
   return `${legacy}${docs.length
     ? `<div class="mt">${docs.map(isQuote ? quoteItem : contractItem).join('')}</div>`
-    : `<div class="sm mut" style="margin-top:3px">Chưa có ${isQuote ? 'báo giá' : 'hợp đồng'} nào cho phương án này.</div>`}
+    : `<div class="sm mut" style="margin-top:3px">${tr('Chưa có')} ${isQuote ? tr('báo giá') : tr('hợp đồng')} ${tr('nào cho phương án này.')}</div>`}
     <div class="row wrap mt" style="gap:6px">
-      <button class="btn sm ${docs.length ? '' : 'primary'}" data-${isQuote ? 'newquote' : 'newcontract'}>+ ${isQuote ? 'Tạo báo giá' : 'Lập hợp đồng'}</button>
-      ${isQuote ? `<button class="btn sm" data-aiprop>${icon('bot', 14)} AI soạn proposal</button>` : ''}
+      <button class="btn sm ${docs.length ? '' : 'primary'}" data-${isQuote ? 'newquote' : 'newcontract'}>+ ${isQuote ? tr('Tạo báo giá') : tr('Lập hợp đồng')}</button>
+      ${isQuote ? `<button class="btn sm" data-aiprop>${icon('bot', 14)} ${tr('AI soạn proposal')}</button>` : ''}
     </div>`;
 }
 
@@ -271,23 +274,24 @@ function docStepBody(it, docs) {
 function manualStepBody(it, plan) {
   return `${it.approver_name && it.status !== 'pending' ? `<div class="xs mut" style="margin-top:3px">${esc(it.approver_name)} · ${fmtDT(it.decided_at)}</div>` : ''}
     ${it.summary ? `<div class="sm mut" style="margin-top:3px">${esc(it.summary)}${it.value ? ' · ' + money(it.value) : ''}</div>` : ''}
-    ${it.decision_note ? `<div class="note ${it.status === 'revise' ? 'red' : 'blue'}" style="margin-top:7px"><b>Phản hồi:</b> ${esc(it.decision_note)}</div>` : ''}
+    ${it.decision_note ? `<div class="note ${it.status === 'revise' ? 'red' : 'blue'}" style="margin-top:7px"><b>${tr('Phản hồi:')}</b> ${esc(it.decision_note)}</div>` : ''}
     <div class="row wrap mt" style="gap:6px">
-      ${canSubmit(it, plan) ? `<button class="btn sm ${it.status === 'revise' ? 'amber' : 'primary'}" data-submit="${esc(it.id)}">${it.status === 'revise' ? 'Sửa & trình lại' : 'Trình duyệt'}</button>` : ''}
-      ${canDecideItem(it) ? `<button class="btn sm amber" data-ok-item="${esc(it.id)}">Duyệt</button>
-        <button class="btn sm" data-revise-item="${esc(it.id)}">Yêu cầu điều chỉnh</button>` : ''}
-      ${it.status === 'pending' && !canDecideItem(it) ? `<span class="xs mut">Đã trình ${fmtDT(it.submitted_at)}</span>` : ''}
+      ${canSubmit(it, plan) ? `<button class="btn sm ${it.status === 'revise' ? 'amber' : 'primary'}" data-submit="${esc(it.id)}">${it.status === 'revise' ? tr('Sửa & trình lại') : tr('Trình duyệt')}</button>` : ''}
+      ${canDecideItem(it) ? `<button class="btn sm amber" data-ok-item="${esc(it.id)}">${tr('Duyệt')}</button>
+        <button class="btn sm" data-revise-item="${esc(it.id)}">${tr('Yêu cầu điều chỉnh')}</button>` : ''}
+      ${it.status === 'pending' && !canDecideItem(it) ? `<span class="xs mut">${tr('Đã trình')} ${fmtDT(it.submitted_at)}</span>` : ''}
     </div>`;
 }
 
-const approverLabel = (it) => (PLAN_APPROVERS.find(a => a.v === it.approver_role) || {}).n || 'Trưởng phòng KD';
+const approverLabel = (it) => (PLAN_APPROVERS.find(a => a.v === it.approver_role) || {}).n || tr('Trưởng phòng KD');
 
 function submitModal(planId, it, after) {
   modal({
-    title: (it.status === 'revise' ? 'Sửa & trình lại: ' : 'Trình duyệt: ') + planKindName(it.kind),
-    html: it.decision_note ? `<div class="note red mb"><b>Yêu cầu điều chỉnh lần trước:</b> ${esc(it.decision_note)}</div>` : '',
+    title: tf(() => (it.status === 'revise' ? 'Sửa & trình lại: ' : 'Trình duyệt: ') + planKindName(it.kind),
+      () => (it.status === 'revise' ? 'Revise & resubmit: ' : 'Submit for approval: ') + planKindName(it.kind)),
+    html: it.decision_note ? `<div class="note red mb"><b>${tr('Yêu cầu điều chỉnh lần trước:')}</b> ${esc(it.decision_note)}</div>` : '',
     fields: [
-      { name: 'summary', label: 'Nội dung ' + planKindName(it.kind).toLowerCase(), type: 'textarea', rows: 3, required: true, value: it.summary || '', placeholder: placeholderFor(it.kind) },
+      { name: 'summary', label: tf(() => 'Nội dung ' + planKindName(it.kind).toLowerCase(), () => 'Content for ' + planKindName(it.kind).toLowerCase()), type: 'textarea', rows: 3, required: true, value: it.summary || '', placeholder: placeholderFor(it.kind) },
       { name: 'value', label: 'Giá trị (đ) — bỏ trống nếu không có', type: 'number', value: it.value || '' },
       { name: 'approverRole', label: 'Trình cho ai duyệt', type: 'select', value: it.approver_role || 'manager', options: PLAN_APPROVERS },
     ],
@@ -304,7 +308,8 @@ function submitModal(planId, it, after) {
 
 function decideModal(planId, it, decision, after) {
   modal({
-    title: (decision === 'approved' ? 'Duyệt: ' : 'Yêu cầu điều chỉnh: ') + planKindName(it.kind),
+    title: tf(() => (decision === 'approved' ? 'Duyệt: ' : 'Yêu cầu điều chỉnh: ') + planKindName(it.kind),
+      () => (decision === 'approved' ? 'Approve: ' : 'Request revision: ') + planKindName(it.kind)),
     html: `<div class="sm mut mb">${esc(it.summary || '')}${it.value ? ' · ' + money(it.value) : ''}</div>`,
     fields: [{
       name: 'note', label: decision === 'approved' ? 'Ghi chú cho kinh doanh (tuỳ chọn)' : 'Cần điều chỉnh gì',
@@ -329,5 +334,5 @@ const placeholderFor = (kind) => ({
 
 const eventIcon = (k) => k === 'approved' ? 'circleCheck' : k === 'revise' ? 'triangleAlert'
   : k === 'submit' ? 'inbox' : k === 'create' ? 'sparkles' : 'messageSquare';
-const eventLabel = (k) => ({ approved: 'Đã duyệt', revise: 'Yêu cầu điều chỉnh', submit: 'Trình duyệt', create: 'Tạo phương án' }[k] || 'Trao đổi');
+const eventLabel = (k) => tr({ approved: 'Đã duyệt', revise: 'Yêu cầu điều chỉnh', submit: 'Trình duyệt', create: 'Tạo phương án' }[k] || 'Trao đổi');
 const eventTone = (k) => ({ approved: 'green', revise: 'red', submit: 'amber', create: 'blue' }[k] || 'grey');

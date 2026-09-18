@@ -3,6 +3,7 @@ import { esc, toast } from '../ui.js';
 import { state } from '../state.js';
 import { icon } from '../icons.js';
 import { BRAND_LOGO } from '../const.js';
+import { t as tr, personName } from '../i18n.js';
 
 /**
  * Đặt mật khẩu. Phục vụ 3 tình huống:
@@ -19,15 +20,15 @@ export async function render(el, { id } = {}) {
   el.innerHTML = `<div class="login-wrap">
     <div class="login-card">
       <img class="login-brand" src="${BRAND_LOGO}" alt="NetViet Sales OS">
-      <div data-body class="mt"><p class="sm mut">Đang kiểm tra…</p></div>
+      <div data-body class="mt"><p class="sm mut">${tr('Đang kiểm tra…')}</p></div>
     </div>
   </div>`;
 
   const body = el.querySelector('[data-body]');
-  if (!token && !forced) { body.innerHTML = errorBlock('Liên kết không hợp lệ hoặc đã hết hạn.'); return; }
+  if (!token && !forced) { body.innerHTML = errorBlock(tr('Liên kết không hợp lệ hoặc đã hết hạn.')); return; }
 
   if (forced) {
-    body.innerHTML = `<p class="login-sub">Đây là lần đăng nhập đầu tiên. Vui lòng đặt mật khẩu mới cho <b>${esc(state.me.name)}</b> trước khi tiếp tục.</p>`
+    body.innerHTML = `<p class="login-sub">${tr('Đây là lần đăng nhập đầu tiên. Vui lòng đặt mật khẩu mới cho')} <b>${esc(personName(state.me.name))}</b> ${tr('trước khi tiếp tục.')}</p>`
       + pwForm();
     bindForm(body, async (password) => {
       await post('/account/password', { password });
@@ -47,8 +48,8 @@ export async function render(el, { id } = {}) {
     return;
   }
 
-  const title = info.purpose === 'reset' ? 'Đặt lại mật khẩu' : 'Đặt mật khẩu';
-  body.innerHTML = `<p class="login-sub">${esc(title)} cho <b>${esc(info.name)}</b></p>` + pwForm();
+  const title = info.purpose === 'reset' ? tr('Đặt lại mật khẩu') : tr('Đặt mật khẩu');
+  body.innerHTML = `<p class="login-sub">${esc(title)} ${tr('cho')} <b>${esc(info.name)}</b></p>` + pwForm();
   bindForm(body, async (password) => {
     await post('/setup-token/' + encodeURIComponent(token), { password });
     toast('Đã đặt mật khẩu. Vui lòng đăng nhập lại.', 'ok');
@@ -59,13 +60,13 @@ export async function render(el, { id } = {}) {
 
 function pwForm() {
   return `<form data-setpw-form class="mt">
-      <label class="f"><span>MẬT KHẨU MỚI</span>
+      <label class="f"><span>${tr('MẬT KHẨU MỚI')}</span>
         <input name="password" type="password" placeholder="••••••••" autocomplete="new-password" required>
       </label>
-      <label class="f"><span>XÁC NHẬN MẬT KHẨU</span>
+      <label class="f"><span>${tr('XÁC NHẬN MẬT KHẨU')}</span>
         <input name="password2" type="password" placeholder="••••••••" autocomplete="new-password" required>
       </label>
-      <button type="submit" class="btn primary block login-submit mt">Đặt mật khẩu</button>
+      <button type="submit" class="btn primary block login-submit mt">${tr('Đặt mật khẩu')}</button>
     </form>`;
 }
 
@@ -79,17 +80,17 @@ function bindForm(body, onSuccess) {
     const password2 = form.password2.value;
     if (password !== password2) { toast('Mật khẩu xác nhận không khớp', 'err'); return; }
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Đang lưu…';
+    submitBtn.textContent = tr('Đang lưu…');
     try {
       await onSuccess(password);
     } catch (err) {
       toast(err.message, 'err');
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Đặt mật khẩu';
+      submitBtn.textContent = tr('Đặt mật khẩu');
     }
   };
 }
 
 function errorBlock(msg) {
-  return `<p class="sm mut">${icon('triangleAlert', 14)} ${esc(msg)}</p><a class="btn block mt" href="#/login">Quay lại đăng nhập</a>`;
+  return `<p class="sm mut">${icon('triangleAlert', 14)} ${esc(msg)}</p><a class="btn block mt" href="#/login">${tr('Quay lại đăng nhập')}</a>`;
 }

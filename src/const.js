@@ -1,4 +1,12 @@
 import { icon } from './icons.js';
+import { t, tf, jobTitle } from './i18n.js';
+
+/* Nhãn hiển thị (n/c...) của mọi hằng số bên dưới dùng GETTER (`get n() { return t('...') }`) thay vì
+ * chuỗi cứng — vì các mảng/đối tượng này được import 1 LẦN lúc app khởi động rồi dùng lại nhiều nơi
+ * (chip(), <select> options, hiển thị trực tiếp .n), không phải hàm gọi lại mỗi lần render. Getter
+ * tra t() ngay lúc ĐỌC .n nên luôn khớp ngôn ngữ đang chọn, kể cả sau khi người dùng đổi VI/EN mà
+ * không cần dựng lại các hằng số này. Giá trị `k`/`v` (khoá lưu CSDL) giữ nguyên tiếng Việt không
+ * đổi — chỉ nhãn hiển thị `n` mới dịch. */
 
 /** Logo thương hiệu NetViet Sales — nhúng thẳng dạng data URL để không phụ thuộc file ảnh
  * riêng (public/ chỉ sync index.html + src/ + styles/, xem local/sync-assets.mjs). */
@@ -6,39 +14,39 @@ export const BRAND_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAggAAAB
 
 /* 14 bước theo quy trình vận hành PKD (spec làm cơ sở CRM, mục 7) — thay cho pipeline 7 bước cũ. */
 export const STAGES = [
-  { k: 'lead_moi', n: 'Lead mới', ic: icon('sprout') },
-  { k: 'tiep_can', n: 'Đang tiếp cận', ic: icon('phone') },
-  { k: 'du_dieu_kien', n: 'Đủ điều kiện', ic: icon('circleCheck') },
-  { k: 'chao_hang', n: 'Đang chào hàng', ic: icon('lightbulb') },
-  { k: 'cho_duyet_bg_v1', n: 'Chờ duyệt báo giá V1', ic: icon('clock') },
-  { k: 'cho_duyet_bg_v2', n: 'Chờ duyệt báo giá V2', ic: icon('alarmClock') },
-  { k: 'da_gui_bao_gia', n: 'Đã gửi báo giá', ic: icon('mail') },
-  { k: 'dam_phan', n: 'Đang đàm phán', ic: icon('handshake') },
-  { k: 'cho_duyet_hd_v1', n: 'Chờ duyệt HĐ V1', ic: icon('clock') },
-  { k: 'cho_duyet_hd_v2', n: 'Chờ duyệt HĐ V2', ic: icon('alarmClock') },
-  { k: 'hop_dong_da_ky', n: 'Hợp đồng đã ký', ic: icon('penLine') },
-  { k: 'dang_san_xuat', n: 'Đang sản xuất', ic: icon('construction') },
-  { k: 'ban_giao', n: 'Bàn giao', ic: icon('inbox') },
-  { k: 'hoan_tat', n: 'Hoàn tất', ic: icon('trophy') },
+  { k: 'lead_moi', get n() { return t('Lead mới'); }, ic: icon('sprout') },
+  { k: 'tiep_can', get n() { return t('Đang tiếp cận'); }, ic: icon('phone') },
+  { k: 'du_dieu_kien', get n() { return t('Đủ điều kiện'); }, ic: icon('circleCheck') },
+  { k: 'chao_hang', get n() { return t('Đang chào hàng'); }, ic: icon('lightbulb') },
+  { k: 'cho_duyet_bg_v1', get n() { return t('Chờ duyệt báo giá V1'); }, ic: icon('clock') },
+  { k: 'cho_duyet_bg_v2', get n() { return t('Chờ duyệt báo giá V2'); }, ic: icon('alarmClock') },
+  { k: 'da_gui_bao_gia', get n() { return t('Đã gửi báo giá'); }, ic: icon('mail') },
+  { k: 'dam_phan', get n() { return t('Đang đàm phán'); }, ic: icon('handshake') },
+  { k: 'cho_duyet_hd_v1', get n() { return t('Chờ duyệt HĐ V1'); }, ic: icon('clock') },
+  { k: 'cho_duyet_hd_v2', get n() { return t('Chờ duyệt HĐ V2'); }, ic: icon('alarmClock') },
+  { k: 'hop_dong_da_ky', get n() { return t('Hợp đồng đã ký'); }, ic: icon('penLine') },
+  { k: 'dang_san_xuat', get n() { return t('Đang sản xuất'); }, ic: icon('construction') },
+  { k: 'ban_giao', get n() { return t('Bàn giao'); }, ic: icon('inbox') },
+  { k: 'hoan_tat', get n() { return t('Hoàn tất'); }, ic: icon('trophy') },
 ];
 /* Quy trình đấu thầu (khách hàng tập đoàn lớn) — chạy song song với STAGES qua deal.process_type.
  * Từ "Trúng thầu" hội tụ thẳng vào TERMINAL_STAGES bên dưới, không định nghĩa lại 4 bước cuối.
  * Khớp thứ tự với server/routes/deals.js TENDER_STAGES (server) — 2 mảng trùng lặp có chủ đích,
  * giống cách STAGES/TENDER_STAGES thường đã trùng lặp client/server trong dự án này. */
 export const TENDER_STAGES = [
-  { k: 'tiep_can_truoc', n: 'Tiếp cận trước', ic: icon('sprout') },
-  { k: 'nhan_thu_moi', n: 'Nhận thư mời thầu', ic: icon('mail') },
-  { k: 'chuan_bi_ho_so', n: 'Chuẩn bị hồ sơ', ic: icon('fileText') },
-  { k: 'cho_duyet_ho_so', n: 'Chờ duyệt hồ sơ', ic: icon('clock') },
-  { k: 'da_nop_ho_so', n: 'Đã nộp hồ sơ', ic: icon('circleCheck') },
-  { k: 'thuong_thao', n: 'Đang thương thảo', ic: icon('handshake') },
-  { k: 'mou', n: 'Biên bản ghi nhớ (MOU)', ic: icon('penLine') },
-  { k: 'trung_thau', n: 'Trúng thầu', ic: icon('trophy') },
+  { k: 'tiep_can_truoc', get n() { return t('Tiếp cận trước'); }, ic: icon('sprout') },
+  { k: 'nhan_thu_moi', get n() { return t('Nhận thư mời thầu'); }, ic: icon('mail') },
+  { k: 'chuan_bi_ho_so', get n() { return t('Chuẩn bị hồ sơ'); }, ic: icon('fileText') },
+  { k: 'cho_duyet_ho_so', get n() { return t('Chờ duyệt hồ sơ'); }, ic: icon('clock') },
+  { k: 'da_nop_ho_so', get n() { return t('Đã nộp hồ sơ'); }, ic: icon('circleCheck') },
+  { k: 'thuong_thao', get n() { return t('Đang thương thảo'); }, ic: icon('handshake') },
+  { k: 'mou', get n() { return t('Biên bản ghi nhớ (MOU)'); }, ic: icon('penLine') },
+  { k: 'trung_thau', get n() { return t('Trúng thầu'); }, ic: icon('trophy') },
 ];
 export const stageName = (k) => (STAGES.find(s => s.k === k) || TENDER_STAGES.find(s => s.k === k) || {}).n || k;
 /* Giai đoạn kết thúc — trùng với TERMINAL bên server/routes/deals.js, xem chú thích ở đó. */
 export const TERMINAL_STAGES = ['hop_dong_da_ky', 'dang_san_xuat', 'ban_giao', 'hoan_tat'];
-export const PROCESS_TYPE_NAME = { thong_thuong: 'Thông thường', dau_thau: 'Đấu thầu' };
+export const PROCESS_TYPE_NAME = { get thong_thuong() { return t('Thông thường'); }, get dau_thau() { return t('Đấu thầu'); } };
 
 /* Quy mô khách hàng — cột nv_customers.scale đã tồn tại trong CSDL (seed ngẫu nhiên 3 giá trị này)
  * nhưng trước đây chưa có field nào trong UI để xem/sửa. 'Tập đoàn' là điều kiện nhận diện khách
@@ -59,20 +67,20 @@ export const APPROVAL_TONE = {
  * Khớp danh sách với server/lib/customer.js SALE_STATUSES/TENDER_STATUSES — 2 mảng trùng lặp có
  * chủ đích, giống cách STAGES/TENDER_STAGES đã trùng client/server trong dự án này. */
 export const CUSTOMER_STATUSES = [
-  { k: 'khach_moi', n: 'Khách mới', c: 'grey', track: 'sale' },
-  { k: 'cham_soc', n: 'Chăm sóc', c: 'blue', track: 'sale' },
-  { k: 'chao_hang', n: 'Chào hàng', c: 'blue', track: 'sale' },
-  { k: 'bao_gia', n: 'Báo giá', c: 'amber', track: 'sale' },
-  { k: 'hop_dong', n: 'Hợp đồng', c: 'amber', track: 'sale' },
-  { k: 'da_mua_hang', n: 'Đã mua hàng', c: 'green', track: 'sale' },
-  { k: 'tiep_can_truoc', n: 'Tiếp cận trước', c: 'grey', track: 'tender' },
-  { k: 'nhan_thu_moi', n: 'Nhận thư mời thầu', c: 'blue', track: 'tender' },
-  { k: 'chuan_bi_ho_so', n: 'Chuẩn bị hồ sơ', c: 'blue', track: 'tender' },
-  { k: 'cho_duyet_ho_so', n: 'Chờ duyệt hồ sơ', c: 'amber', track: 'tender' },
-  { k: 'da_nop_ho_so', n: 'Đã nộp hồ sơ', c: 'blue', track: 'tender' },
-  { k: 'thuong_thao', n: 'Thương thảo', c: 'amber', track: 'tender' },
-  { k: 'mou', n: 'Biên bản ghi nhớ (MOU)', c: 'blue', track: 'tender' },
-  { k: 'trung_thau', n: 'Trúng thầu', c: 'green', track: 'tender' },
+  { k: 'khach_moi', get n() { return t('Khách mới'); }, c: 'grey', track: 'sale' },
+  { k: 'cham_soc', get n() { return t('Chăm sóc'); }, c: 'blue', track: 'sale' },
+  { k: 'chao_hang', get n() { return t('Chào hàng'); }, c: 'blue', track: 'sale' },
+  { k: 'bao_gia', get n() { return t('Báo giá'); }, c: 'amber', track: 'sale' },
+  { k: 'hop_dong', get n() { return t('Hợp đồng'); }, c: 'amber', track: 'sale' },
+  { k: 'da_mua_hang', get n() { return t('Đã mua hàng'); }, c: 'green', track: 'sale' },
+  { k: 'tiep_can_truoc', get n() { return t('Tiếp cận trước'); }, c: 'grey', track: 'tender' },
+  { k: 'nhan_thu_moi', get n() { return t('Nhận thư mời thầu'); }, c: 'blue', track: 'tender' },
+  { k: 'chuan_bi_ho_so', get n() { return t('Chuẩn bị hồ sơ'); }, c: 'blue', track: 'tender' },
+  { k: 'cho_duyet_ho_so', get n() { return t('Chờ duyệt hồ sơ'); }, c: 'amber', track: 'tender' },
+  { k: 'da_nop_ho_so', get n() { return t('Đã nộp hồ sơ'); }, c: 'blue', track: 'tender' },
+  { k: 'thuong_thao', get n() { return t('Thương thảo'); }, c: 'amber', track: 'tender' },
+  { k: 'mou', get n() { return t('Biên bản ghi nhớ (MOU)'); }, c: 'blue', track: 'tender' },
+  { k: 'trung_thau', get n() { return t('Trúng thầu'); }, c: 'green', track: 'tender' },
 ];
 export const statusDef = (k) => CUSTOMER_STATUSES.find(s => s.k === k) || { k, n: k, c: 'grey', track: 'sale' };
 export const saleStatuses = () => CUSTOMER_STATUSES.filter(s => s.track === 'sale');
@@ -87,39 +95,47 @@ export const DKKH_TONE = {
   locked: { c: 'grey', ic: 'penLine' },
 };
 export const dkkhLabel = (dk) => !dk ? '—'
-  : dk.kind === 'locked' ? 'Đã ký · giữ vĩnh viễn'
-    : dk.kind === 'expired' ? 'Hết hạn ĐKKH'
-      : `Còn ${dk.daysLeft} ngày`;
+  : dk.kind === 'locked' ? t('Đã ký · giữ vĩnh viễn')
+    : dk.kind === 'expired' ? t('Hết hạn ĐKKH')
+      : tf(() => `Còn ${dk.daysLeft} ngày`, () => `${dk.daysLeft} days left`);
 
 /* 4 hạng mục cố định của Phương án kinh doanh — khớp server/routes/plans.js PLAN_KINDS. */
 export const PLAN_KINDS = [
-  { k: 'bao_gia', n: 'Báo giá', ic: icon('banknote') },
-  { k: 'hop_dong', n: 'Hợp đồng', ic: icon('penLine') },
-  { k: 'nghiem_thu', n: 'Nghiệm thu', ic: icon('circleCheck') },
-  { k: 'thanh_ly', n: 'Thanh lý', ic: icon('fileText') },
+  { k: 'bao_gia', get n() { return t('Báo giá'); }, ic: icon('banknote') },
+  { k: 'hop_dong', get n() { return t('Hợp đồng'); }, ic: icon('penLine') },
+  { k: 'nghiem_thu', get n() { return t('Nghiệm thu'); }, ic: icon('circleCheck') },
+  { k: 'thanh_ly', get n() { return t('Thanh lý'); }, ic: icon('fileText') },
 ];
 export const planKindName = (k) => (PLAN_KINDS.find(x => x.k === k) || {}).n || k;
 /* Trạng thái từng hạng mục — chỉ 2 kết quả duyệt (đã duyệt / cần chỉnh sửa), không có "từ chối",
  * đồng bộ với báo giá & hợp đồng. */
 export const PLAN_ITEM_STATUS = {
-  todo: { n: 'Chưa trình', c: 'grey' },
-  pending: { n: 'Chờ duyệt', c: 'amber' },
-  approved: { n: 'Đã duyệt', c: 'green' },
-  revise: { n: 'Cần chỉnh sửa', c: 'red' },
+  todo: { get n() { return t('Chưa trình'); }, c: 'grey' },
+  pending: { get n() { return t('Chờ duyệt'); }, c: 'amber' },
+  approved: { get n() { return t('Đã duyệt'); }, c: 'green' },
+  revise: { get n() { return t('Cần chỉnh sửa'); }, c: 'red' },
 };
-export const PLAN_APPROVERS = [{ v: 'manager', n: 'Trưởng phòng KD' }, { v: 'admin', n: 'Giám đốc / BGĐ' }];
+export const PLAN_APPROVERS = [
+  { v: 'manager', get n() { return t('Trưởng phòng KD'); } },
+  { v: 'admin', get n() { return t('Giám đốc / BGĐ'); } },
+];
 
 export const ACT_TYPES = [
-  { k: 'call', n: 'Cuộc gọi', ic: icon('phone') },
-  { k: 'email', n: 'Email', ic: icon('mail') },
-  { k: 'meeting', n: 'Gặp mặt', ic: icon('handshake') },
-  { k: 'demo', n: 'Demo/Thuyết trình', ic: icon('clapperboard') },
-  { k: 'zalo', n: 'Zalo/Chat', ic: icon('messageSquare') },
-  { k: 'other', n: 'Khác', ic: icon('pin') },
+  { k: 'call', get n() { return t('Cuộc gọi'); }, ic: icon('phone') },
+  { k: 'email', get n() { return t('Email'); }, ic: icon('mail') },
+  { k: 'meeting', get n() { return t('Gặp mặt'); }, ic: icon('handshake') },
+  { k: 'demo', get n() { return t('Demo/Thuyết trình'); }, ic: icon('clapperboard') },
+  { k: 'zalo', get n() { return t('Zalo/Chat'); }, ic: icon('messageSquare') },
+  { k: 'other', get n() { return t('Khác'); }, ic: icon('pin') },
 ];
 export const actName = (k) => (ACT_TYPES.find(a => a.k === k) || {}).n || k;
 export const actIcon = (k) => (ACT_TYPES.find(a => a.k === k) || {}).ic || icon('pin');
 
+/* SERVICES/CHANNELS/CUSTOMER_SCALE_OPTIONS bên dưới là GIÁ TRỊ LƯU THẲNG VÀO CSDL (không có cặp
+ * khoá/nhãn riêng như các danh sách trên) — value và label là MỘT, nên không thể gắn getter dịch
+ * vào chính chuỗi mà không đổi luôn dữ liệu lưu trữ. Nơi hiển thị các chuỗi này (option của
+ * modal()/sheet(), hoặc chip()) đã tự áp t() khi render — xem src/ui.js — nên vẫn dịch được nhãn
+ * hiển thị mà giá trị lưu CSDL giữ nguyên tiếng Việt gốc. */
 export const SERVICES = ['TVC/Video', 'Gameshow', 'Xây kênh'];
 /* 7 kênh nguồn khách theo Kế hoạch tái cấu trúc PKD NetViet 2026 (FR-M2-1).
    'Đấu thầu' KHÔNG nằm trong 7 kênh — cơ hội thầu là nguồn riêng (TenderLead). */
@@ -135,6 +151,7 @@ export const CHANNEL_DESC = {
   'Kênh cá nhân': 'Quan hệ cá nhân, mạng lưới riêng của sales',
   'Game Viral': 'Khách đến từ minigame / nội dung lan truyền',
 };
+export const channelDesc = (c) => t(CHANNEL_DESC[c] || '');
 /* Nguồn ngoài 7 kênh — dùng cho lead sinh từ đấu thầu */
 export const SOURCE_TENDER = 'Đấu thầu';
 
@@ -142,23 +159,31 @@ export const SOURCE_TENDER = 'Đấu thầu';
  * CHANNELS/kênh tiếp cận ở trên (dùng cho Tìm khách & ghi liên hệ hằng ngày). Đây trả lời câu hỏi
  * "ai/đâu mang khách này về" ở cấp khách hàng, không phải "tiếp cận qua kênh nào". */
 export const LEAD_SOURCES = [
-  { v: 'sale_tu_tim', n: 'Sale tự tìm kiếm' },
-  { v: 'cong_ty_cap', n: 'Công ty cấp' },
-  { v: 'khach_cu_gioi_thieu', n: 'Khách hàng cũ giới thiệu' },
-  { v: 'partner_pa1', n: 'Partner – Giới thiệu' },
-  { v: 'partner_pa2', n: 'Partner – Partner tự chăm sóc' },
+  { v: 'sale_tu_tim', get n() { return t('Sale tự tìm kiếm'); } },
+  { v: 'cong_ty_cap', get n() { return t('Công ty cấp'); } },
+  { v: 'khach_cu_gioi_thieu', get n() { return t('Khách hàng cũ giới thiệu'); } },
+  { v: 'partner_pa1', get n() { return t('Partner – Giới thiệu'); } },
+  { v: 'partner_pa2', get n() { return t('Partner – Partner tự chăm sóc'); } },
 ];
 export const leadSourceName = (v) => (LEAD_SOURCES.find(s => s.v === v) || {}).n || v || '—';
 /* Phương án hợp tác — gắn ở CẤP DEAL (không phải cấp partner/khách hàng), vì 1 partner có thể
  * chạy cả PA1 lẫn PA2 cùng lúc tuỳ từng deal (mục 3 tài liệu). */
-export const PA_OPTIONS = [{ v: 'PA1', n: 'PA1 – Giới thiệu' }, { v: 'PA2', n: 'PA2 – Partner tự bán' }];
+export const PA_OPTIONS = [
+  { v: 'PA1', get n() { return t('PA1 – Giới thiệu'); } },
+  { v: 'PA2', get n() { return t('PA2 – Partner tự bán'); } },
+];
 /* Ai thực hiện các bước 1-3 của deal (mục 5) — chỉ để tách bạch công sức phục vụ tính hoa hồng
  * SAU NÀY, không có logic tính toán nào gắn theo trường này ở đợt hiện tại. */
-export const EXEC_SOURCE_OPTIONS = [{ v: 'sale', n: 'Sale' }, { v: 'partner', n: 'Partner' }];
+export const EXEC_SOURCE_OPTIONS = [
+  { v: 'sale', get n() { return t('Sale'); } },
+  { v: 'partner', get n() { return t('Partner'); } },
+];
 
 export const ROLE_NAME = {
-  sales: 'Nhân viên Sales', manager: 'Trưởng phòng KD', admin: 'Admin / BGĐ',
-  hr: 'Hành chính nhân sự',
+  get sales() { return t('Nhân viên Sales'); },
+  get manager() { return t('Trưởng phòng KD'); },
+  get admin() { return t('Admin / BGĐ'); },
+  get hr() { return t('Hành chính nhân sự'); },
 };
 
 /* Chức danh do Admin/TGĐ đặt ở "Vai trò & chức danh" (cột nv_users.title) là nhãn ƯU TIÊN: đổi
@@ -169,27 +194,37 @@ export const ROLE_NAME = {
 /* Nhãn mặc định theo VAI TRÒ hệ thống — dùng ở nơi đã hiện chức danh riêng ngay bên cạnh (thẻ hồ
  * sơ nhân sự, Console đội) để không lặp lại cùng một chuỗi hai lần. */
 export const roleDefaultLabel = (u) => (u && u.id === 'HAUNV')
-  ? 'Admin/TGĐ' : ROLE_NAME[(u || {}).role] || (u || {}).role || '';
-export const roleLabel = (u) => (u && String(u.title || '').trim()) || roleDefaultLabel(u);
+  ? t('Admin/TGĐ') : ROLE_NAME[(u || {}).role] || (u || {}).role || '';
+export const roleLabel = (u) => jobTitle(u && u.title, () => roleDefaultLabel(u)) || roleDefaultLabel(u);
 
-export const TASK_STATUS = { todo: { n: 'Chờ làm', c: 'grey' }, in_progress: { n: 'Đang làm', c: 'blue' }, done: { n: 'Hoàn thành', c: 'green' } };
-export const PRIO = { high: { n: 'Cao', c: 'red' }, medium: { n: 'Vừa', c: 'amber' }, low: { n: 'Thấp', c: 'grey' } };
+export const TASK_STATUS = {
+  todo: { get n() { return t('Chờ làm'); }, c: 'grey' },
+  in_progress: { get n() { return t('Đang làm'); }, c: 'blue' },
+  done: { get n() { return t('Hoàn thành'); }, c: 'green' },
+};
+export const PRIO = {
+  high: { get n() { return t('Cao'); }, c: 'red' },
+  medium: { get n() { return t('Vừa'); }, c: 'amber' },
+  low: { get n() { return t('Thấp'); }, c: 'grey' },
+};
 export const PIP_STATUS = {
-  dang_chay: { n: 'Đang chạy', c: 'amber' }, dat: { n: 'Đạt', c: 'green' },
-  khong_dat: { n: 'Không đạt', c: 'red' }, huy: { n: 'Huỷ', c: 'amber' },
+  dang_chay: { get n() { return t('Đang chạy'); }, c: 'amber' },
+  dat: { get n() { return t('Đạt'); }, c: 'green' },
+  khong_dat: { get n() { return t('Không đạt'); }, c: 'red' },
+  huy: { get n() { return t('Huỷ'); }, c: 'amber' },
 };
 export const gradeTone = (total) => total >= 80 ? 'green' : total >= 60 ? 'amber' : 'red';
 /* 2 vòng duyệt (TPKD → Giám đốc), chỉ 2 kết quả — không có "từ chối" (xem PATCH /api/quotes/:id). */
 export const QUOTE_STATUS = {
-  draft: { n: 'Nháp', c: 'grey' },
-  pending_v1: { n: 'Chờ TPKD duyệt (V1)', c: 'amber' },
-  pending_v2: { n: 'Chờ Giám đốc duyệt (V2)', c: 'amber' },
-  approved: { n: 'Đã duyệt', c: 'green' },
+  draft: { get n() { return t('Nháp'); }, c: 'grey' },
+  pending_v1: { get n() { return t('Chờ TPKD duyệt (V1)'); }, c: 'amber' },
+  pending_v2: { get n() { return t('Chờ Giám đốc duyệt (V2)'); }, c: 'amber' },
+  approved: { get n() { return t('Đã duyệt'); }, c: 'green' },
 };
 /* Hợp đồng: 2 vòng duyệt (TPKD → HCNS) — không có ngưỡng bỏ qua như báo giá, mọi hợp đồng đều bắt
  * đầu ở pending_v1. Cùng 2 kết quả 'approved'|'revise', không có "từ chối" (PATCH /api/contracts/:id). */
 export const CONTRACT_STATUS = {
-  pending_v1: { n: 'Chờ TPKD duyệt (V1)', c: 'amber' },
-  pending_v2: { n: 'Chờ HCNS duyệt (V2)', c: 'amber' },
-  approved: { n: 'Đã ký', c: 'green' },
+  pending_v1: { get n() { return t('Chờ TPKD duyệt (V1)'); }, c: 'amber' },
+  pending_v2: { get n() { return t('Chờ HCNS duyệt (V2)'); }, c: 'amber' },
+  approved: { get n() { return t('Đã ký'); }, c: 'green' },
 };

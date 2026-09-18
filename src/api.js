@@ -1,3 +1,5 @@
+import { getLang, personName } from './i18n.js';
+
 const TK = 'nv_session_token';
 
 export const sessionToken = () => localStorage.getItem(TK) || '';
@@ -17,7 +19,8 @@ function friendly(status, raw) {
 }
 
 export async function api(path, opts = {}) {
-  const headers = { 'Content-Type': 'application/json' };
+  // X-Lang: server trả lời AI bằng tiếng Anh khi giao diện đang ở EN (server/lib/ai.js askAI).
+  const headers = { 'Content-Type': 'application/json', 'X-Lang': getLang() };
   const tok = sessionToken();
   if (tok) headers.Authorization = 'Bearer ' + tok;
 
@@ -58,7 +61,24 @@ export async function api(path, opts = {}) {
     err.data = data;
     throw err;
   }
-  return data;
+  return latinNames(data);
+}
+
+/* Các trường tên NGƯỜI do server JOIN sẵn chỉ để hiển thị (owner_name, user_name, assigner_name…),
+ * không bao giờ được gửi ngược lên server → ở giao diện EN viết không dấu ngay tại đây thay vì sửa
+ * từng chỗ hiển thị. Trường `name` của chính đối tượng người dùng thì KHÔNG đổi ở đây, vì biểu mẫu
+ * sửa hồ sơ/tài khoản điền sẵn từ nó — lưu lại sẽ ghi đè tên không dấu vào CSDL; xử lý ở chỗ hiển thị. */
+const PERSON_KEYS = /^(owner|user|assigner|assignee|approver|sale|acts_as|actor|creator|author|decided_by)(_name|Name)$/;
+function latinNames(v) {
+  if (Array.isArray(v)) { v.forEach(latinNames); return v; }
+  if (v && typeof v === 'object') {
+    for (const k of Object.keys(v)) {
+      const x = v[k];
+      if (typeof x === 'string' && PERSON_KEYS.test(k)) v[k] = personName(x);
+      else if (x && typeof x === 'object') latinNames(x);
+    }
+  }
+  return v;
 }
 
 export const get = (p) => api(p);

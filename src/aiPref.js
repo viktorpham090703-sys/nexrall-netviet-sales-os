@@ -6,6 +6,7 @@
 import { get, post } from './api.js';
 import { esc, toast, modal } from './ui.js';
 import { icon } from './icons.js';
+import { t as tr, tf } from './i18n.js';
 
 const KEY = 'nv_ai_provider';
 let cache = null;
@@ -37,8 +38,8 @@ export function providerOptions(d) {
   const list = (d || cache)?.providers || [];
   const auto = list.find((x) => x.key !== 'mock' && x.configured);
   return [
-    { v: 'auto', n: 'Tự động' + (auto ? ' (' + auto.label + ')' : ' (AI mẫu)') },
-    ...list.map((p) => ({ v: p.key, n: p.icon + ' ' + p.label + (p.configured ? '' : ' — chưa có API key') })),
+    { v: 'auto', n: tf(() => 'Tự động' + (auto ? ' (' + auto.label + ')' : ' (AI mẫu)'), () => 'Automatic' + (auto ? ' (' + auto.label + ')' : ' (sample AI)')) },
+    ...list.map((p) => ({ v: p.key, n: p.icon + ' ' + p.label + (p.configured ? '' : tr(' — chưa có API key')) })),
   ];
 }
 
@@ -47,11 +48,11 @@ export function pickerHTML(d) {
   const list = (d || cache)?.providers || [];
   const cur = getProvider();
   return `<div class="ai-picker row wrap" style="gap:6px;align-items:center">
-    <span class="xs mut">Chạy bằng:</span>
+    <span class="xs mut">${tr('Chạy bằng:')}</span>
     ${list.map((p) => `<button class="btn sm ${cur === p.key ? 'primary' : ''}" data-aiprov="${esc(p.key)}"
-      title="${esc(p.configured ? (p.model || '') : 'Chưa nhập ' + (p.secret || 'API key'))}">
+      title="${esc(p.configured ? (p.model || '') : tr('Chưa nhập') + ' ' + (p.secret || 'API key'))}">
       ${icon(providerIconName(p.key), 14)} ${esc(p.label.replace('Google ', '').replace('Anthropic ', ''))}${p.configured ? '' : ' ' + icon('lock', 12)}</button>`).join('')}
-    ${cur === 'auto' ? '<span class="xs mut">· đang ở chế độ tự động</span>' : `<button class="btn sm" data-aiprov="auto">Tự động</button>`}
+    ${cur === 'auto' ? `<span class="xs mut">· ${tr('đang ở chế độ tự động')}</span>` : `<button class="btn sm" data-aiprov="auto">${tr('Tự động')}</button>`}
   </div>`;
 }
 
@@ -61,11 +62,13 @@ export function bindPicker(el, after) {
       const k = b.dataset.aiprov;
       const p = (cache?.providers || []).find((x) => x.key === k);
       if (p && !p.configured) {
-        toast('Chưa cấu hình ' + p.secret + ' — vào Secrets của app để nhập API key', 'err');
+        toast(tf(() => 'Chưa cấu hình ' + p.secret + ' — vào Secrets của app để nhập API key',
+          () => p.secret + ' is not configured — add the API key in the app Secrets'), 'err');
         return;
       }
       setProvider(k);
-      toast('Đang dùng ' + (k === 'auto' ? 'chế độ tự động' : p.label), 'ok');
+      toast(tf(() => 'Đang dùng ' + (k === 'auto' ? 'chế độ tự động' : p.label),
+        () => 'Now using ' + (k === 'auto' ? 'automatic mode' : p.label)), 'ok');
       if (after) after(k);
     };
   });
@@ -85,7 +88,7 @@ export async function askAI(body) {
 /** Khối hiển thị kết quả AI + nguồn AI đã dùng */
 export function answerHTML(r) {
   return `<div class="ai-bubble">${esc(r.text)}</div>
-    <div class="xs mut mt">Nguồn: ${esc((r.providerLabel || r.provider || 'AI') + (r.model && r.model !== 'rule-based' ? ' · ' + r.model : ''))}</div>
+    <div class="xs mut mt">${tr('Nguồn:')} ${esc((r.providerLabel || r.provider || 'AI') + (r.model && r.model !== 'rule-based' ? ' · ' + r.model : ''))}</div>
     ${r.notice ? `<div class="xs mt" style="color:#F59E0B">${icon('triangleAlert', 12)} ${esc(r.notice)}</div>` : ''}`;
 }
 
@@ -110,12 +113,12 @@ export async function aiModal({ title, titleIcon, kind, prompt, customerId, extr
     html: '<div data-airesult class="mt"></div>',
     onSubmit: async (v, root) => {
       const out = root.querySelector('[data-airesult]');
-      out.innerHTML = `<div class="ai-bubble">${icon('loaderCircle', 14, { class: 'spin' })} AI đang xử lý, vui lòng chờ…</div>`;
+      out.innerHTML = `<div class="ai-bubble">${icon('loaderCircle', 14, { class: 'spin' })} ${tr('AI đang xử lý, vui lòng chờ…')}</div>`;
       setProvider(v.provider);
       try {
         const r = await post('/ai/chat', { kind, provider: v.provider, prompt: v.prompt, customerId, extra });
         refreshProviderCache(r);
-        out.innerHTML = answerHTML(r) + `<button type="button" class="btn sm mt" data-copy>${icon('copy', 14)} Sao chép</button>`;
+        out.innerHTML = answerHTML(r) + `<button type="button" class="btn sm mt" data-copy>${icon('copy', 14)} ${tr('Sao chép')}</button>`;
         const c = out.querySelector('[data-copy]');
         c.onclick = () => { try { navigator.clipboard.writeText(r.text); toast('Đã sao chép', 'ok'); } catch (e) { toast('Không sao chép được', 'err'); } };
       } catch (e) {

@@ -5,6 +5,7 @@ import { STAGES, TENDER_STAGES, TERMINAL_STAGES, SERVICES, stageName, PA_OPTIONS
 import { logActivity } from './crm.js';
 import { quickContact } from './cockpit.js';
 import { icon } from '../icons.js';
+import { t as tr, personName } from '../i18n.js';
 
 let view = 'kanban';
 let owner = 'all';
@@ -30,30 +31,30 @@ export async function render(el) {
     const shown = procType === 'dau_thau' ? tenders : d.items;
     const shownBreach = procType === 'dau_thau' ? breach.filter(x => x.process_type === 'dau_thau') : breach;
     return `<div class="page-head">
-      <div class="grow"><h2>Pipeline & Deal</h2><p>14 giai đoạn · giá trị kỳ vọng tự tính · cờ SLA chống lead nguội</p></div>
+      <div class="grow"><h2>${tr('Pipeline & Deal')}</h2><p>${tr('14 giai đoạn · giá trị kỳ vọng tự tính · cờ SLA chống lead nguội')}</p></div>
       <div class="right">
         <button class="btn primary sm" data-add>+ Deal</button>
-        <div class="mt"><button class="btn amber sm" data-quickcontact>+ Liên hệ mới hôm nay</button></div>
+        <div class="mt"><button class="btn amber sm" data-quickcontact>+ ${tr('Liên hệ mới hôm nay')}</button></div>
       </div>
     </div>
 
     <div class="grid g3 mb">
-      ${stat('Deal đang mở', open.length, money(open.reduce((s, x) => s + x.value, 0)) + ' tổng giá trị', 'blue')}
-      ${stat('Giá trị kỳ vọng', money(expected), 'Σ giá trị × xác suất', 'red')}
-      ${stat('Vi phạm SLA', breach.length, breach.length ? 'Cần xử lý ngay' : 'Sạch SLA', breach.length ? 'amber' : '')}
+      ${stat('Deal đang mở', open.length, money(open.reduce((s, x) => s + x.value, 0)) + ' ' + tr('tổng giá trị'), 'blue')}
+      ${stat('Giá trị kỳ vọng', money(expected), tr('Σ giá trị × xác suất'), 'red')}
+      ${stat('Vi phạm SLA', breach.length, breach.length ? tr('Cần xử lý ngay') : tr('Sạch SLA'), breach.length ? 'amber' : '')}
     </div>
 
     <div class="seg mb">
-      <button data-proc="all" class="${procType === 'all' ? 'on' : ''}">Toàn bộ</button>
-      <button data-proc="dau_thau" class="${procType === 'dau_thau' ? 'on' : ''}">Đấu thầu (${tenders.length})</button>
+      <button data-proc="all" class="${procType === 'all' ? 'on' : ''}">${tr('Toàn bộ')}</button>
+      <button data-proc="dau_thau" class="${procType === 'dau_thau' ? 'on' : ''}">${tr('Đấu thầu')} (${tenders.length})</button>
     </div>
     ${procType === 'dau_thau' ? tenderStats(tenders) : ''}
 
     <div class="seg mb">
       <button data-view="kanban" class="${view === 'kanban' ? 'on' : ''}">Kanban</button>
-      <button data-view="list" class="${view === 'list' ? 'on' : ''}">Danh sách</button>
-      <button data-view="sla" class="${view === 'sla' ? 'on' : ''}">Cảnh báo SLA (${shownBreach.length})</button>
-      ${isLead() ? `<button data-owner class="${owner !== 'all' ? 'on' : ''}">Lọc: ${owner === 'all' ? 'Toàn đội' : esc((salesTeamUsers().find(u => u.id === owner) || {}).name || '')}</button>` : ''}
+      <button data-view="list" class="${view === 'list' ? 'on' : ''}">${tr('Danh sách')}</button>
+      <button data-view="sla" class="${view === 'sla' ? 'on' : ''}">${tr('Cảnh báo SLA')} (${shownBreach.length})</button>
+      ${isLead() ? `<button data-owner class="${owner !== 'all' ? 'on' : ''}">${tr('Lọc:')} ${owner === 'all' ? tr('Toàn đội') : esc(personName((salesTeamUsers().find(u => u.id === owner) || {}).name || ''))}</button>` : ''}
     </div>
 
     ${view === 'kanban' ? kanban(shown, procType === 'dau_thau' ? [...TENDER_STAGES, ...TERMINAL_STAGE_DEFS] : STAGES, d.sla)
@@ -72,6 +73,7 @@ export async function render(el) {
       fields: [{ name: 'owner', label: 'Nhân sự', type: 'select', value: owner, options: [{ v: 'all', n: 'Toàn đội' }, ...salesTeamUsers().map(salesTeamOption)] }],
       submitText: 'Áp dụng', onSubmit: (v) => { owner = v.owner; render(el); },
     });
+
     el.querySelector('[data-add]').onclick = () => addDeal(d.customers, () => render(el));
     el.querySelectorAll('[data-deal]').forEach(b => b.onclick = () => openDeal(d.items.find(x => x.id === b.dataset.deal), () => render(el)));
   };
@@ -83,15 +85,15 @@ const kanban = (items, stages, sla) => `<div class="kanban">${stages.map(s => {
   const arr = items.filter(x => x.stage === s.k);
   const sum = arr.reduce((a, x) => a + x.value, 0);
   return `<div class="kcol"><h4>${s.ic} ${esc(s.n)}</h4>
-    <div class="xs mut">${arr.length} deal · ${money(sum)} · SLA ${sla[s.k] || 5} ngày</div>
+    <div class="xs mut">${arr.length} deal · ${money(sum)} · SLA ${sla[s.k] || 5} ${tr('ngày')}</div>
     ${arr.map(x => `<div class="kcard ${x.slaBreach ? 'breach' : ''}" data-deal="${esc(x.id)}">
-      ${x.process_type === 'dau_thau' ? '<span class="chip amber">Tập đoàn</span>' : ''}
+      ${x.process_type === 'dau_thau' ? `<span class="chip amber">${tr('Tập đoàn')}</span>` : ''}
       <div class="n">${esc(x.title)}</div>
       <div class="m">${esc(x.customer_name || '—')}${x.owner_name ? ' · ' + esc(x.owner_name) : ''}</div>
       <div class="row mt" style="gap:6px"><span class="chip blue">${money(x.value)}</span>
         <span class="chip grey">${x.probability}%</span>
         ${x.slaBreach ? `<span class="chip red">${x.idleDays}d</span>` : ''}</div>
-    </div>`).join('') || '<div class="xs mut mt">— trống —</div>'}
+    </div>`).join('') || `<div class="xs mut mt">${tr('— trống —')}</div>`}
   </div>`;
 }).join('')}</div>`;
 
@@ -100,20 +102,20 @@ const tenderStats = (tenders) => {
   const won = decided.filter(x => x.status === 'won').length;
   const winRate = decided.length ? Math.round(won / decided.length * 100) : 0;
   return `<div class="grid g4 mb">
-    ${stat('Chờ duyệt hồ sơ', tenders.filter(x => x.stage === 'cho_duyet_ho_so').length, 'Cần Giám đốc duyệt', 'amber')}
-    ${stat('Thương thảo vòng ≥ 2', tenders.filter(x => x.stage === 'thuong_thao' && (x.negotiation_round || 0) >= 1).length, 'Khách mời thương thảo lại', 'blue')}
-    ${stat('MOU đang chờ', tenders.filter(x => x.stage === 'mou').length, 'Chờ khách phản hồi', '')}
-    ${stat('Tỷ lệ thắng thầu', winRate + '%', decided.length + ' gói đã có kết quả', winRate >= 50 ? '' : 'red')}
+    ${stat('Chờ duyệt hồ sơ', tenders.filter(x => x.stage === 'cho_duyet_ho_so').length, tr('Cần Giám đốc duyệt'), 'amber')}
+    ${stat('Thương thảo vòng ≥ 2', tenders.filter(x => x.stage === 'thuong_thao' && (x.negotiation_round || 0) >= 1).length, tr('Khách mời thương thảo lại'), 'blue')}
+    ${stat('MOU đang chờ', tenders.filter(x => x.stage === 'mou').length, tr('Chờ khách phản hồi'), '')}
+    ${stat('Tỷ lệ thắng thầu', winRate + '%', decided.length + ' ' + tr('gói đã có kết quả'), winRate >= 50 ? '' : 'red')}
   </div>`;
 };
 
 const list = (items) => items.length ? `<div class="card">${items.map(x => `<div class="item">
     <div class="dot-i">${icon(x.status === 'won' ? 'trophy' : x.slaBreach ? 'flame' : 'trendingUp')}</div>
     <div class="grow"><div class="t">${esc(x.title)}</div>
-      <div class="d">${esc(x.customer_name || '—')} · ${stageName(x.stage)} · KV ${money(x.expected)}</div>
-      <div class="d xs">Cập nhật ${x.idleDays} ngày trước · SLA ${x.slaLimit} ngày${x.owner_name ? ' · ' + esc(x.owner_name) : ''}</div></div>
+      <div class="d">${esc(x.customer_name || '—')} · ${stageName(x.stage)} · ${tr('KV')} ${money(x.expected)}</div>
+      <div class="d xs">${tr('Cập nhật')} ${x.idleDays} ${tr('ngày trước')} · SLA ${x.slaLimit} ${tr('ngày')}${x.owner_name ? ' · ' + esc(x.owner_name) : ''}</div></div>
     <div class="right">${chip(money(x.value), 'blue')}
-      <div class="mt"><button class="btn sm" data-deal="${esc(x.id)}">Mở</button></div></div>
+      <div class="mt"><button class="btn sm" data-deal="${esc(x.id)}">${tr('Mở')}</button></div></div>
   </div>`).join('')}</div>` : empty('inbox', 'Không có deal nào ở nhóm này.');
 
 function addDeal(customers, after) {
@@ -147,9 +149,9 @@ export function openDeal(x, after) {
   const { close } = modal({
     title: x.title,
     wide: true,
-    html: `<div class="sm mut mb">${isTender ? '<span class="chip amber">Tập đoàn · Đấu thầu</span> ' : ''}${esc(x.customer_name || '')} · ${money(x.value)} · ${stageName(x.stage)}
-      ${x.slaBreach ? `<span class="chip red">Quá SLA ${x.idleDays}/${x.slaLimit} ngày</span>` : `<span class="chip green">Trong SLA</span>`}
-      · Dự kiến chốt ${fmtDate(x.expected_close_at)}</div>`,
+    html: `<div class="sm mut mb">${isTender ? `<span class="chip amber">${tr('Tập đoàn · Đấu thầu')}</span> ` : ''}${esc(x.customer_name || '')} · ${money(x.value)} · ${stageName(x.stage)}
+      ${x.slaBreach ? `<span class="chip red">${tr('Quá SLA')} ${x.idleDays}/${x.slaLimit} ${tr('ngày')}</span>` : `<span class="chip green">${tr('Trong SLA')}</span>`}
+      · ${tr('Dự kiến chốt')} ${fmtDate(x.expected_close_at)}</div>`,
     fields: [
       { name: 'stage', label: 'Chuyển giai đoạn', type: 'select', value: x.stage, options: stageOptions },
       { name: 'value', label: 'Giá trị (đ)', type: 'number', value: x.value },
@@ -166,9 +168,9 @@ export function openDeal(x, after) {
   const extra = document.createElement('div');
   extra.className = 'row mt';
   extra.style.gap = '8px';
-  extra.innerHTML = `<button type="button" class="btn sm grow" data-x-act>+ Hoạt động</button>
-    <button type="button" class="btn sm grow" data-x-contact>+ Liên hệ mới</button>
-    <button type="button" class="btn sm grow" data-x-lost>Đánh dấu thua</button>`;
+  extra.innerHTML = `<button type="button" class="btn sm grow" data-x-act>+ ${tr('Hoạt động')}</button>
+    <button type="button" class="btn sm grow" data-x-contact>+ ${tr('Liên hệ mới')}</button>
+    <button type="button" class="btn sm grow" data-x-lost>${tr('Đánh dấu thua')}</button>`;
   const form = root.querySelector('[data-form]');
   if (form) form.appendChild(extra);
   extra.querySelector('[data-x-act]').onclick = () => logActivity({ customerId: x.customer_id, dealId: x.id }, after);
@@ -182,8 +184,8 @@ export function openDeal(x, after) {
     const round = document.createElement('div');
     round.className = 'row mt';
     round.style.gap = '8px';
-    round.innerHTML = `<span class="sm mut grow">Vòng thương thảo hiện tại: <b>${(x.negotiation_round || 0) + 1}</b></span>
-      <button type="button" class="btn sm" data-x-round>+ Vòng thương thảo mới</button>`;
+    round.innerHTML = `<span class="sm mut grow">${tr('Vòng thương thảo hiện tại:')} <b>${(x.negotiation_round || 0) + 1}</b></span>
+      <button type="button" class="btn sm" data-x-round>+ ${tr('Vòng thương thảo mới')}</button>`;
     form.appendChild(round);
     round.querySelector('[data-x-round]').onclick = async () => {
       await patch('/deals/' + x.id, { negotiationRound: (x.negotiation_round || 0) + 1 });
@@ -197,8 +199,8 @@ export function openDeal(x, after) {
     approve.className = 'row mt';
     approve.style.gap = '8px';
     approve.innerHTML = isAdmin()
-      ? `<button type="button" class="btn sm primary grow" data-x-approve>Duyệt hồ sơ dự thầu</button>`
-      : `<span class="sm mut">Đang chờ Giám đốc duyệt hồ sơ trước khi nộp.</span>`;
+      ? `<button type="button" class="btn sm primary grow" data-x-approve>${tr('Duyệt hồ sơ dự thầu')}</button>`
+      : `<span class="sm mut">${tr('Đang chờ Giám đốc duyệt hồ sơ trước khi nộp.')}</span>`;
     form.appendChild(approve);
     const ab = approve.querySelector('[data-x-approve]');
     if (ab) ab.onclick = async () => { await patch('/deals/' + x.id, { stage: 'da_nop_ho_so' }); toast('Đã duyệt hồ sơ dự thầu', 'ok'); close(); after(); };
