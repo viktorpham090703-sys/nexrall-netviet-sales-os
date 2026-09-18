@@ -33,7 +33,7 @@ async function findDuplicateCustomer(env, ctx, name, phone, excludeId) {
 async function customerDupIndex(env, ctx) {
   const ws = wsScope(ctx, 'c.owner_id');
   const { results } = await env.DB.prepare(
-    `SELECT c.id,c.name,c.phone,c.owner_id,u.name owner_name FROM nv_customers c LEFT JOIN nv_users u ON u.id=c.owner_id WHERE 1=1${ws.sql} LIMIT 2000`)
+    `SELECT c.id,c.name,c.phone,c.owner_id,u.name owner_name FROM nv_customers c LEFT JOIN nv_users u ON u.id=c.owner_id WHERE 1=1${ws.sql} LIMIT ${CUSTOMER_SCAN_MAX}`)
     .bind(...ws.args).all();
   const rows = (results || []).map(c => ({ ...c, nk: normName(c.name), pk: normPhone(c.phone) }));
   return {
@@ -44,6 +44,16 @@ async function customerDupIndex(env, ctx) {
     add(row) { rows.push({ ...row, nk: normName(row.name), pk: normPhone(row.phone) }); },
   };
 }
+
+/**
+ * Trần số khách quét trong 1 lần đọc (danh sách CRM, so trùng). Đủ rộng cho nhiều năm dữ liệu
+ * của 1 phòng kinh doanh; chỉ để chặn truy vấn phình vô hạn chứ không phải trần hiển thị.
+ */
+const CUSTOMER_SCAN_MAX = 5000;
+
+/** Khoá tìm kiếm: bỏ dấu, hạ chữ (kể cả Đ/đ), gộp khoảng trắng — "ĐÔNG  Đô" → "dong do". */
+const searchKey = (s) => String(s || '').toLowerCase().replace(/đ/g, 'd').normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 
 /** Trần số dòng mỗi lần nhập Excel — đủ cho danh sách của 1 phòng kinh doanh, chặn request phình to. */
 const IMPORT_MAX_ROWS = 500;
@@ -72,26 +82,38 @@ export async function crmRoutes(ctx) {
     const claimable = url.searchParams.get('claimable') === '1';
     const s = claimable ? wsScope(ctx, 'c.owner_id') : scope(ctx, 'c.owner_id');
     const q = (url.searchParams.get('q') || '').trim();
+    // Số liệu deal gộp 1 lần bằng GROUP BY thay vì 3 truy vấn con cho MỖI khách — danh sách giờ
+    // không còn trần 400 nên chi phí theo từng hàng phải thấp.
     let sql = `SELECT c.*, u.name owner_name,
-      (SELECT COUNT(*) FROM nv_deals d WHERE d.customer_id=c.id AND d.status='open') open_deals,
-      (SELECT COALESCE(SUM(d.value),0) FROM nv_deals d WHERE d.customer_id=c.id AND d.status='won') won_value,
-      (SELECT COUNT(*) FROM nv_deals d WHERE d.customer_id=c.id AND d.status='won') won_deals
-      FROM nv_customers c LEFT JOIN nv_users u ON u.id=c.owner_id WHERE 1=1` + s.sql;
+      COALESCE(d.open_deals,0) open_deals, COALESCE(d.won_value,0) won_value, COALESCE(d.won_deals,0) won_deals
+      FROM nv_customers c LEFT JOIN nv_users u ON u.id=c.owner_id
+      LEFT JOIN (SELECT customer_id,
+          SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) open_deals,
+          SUM(CASE WHEN status='won' THEN value ELSE 0 END) won_value,
+          SUM(CASE WHEN status='won' THEN 1 ELSE 0 END) won_deals
+        FROM nv_deals WHERE customer_id IS NOT NULL GROUP BY customer_id) d ON d.customer_id=c.id
+      WHERE 1=1` + s.sql;
     const args = [...s.args];
-    if (q) { sql += ' AND (LOWER(c.name) LIKE ? OR LOWER(c.industry) LIKE ? OR c.phone LIKE ?)'; args.push('%' + q.toLowerCase() + '%', '%' + q.toLowerCase() + '%', '%' + q + '%'); }
     // Lọc theo trường thông tin khách hàng — khớp chính xác, giá trị rỗng nghĩa là không lọc.
     for (const [param, col] of [['industry', 'c.industry'], ['scale', 'c.scale'], ['source', 'c.nguon_khach_hang'], ['partnerId', 'c.partner_id']]) {
       const v = (url.searchParams.get(param) || '').trim();
       if (v) { sql += ` AND ${col}=?`; args.push(v); }
     }
-    sql += ' ORDER BY c.last_touch_at DESC LIMIT 400';
+    sql += ` ORDER BY c.last_touch_at DESC LIMIT ${CUSTOMER_SCAN_MAX}`;
     const { results } = await env.DB.prepare(sql).bind(...args).all();
 
-    // Trạng thái và ĐKKH tính ở tầng ứng dụng (JSON + mốc thời gian) nên lọc sau khi lấy hàng.
-    // Trần 400 hàng ở trên đủ rộng cho quy mô 1 phòng kinh doanh mà vẫn chặn truy vấn phình to.
+    // Tìm kiếm, trạng thái và ĐKKH lọc ở tầng ứng dụng. Riêng tìm kiếm KHÔNG làm bằng SQL: LOWER()
+    // và LIKE của SQLite chỉ hiểu chữ ASCII, nên "Đông Đô" không bao giờ khớp "đông đô" (chữ Đ
+    // hoa không được hạ). searchKey() bỏ dấu + hạ chữ, nên gõ "dong do", "Đông Đô" hay "ĐÔNG ĐÔ"
+    // đều ra; SĐT so theo dãy chữ số nên "0912 345" khớp "0912345678".
     const wantStatuses = (url.searchParams.get('status') || '').split(',').map(x => x.trim()).filter(x => ALL_STATUSES.includes(x));
     const dkFilter = url.searchParams.get('dkkh') || '';
     let items = (results || []).map(r => decorateCustomer(r, cfg, Number(r.won_deals) > 0));
+    if (q) {
+      const qk = searchKey(q), qd = q.replace(/\D/g, '');
+      items = items.filter(c => (qk && (searchKey(c.name).includes(qk) || searchKey(c.industry).includes(qk)))
+        || (qd.length >= 3 && String(c.phone || '').replace(/\D/g, '').includes(qd)));
+    }
     if (wantStatuses.length) items = items.filter(c => c.statuses.some(k => wantStatuses.includes(k)));
     if (dkFilter === 'expiring') items = items.filter(c => c.dkkh.kind === 'expiring');
     if (dkFilter === 'expired') items = items.filter(c => c.dkkh.kind === 'expired');
@@ -112,7 +134,22 @@ export async function crmRoutes(ctx) {
       ).bind(wsBucket(ctx.me)).all();
       sales = team || [];
     }
-    return json({ items, sales });
+    // Phân trang TUỲ CHỌN: màn CRM gửi ?limit= để vẽ dần ("Xem thêm"); các màn khác (Pipeline,
+    // Sales Kit, Phương án…) không gửi và nhận đủ danh sách để chọn khách trong ô chọn — trước đây
+    // trần 400 làm khách thứ 401 trở đi không chọn được ở đó. Số đếm tổng / ĐKKH sắp hết / đã hết
+    // tính trên TOÀN BỘ kết quả lọc, không phải trên trang đang hiển thị.
+    const total = items.length;
+    const summary = {
+      expiring: items.filter(c => c.dkkh.kind === 'expiring').length,
+      expired: items.filter(c => c.dkkh.kind === 'expired').length,
+    };
+    const limit = Number(url.searchParams.get('limit')) || 0;
+    if (limit > 0) items = items.slice(0, Math.min(limit, CUSTOMER_SCAN_MAX));
+    // Danh sách ngành cho ô lọc lấy từ cả phạm vi xem được, không phụ thuộc bộ lọc/trang hiện tại.
+    const { results: ind } = await env.DB.prepare(
+      `SELECT DISTINCT c.industry FROM nv_customers c WHERE c.industry IS NOT NULL AND c.industry<>''${s.sql} ORDER BY c.industry LIMIT 300`)
+      .bind(...s.args).all();
+    return json({ items, total, summary, industries: (ind || []).map(r => r.industry), sales });
   }
 
   /**

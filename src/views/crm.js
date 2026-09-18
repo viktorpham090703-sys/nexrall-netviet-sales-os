@@ -13,6 +13,11 @@ import { openCustomerImport } from '../customerImport.js';
  * tin khách hàng). Giữ ở module scope để không mất lựa chọn khi vào xem chi tiết rồi quay lại. */
 let filter = { q: '', owner: '', statuses: [], industry: '', scale: '', source: '', dkkh: '' };
 let crmTab = 'customers';
+/* Danh sách vẽ dần theo trang: máy chủ trả số tổng + `shown` khách đầu tiên, bấm "Xem thêm" thì
+ * nới thêm 1 trang. Đổi bộ lọc là quay về trang đầu. Giữ ở module scope như `filter`, để xem chi
+ * tiết rồi quay lại vẫn đúng chỗ đang xem. */
+const PAGE = 100;
+let shown = PAGE;
 
 const filterQuery = () => {
   const qs = new URLSearchParams();
@@ -23,6 +28,7 @@ const filterQuery = () => {
   if (filter.scale) qs.set('scale', filter.scale);
   if (filter.source) qs.set('source', filter.source);
   if (filter.dkkh) qs.set('dkkh', filter.dkkh);
+  qs.set('limit', String(shown));
   const s = qs.toString();
   return s ? '?' + s : '';
 };
@@ -47,13 +53,18 @@ export async function render(el, params) {
       // nghĩa với sales; TP/Admin đã nhìn thấy toàn đội nên không cần tab này.
       isLead() ? Promise.resolve({ items: [] }) : get('/customers?claimable=1'),
     ]);
-    return { items: cRes.items || [], sales: cRes.sales || [], partners: pRes.items || [], claimable: claimRes.items || [] };
+    return {
+      items: cRes.items || [], total: cRes.total ?? (cRes.items || []).length, summary: cRes.summary || {},
+      industries: cRes.industries || [], sales: cRes.sales || [], partners: pRes.items || [], claimable: claimRes.items || [],
+    };
   };
 
   const draw = (d) => {
-    const industries = [...new Set(d.items.map(c => c.industry).filter(Boolean))].sort();
-    const expiring = d.items.filter(c => c.dkkh?.kind === 'expiring').length;
-    const expired = d.items.filter(c => c.dkkh?.kind === 'expired').length;
+    // Ngành: máy chủ trả từ toàn bộ phạm vi xem được; vẫn giữ ngành đang lọc trong danh sách chọn.
+    const industries = [...new Set([...d.industries, filter.industry].filter(Boolean))].sort();
+    const expiring = d.summary.expiring || 0;
+    const expired = d.summary.expired || 0;
+    const more = d.total - d.items.length;
     const nFilters = activeFilterCount();
     const sel = (name, label, value, options) => `<label class="f"><span>${esc(label)}</span>
       <select data-f="${name}">${options.map(o => {
@@ -64,14 +75,14 @@ export async function render(el, params) {
     return `
     <div class="page-head">
       <div class="grow"><h2>CRM 360°</h2>
-        <p>${d.items.length} khách hàng ${isLead() ? 'toàn đội' : 'của bạn'} · trạng thái theo quy trình · ĐKKH 1 tháng</p></div>
+        <p>${d.total} khách hàng ${isLead() ? 'toàn đội' : 'của bạn'} · trạng thái theo quy trình · ĐKKH 1 tháng</p></div>
       <div class="right"><button class="btn primary sm" data-add>+ Khách hàng</button>
         <div class="mt"><button class="btn sm" data-import>${icon('fileSpreadsheet', 14)} Nhập Excel</button></div>
         <div class="mt"><button class="btn sm" data-addpartner>+ Partner</button></div></div>
     </div>
 
     <div class="grid g3 mb">
-      ${stat('Khách đang quản lý', d.items.length, nFilters ? nFilters + ' bộ lọc đang bật' : 'Không lọc', 'blue')}
+      ${stat('Khách đang quản lý', d.total, nFilters ? nFilters + ' bộ lọc đang bật' : 'Không lọc', 'blue')}
       ${stat('ĐKKH sắp hết hạn', expiring, 'Còn ≤ 5 ngày — gia hạn hoặc đẩy ký', expiring ? 'amber' : '')}
       ${stat('ĐKKH đã hết hạn', expired, 'Sale khác được phép nhận', expired ? 'red' : '')}
     </div>
@@ -100,7 +111,10 @@ export async function render(el, params) {
       <div class="row wrap" style="gap:5px">${tenderStatuses().map(s => statusFilterBtn(s)).join('')}</div>
     </div>
 
-    ${d.items.length ? `<div class="card">${d.items.map(c => customerRow(c)).join('')}</div>`
+    ${d.items.length ? `<div class="card">${d.items.map(c => customerRow(c)).join('')}</div>
+        ${more > 0 ? `<div class="row mt" style="justify-content:center;gap:10px">
+          <span class="sm mut">Đang hiện ${d.items.length}/${d.total} khách</span>
+          <button class="btn sm" data-more>Xem thêm ${Math.min(PAGE, more)} khách</button></div>` : ''}`
         : empty('folderOpen', 'Chưa có khách hàng nào khớp bộ lọc.')}
     ` : crmTab === 'claimable' ? `
     <div class="note mb sm">Khách đã <b>quá hạn ĐKKH 1 tháng</b> mà sale phụ trách chưa ký hợp đồng và không tái đăng ký.
@@ -127,15 +141,20 @@ export async function render(el, params) {
   const bind = (d) => {
     const q = el.querySelector('[data-q]');
     let tmr;
-    if (q) q.oninput = () => { clearTimeout(tmr); tmr = setTimeout(() => { filter.q = q.value; render(el); }, 350); };
-    el.querySelectorAll('[data-f]').forEach(s => s.onchange = () => { filter[s.dataset.f] = s.value; render(el); });
+    if (q) q.oninput = () => { clearTimeout(tmr); tmr = setTimeout(() => { filter.q = q.value; shown = PAGE; render(el); }, 350); };
+    el.querySelectorAll('[data-f]').forEach(s => s.onchange = () => { filter[s.dataset.f] = s.value; shown = PAGE; render(el); });
     el.querySelectorAll('[data-st]').forEach(b => b.onclick = () => {
       const k = b.dataset.st;
       filter.statuses = filter.statuses.includes(k) ? filter.statuses.filter(x => x !== k) : [...filter.statuses, k];
+      shown = PAGE;
       render(el);
     });
     const clear = el.querySelector('[data-clearf]');
-    if (clear) clear.onclick = () => { filter = { q: '', owner: '', statuses: [], industry: '', scale: '', source: '', dkkh: '' }; render(el); };
+    if (clear) clear.onclick = () => { filter = { q: '', owner: '', statuses: [], industry: '', scale: '', source: '', dkkh: '' }; shown = PAGE; render(el); };
+    const moreBtn = el.querySelector('[data-more]');
+    // Vẽ lại cả view (như mọi bộ lọc khác) nhưng giữ vị trí cuộn, để người dùng đứng yên ở chỗ đang
+    // đọc và các khách mới nối tiếp ngay bên dưới — không bị nhảy về đầu trang.
+    if (moreBtn) moreBtn.onclick = async () => { const y = window.scrollY; shown += PAGE; await render(el); window.scrollTo(0, y); };
     el.querySelectorAll('[data-crmtab]').forEach(b => b.onclick = () => { crmTab = b.dataset.crmtab; render(el); });
 
     el.querySelectorAll('[data-renew]').forEach(b => b.onclick = async (e) => {

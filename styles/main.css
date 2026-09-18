@@ -354,7 +354,8 @@ html.overlay-open,html.overlay-open body{overflow:hidden}
 .imp-tbl td{vertical-align:top}
 .imp-tbl input[type=checkbox]{width:auto;padding:0;accent-color:var(--orange)}
 .imp-tbl tr.imp-off td{opacity:.55}
-.imp-tbl tr.imp-off td:last-child{opacity:1}
+.imp-tbl tr.imp-off td.imp-check{opacity:1}
+.imp-check{min-width:130px}
 .imp-note{max-width:240px;white-space:pre-wrap}
 .imp-map{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .imp-map>span{flex:1;margin:0}

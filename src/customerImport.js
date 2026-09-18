@@ -163,16 +163,13 @@ async function openPreview({ sales = [], file, parsed }, after) {
   const rows = parsed.rows;
   const lead = isLead();
 
-  // Bảng quy đổi trạng thái: khoá = chữ đã chuẩn hoá. Khớp đúng tên → dùng luôn, không hỏi;
-  // còn lại (kể cả chữ có gợi ý sẵn) đưa vào ô chọn để người nhập xác nhận.
+  // Bảng quy đổi trạng thái: khoá = chữ đã chuẩn hoá. Khớp đúng tên → dùng luôn; chữ khác lấy
+  // gợi ý (STATUS_ALIASES) hoặc Khách mới làm mặc định.
   const statusMap = new Map();
-  const toConfirm = new Map();   // khoá → { raw, count }
   for (const r of rows) {
     for (const part of statusParts(r.statusRaw)) {
       const k = norm(part);
-      if (STATUS_EXACT.has(k)) { statusMap.set(k, STATUS_EXACT.get(k)); continue; }
-      if (!toConfirm.has(k)) { toConfirm.set(k, { raw: part, count: 0 }); statusMap.set(k, STATUS_ALIASES[k] || 'khach_moi'); }
-      toConfirm.get(k).count++;
+      if (!statusMap.has(k)) statusMap.set(k, STATUS_EXACT.get(k) || STATUS_ALIASES[k] || 'khach_moi');
     }
   }
 
@@ -183,6 +180,18 @@ async function openPreview({ sales = [], file, parsed }, after) {
   });
   const result = new Map(check.results.map(x => [x.line, x]));
   const selected = new Set(rows.filter(r => result.get(r.line)?.ok).map(r => r.line));
+
+  // Chỉ hỏi quy đổi cho chữ KHÔNG khớp đúng tên và xuất hiện ở dòng SẼ được lưu — hỏi cho dòng
+  // trùng/lỗi (vốn bị bỏ qua) chỉ làm người nhập mất công chọn một thứ không dùng tới.
+  const toConfirm = new Map();   // khoá → { raw, count }
+  for (const r of rows.filter(x => result.get(x.line)?.ok)) {
+    for (const part of statusParts(r.statusRaw)) {
+      const k = norm(part);
+      if (STATUS_EXACT.has(k)) continue;
+      if (!toConfirm.has(k)) toConfirm.set(k, { raw: part, count: 0 });
+      toConfirm.get(k).count++;
+    }
+  }
 
   const counts = {
     ok: check.results.filter(x => x.ok).length,
@@ -211,6 +220,7 @@ async function openPreview({ sales = [], file, parsed }, after) {
     return `<tr class="${x?.ok ? '' : 'imp-off'}">
       <td><input type="checkbox" data-row="${r.line}" ${selected.has(r.line) ? 'checked' : ''} ${x?.ok ? '' : 'disabled'} aria-label="Chọn dòng ${r.line}"></td>
       <td class="mut">${r.line}</td>
+      <td class="imp-check">${verdict(x)}</td>
       <td><b>${cell(r.name)}</b>${r.industry ? `<div class="xs mut">${esc(r.industry)}</div>` : ''}</td>
       <td>${cell(r.contactName)}${r.contactTitle ? `<div class="xs mut">${esc(r.contactTitle)}</div>` : ''}</td>
       <td style="white-space:nowrap">${cell(r.phone)}</td>
@@ -218,12 +228,12 @@ async function openPreview({ sales = [], file, parsed }, after) {
       <td>${rowStatuses(r).map(k => chip(statusDef(k).n, statusDef(k).c)).join(' ')}
         ${r.statusRaw ? `<div class="xs mut">file: ${esc(r.statusRaw)}</div>` : ''}</td>
       <td class="imp-note">${cell(r.note)}</td>
-      <td>${verdict(x)}</td>
     </tr>`;
   }).join('');
 
   const statusOptions = (cur) => CUSTOMER_STATUSES.map(s => `<option value="${s.k}" ${s.k === cur ? 'selected' : ''}>${esc(s.n)}</option>`).join('');
-  const submitLabel = () => `Lưu ${selected.size} khách hàng vào hệ thống`;
+  const submitLabel = () => selected.size ? `Lưu ${selected.size} khách hàng vào hệ thống`
+    : counts.ok ? 'Chọn ít nhất 1 dòng để lưu' : 'Không có dòng nào lưu được';
 
   const { root } = modal({
     title: 'Xem trước danh sách khách hàng',
@@ -236,6 +246,8 @@ async function openPreview({ sales = [], file, parsed }, after) {
         ${counts.dup ? chip(counts.dup + ' trùng — sẽ bỏ qua', 'amber') : ''}
         ${counts.err ? chip(counts.err + ' lỗi — sửa trong file rồi nhập lại', 'red') : ''}
       </div>
+      ${counts.ok ? '' : `<div class="note red sm mb">Không có dòng nào lưu được: mọi dòng đều trùng khách đã có hoặc bị lỗi.
+        Xem lý do ở cột <b>Kiểm tra</b>, sửa file rồi nhập lại.</div>`}
 
       <div class="grid g2">
         ${lead ? `<label class="f"><span>Sale phụ trách cả danh sách</span><select data-owner>${sales.map(salesTeamOption)
@@ -255,7 +267,7 @@ async function openPreview({ sales = [], file, parsed }, after) {
         <table class="tbl imp-tbl">
           <thead><tr>
             <th><input type="checkbox" data-all ${selected.size ? 'checked' : ''} aria-label="Chọn tất cả dòng hợp lệ"></th>
-            <th>Dòng</th><th>Doanh nghiệp</th><th>Người liên hệ</th><th>SĐT</th><th>Email</th><th>Trạng thái</th><th>Ghi chú</th><th>Kiểm tra</th>
+            <th>Dòng</th><th>Kiểm tra</th><th>Doanh nghiệp</th><th>Người liên hệ</th><th>SĐT</th><th>Email</th><th>Trạng thái</th><th>Ghi chú</th>
           </tr></thead>
           <tbody data-body>${bodyHtml()}</tbody>
         </table>
@@ -281,6 +293,8 @@ async function openPreview({ sales = [], file, parsed }, after) {
   const all = root.querySelector('[data-all]');
   const sync = () => {
     submitBtn.textContent = submitLabel();
+    submitBtn.disabled = !selected.size;
+    all.disabled = !counts.ok;
     all.checked = selected.size > 0 && selected.size === counts.ok;
     all.indeterminate = selected.size > 0 && selected.size < counts.ok;
   };
