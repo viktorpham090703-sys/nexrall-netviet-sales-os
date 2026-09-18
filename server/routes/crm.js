@@ -21,14 +21,34 @@ const normPhone = (s) => String(s || '').replace(/\D/g, '').replace(/^84/, '0');
  * demo (mật khẩu công khai) có thể dò ra tên khách hàng + tên sales thật qua thông báo 409.
  */
 async function findDuplicateCustomer(env, ctx, name, phone, excludeId) {
-  const nk = normName(name), pk = normPhone(phone);
-  if (!nk && !pk) return null;
+  if (!normName(name) && !normPhone(phone)) return null;
+  return (await customerDupIndex(env, ctx)).find(name, phone, excludeId);
+}
+
+/**
+ * Nạp khách hàng của workspace MỘT lần rồi so trùng nhiều lần — dùng cho nhập danh sách từ Excel,
+ * nơi mỗi dòng đều cần so trùng mà gọi findDuplicateCustomer() từng dòng sẽ quét lại cả bảng.
+ * `add()` đưa thêm dòng vừa nhận vào chỉ mục để 2 dòng trùng nhau TRONG CÙNG file cũng bị bắt.
+ */
+async function customerDupIndex(env, ctx) {
   const ws = wsScope(ctx, 'c.owner_id');
   const { results } = await env.DB.prepare(
     `SELECT c.id,c.name,c.phone,c.owner_id,u.name owner_name FROM nv_customers c LEFT JOIN nv_users u ON u.id=c.owner_id WHERE 1=1${ws.sql} LIMIT 2000`)
     .bind(...ws.args).all();
-  return (results || []).find(c => c.id !== excludeId && ((pk && normPhone(c.phone) === pk) || (nk && normName(c.name) === nk))) || null;
+  const rows = (results || []).map(c => ({ ...c, nk: normName(c.name), pk: normPhone(c.phone) }));
+  return {
+    find(name, phone, excludeId) {
+      const nk = normName(name), pk = normPhone(phone);
+      return rows.find(c => c.id !== excludeId && ((pk && c.pk === pk) || (nk && c.nk === nk))) || null;
+    },
+    add(row) { rows.push({ ...row, nk: normName(row.name), pk: normPhone(row.phone) }); },
+  };
 }
+
+/** Trần số dòng mỗi lần nhập Excel — đủ cho danh sách của 1 phòng kinh doanh, chặn request phình to. */
+const IMPORT_MAX_ROWS = 500;
+/** Ô tuỳ chọn từ Excel: cắt khoảng trắng, ô trống lưu NULL thay vì chuỗi rỗng. */
+const opt = (v, max) => (v == null ? null : String(v).trim().slice(0, max) || null);
 
 export async function crmRoutes(ctx) {
   const { env, url } = ctx;
@@ -155,6 +175,91 @@ export async function crmRoutes(ctx) {
         nguonKhachHang, partnerId, JSON.stringify(statuses), t, 0, t, t, t).run();
     await audit(env, ctx.me.id, 'create', 'customer', id, { name: b.name, statuses });
     return json({ id });
+  }
+
+  /**
+   * Nhập danh sách khách hàng từ Excel (theo file mẫu Doanh nghiệp · Người liên hệ · SĐT · Email ·
+   * Trạng thái · Ghi chú). Trình duyệt tự đọc file rồi gửi lên mảng `rows` đã tách cột.
+   *
+   * `dryRun: true` chỉ kiểm tra — trả kết quả từng dòng để màn xem trước tô Hợp lệ / Trùng / Lỗi.
+   * Lần gửi thật kiểm tra LẠI từ đầu (không tin kết quả xem trước: giữa 2 lần có thể sale khác vừa
+   * đăng ký đúng khách đó) rồi chỉ lưu các dòng hợp lệ. Dòng trùng luôn bị bỏ qua, không có "vẫn
+   * tạo" như form tay: đó là deal registration, cần trao đổi với sale đang giữ chứ không nhập đè.
+   *
+   * Mỗi dòng hợp lệ tạo 1 khách hàng (ĐKKH tính từ lúc nhập) và, nếu có tên người liên hệ, 1
+   * người liên hệ chính mang cùng SĐT/Email của dòng đó.
+   */
+  if ((p = match(ctx, 'POST', '/api/customers/import'))) {
+    need(ctx);
+    const b = await readBody(ctx.request);
+    const input = Array.isArray(b.rows) ? b.rows : [];
+    if (!input.length) return json({ error: 'File không có dòng khách hàng nào' }, 400);
+    if (input.length > IMPORT_MAX_ROWS) return json({ error: `Mỗi lần chỉ nhập được tối đa ${IMPORT_MAX_ROWS} khách hàng — chia file nhỏ hơn rồi nhập lần lượt.` }, 400);
+
+    const dryRun = !!b.dryRun;
+    const owner = await resolveAssignableOwner(env, ctx, b.ownerId);
+    const ownerId = owner ? owner.id : ctx.me.id;
+    const nguonKhachHang = vEnum(b.nguonKhachHang, LEAD_SOURCES, 'Nguồn khách hàng', null);
+    const idx = await customerDupIndex(env, ctx);
+
+    const results = [], accepted = [];
+    input.forEach((r, i) => {
+      const line = Number(r?.line) || i + 1;   // số dòng trong Excel để người dùng dò lại file
+      let row;
+      try {
+        row = {
+          name: vText(r?.name, 'Tên doanh nghiệp', { max: 160, required: true, min: 2 }),
+          phone: vPhone(r?.phone),
+          email: vEmail(r?.email),
+          contactName: vText(r?.contactName, 'Tên người liên hệ', { max: 80 }),
+          contactTitle: opt(r?.contactTitle, 80),
+          industry: opt(r?.industry, 60), scale: opt(r?.scale, 40), address: opt(r?.address, 200),
+          note: opt(r?.note, 1000),
+          statuses: normalizeStatuses(r?.statuses) || [DEFAULT_STATUS],
+        };
+      } catch (e) {
+        results.push({ line, ok: false, error: e.message || 'Dữ liệu không hợp lệ' });
+        return;
+      }
+      const dup = idx.find(row.name, row.phone);
+      if (dup) {
+        results.push({
+          line, ok: false,
+          duplicate: dup.inFileLine
+            ? { inFileLine: dup.inFileLine, name: dup.name }
+            : { name: dup.name, ownerName: dup.owner_name || null, mine: dup.owner_id === ctx.me.id },
+        });
+        return;
+      }
+      idx.add({ id: null, name: row.name, phone: row.phone, inFileLine: line });
+      accepted.push({ line, row });
+      results.push({ line, ok: true });
+    });
+
+    if (dryRun || !accepted.length) return json({ dryRun, created: 0, results });
+
+    const t = now(), stmts = [];
+    for (const { line, row } of accepted) {
+      const id = uid('cs');
+      stmts.push(env.DB.prepare('INSERT INTO nv_customers (id,owner_id,name,industry,scale,phone,email,address,temp,source,note,services,nguon_khach_hang,partner_id,statuses,dkkh_at,dkkh_count,last_touch_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(id, ownerId, row.name, row.industry, row.scale, row.phone, row.email, row.address, 'warm',
+          'Nhập Excel', row.note, '[]', nguonKhachHang, null, JSON.stringify(row.statuses), t, 0, t, t, t));
+      if (row.contactName) {
+        stmts.push(env.DB.prepare('INSERT INTO nv_contacts (id,customer_id,name,title,phone,email,is_primary,created_at) VALUES (?,?,?,?,?,?,?,?)')
+          .bind(uid('ct'), id, row.contactName, row.contactTitle, row.phone, row.email, 1, t));
+      }
+      results.find(x => x.line === line).id = id;
+    }
+    // Chia lô cho vừa giới hạn 1 lần batch của D1; mỗi lô là 1 transaction.
+    for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+    await audit(env, ctx.me.id, 'import', 'customer', null, { created: accepted.length, total: input.length, ownerId });
+    if (ownerId !== ctx.me.id) {
+      await notify(env, ownerId, {
+        type: 'customer', title: `${ctx.me.name} đã giao ${accepted.length} khách hàng cho bạn`,
+        body: 'Danh sách nhập từ Excel — ĐKKH tính từ hôm nay.', link: '#/crm',
+      });
+    }
+    return json({ dryRun: false, created: accepted.length, results });
   }
 
   if ((p = match(ctx, 'GET', '/api/customers/:id'))) {

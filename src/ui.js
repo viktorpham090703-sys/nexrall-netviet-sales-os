@@ -175,6 +175,7 @@ function bindSwipeDown(el, close) {
 /**
  * Modal form. fields: [{name,label,type,value,options,placeholder,required,rows,hint}]
  * onSubmit(values) — trả về false để giữ modal mở.
+ * wide: true = rộng 680px; 'xl' = rộng 1000px (bảng xem trước nhiều cột, vd nhập Excel).
  */
 export function modal({ title, titleIcon = '', fields = [], html = '', submitText = 'Lưu', onSubmit, wide }) {
   const body = fields.map(f => {
@@ -193,7 +194,7 @@ export function modal({ title, titleIcon = '', fields = [], html = '', submitTex
     return `<label class="f"><span>${esc(f.label)}${f.required ? ' *' : ''}</span>${input}${f.hint ? `<div class="xs mut mt">${esc(f.hint)}</div>` : ''}</label>`;
   }).join('');
 
-  const { root, close } = openOverlay(`<div class="modal-scrim"><div class="modal" role="dialog" aria-modal="true" ${wide ? 'style="max-width:680px"' : ''}>
+  const { root, close } = openOverlay(`<div class="modal-scrim"><div class="modal" role="dialog" aria-modal="true" ${wide ? `style="max-width:${wide === 'xl' ? 1000 : 680}px"` : ''}>
     <h3>${titleIcon ? icon(titleIcon, 17, { style: 'margin-right:6px' }) : ''}${esc(title)}</h3>
     <form data-form>${body}${html}
       <div class="row mt" style="gap:8px">

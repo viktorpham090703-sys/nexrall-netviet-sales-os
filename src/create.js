@@ -1,6 +1,6 @@
 import { sheet } from './ui.js';
 import { quickContact } from './views/cockpit.js';
-import { logActivity, newCustomer } from './views/crm.js';
+import { logActivity, newCustomer, importCustomers } from './views/crm.js';
 import { newDeal } from './views/pipeline.js';
 import { newTask } from './views/tasks.js';
 
@@ -19,6 +19,7 @@ export function openCreateSheet() {
     items: [
       { key: 'contact', icon: 'userPlus', tone: 'amber', title: 'Liên hệ mới', desc: 'Thêm lead / khách hàng tiềm năng', onSelect: () => quickContact(refresh) },
       { key: 'customer', icon: 'briefcase', tone: 'blue', title: 'Khách hàng', desc: 'Tạo doanh nghiệp / khách hàng', onSelect: () => newCustomer(refresh) },
+      { key: 'import', icon: 'fileSpreadsheet', tone: 'blue', title: 'Nhập danh sách khách hàng', desc: 'Từ file Excel theo mẫu công ty', onSelect: () => importCustomers(refresh) },
       { key: 'deal', icon: 'trendingUp', tone: 'red', title: 'Deal mới', desc: 'Tạo cơ hội bán hàng', onSelect: () => newDeal(refresh) },
       { key: 'task', icon: 'listChecks', tone: 'green', title: 'Công việc', desc: 'Tạo task / lịch hẹn', onSelect: () => newTask(refresh) },
       { key: 'activity', icon: 'phone', tone: 'grey', title: 'Ghi nhận hoạt động', desc: 'Ghi cuộc gọi, demo, gặp mặt…', onSelect: () => logActivity({}, refresh) },

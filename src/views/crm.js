@@ -7,6 +7,7 @@ import {
 } from '../const.js';
 import { aiModal } from '../aiPref.js';
 import { icon } from '../icons.js';
+import { openCustomerImport } from '../customerImport.js';
 
 /* Bộ lọc danh sách khách hàng (yêu cầu bổ sung: lọc theo sale phụ trách và theo các trường thông
  * tin khách hàng). Giữ ở module scope để không mất lựa chọn khi vào xem chi tiết rồi quay lại. */
@@ -65,6 +66,7 @@ export async function render(el, params) {
       <div class="grow"><h2>CRM 360°</h2>
         <p>${d.items.length} khách hàng ${isLead() ? 'toàn đội' : 'của bạn'} · trạng thái theo quy trình · ĐKKH 1 tháng</p></div>
       <div class="right"><button class="btn primary sm" data-add>+ Khách hàng</button>
+        <div class="mt"><button class="btn sm" data-import>${icon('fileSpreadsheet', 14)} Nhập Excel</button></div>
         <div class="mt"><button class="btn sm" data-addpartner>+ Partner</button></div></div>
     </div>
 
@@ -154,6 +156,7 @@ export async function render(el, params) {
     });
 
     el.querySelector('[data-add]').onclick = () => customerModal(null, d, () => render(el));
+    el.querySelector('[data-import]').onclick = () => openCustomerImport({ sales: d.sales }, () => render(el));
     el.querySelector('[data-addpartner]').onclick = () => partnerModal(null, () => render(el));
     el.querySelectorAll('[data-editpartner]').forEach(b => b.onclick = () => partnerModal(d.partners.find(x => x.id === b.dataset.editpartner), () => render(el)));
   };
@@ -383,6 +386,15 @@ export async function newCustomer(after) {
   try {
     const [p, c] = await Promise.all([get('/partners'), isLead() ? get('/customers') : Promise.resolve({})]);
     customerModal(null, { partners: p.items || [], sales: c.sales || [] }, after);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+/** Mở luồng nhập danh sách khách hàng từ Excel từ bất kỳ màn nào (sheet "Tạo mới"). TP/Admin cần
+ * danh sách sale để gán người phụ trách — lấy kèm từ GET /customers như newCustomer(). */
+export async function importCustomers(after) {
+  try {
+    const c = isLead() ? await get('/customers') : {};
+    openCustomerImport({ sales: c.sales || [] }, after);
   } catch (e) { toast(e.message, 'err'); }
 }
 

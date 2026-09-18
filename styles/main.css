@@ -347,6 +347,19 @@ html.overlay-open,html.overlay-open body{overflow:hidden}
 .tbl-wrap td{padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
 .tbl-wrap tr:last-child td{border-bottom:none}
 
+/* Xem trước nhập danh sách khách hàng từ Excel — bảng cuộn ngang trong modal, dòng bị loại (trùng/lỗi) mờ đi. */
+.imp-wrap{max-height:52vh;max-height:52dvh;overflow:auto;border:1px solid var(--line);border-radius:12px}
+.imp-tbl{min-width:900px}
+.imp-tbl th{position:sticky;top:0;background:var(--bg2);z-index:1;white-space:nowrap}
+.imp-tbl td{vertical-align:top}
+.imp-tbl input[type=checkbox]{width:auto;padding:0;accent-color:var(--orange)}
+.imp-tbl tr.imp-off td{opacity:.55}
+.imp-tbl tr.imp-off td:last-child{opacity:1}
+.imp-note{max-width:240px;white-space:pre-wrap}
+.imp-map{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.imp-map>span{flex:1;margin:0}
+.imp-map>select{flex:0 0 190px;width:190px}
+
 /* Luồng trình duyệt Phương án kinh doanh — cột mốc dọc nối 4 hạng mục theo đúng thứ tự vòng đời. */
 .flow-step{display:flex;gap:12px}
 .flow-rail{display:flex;flex-direction:column;align-items:center;flex:0 0 26px}

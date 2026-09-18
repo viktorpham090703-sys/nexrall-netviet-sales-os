@@ -17,7 +17,7 @@
  * lựa chọn bắt buộc: cache-first sẽ khiến người dùng chạy code cũ sau mỗi lần deploy.
  */
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `nv-static-${VERSION}`;
 
 /* Vỏ app: đủ để mở được giao diện khi mất mạng. Không có dữ liệu người dùng nào ở đây —
@@ -36,7 +36,7 @@ const SHELL = [
   '/apple-touch-icon.png',
   '/favicon.ico',
   '/src/app.js', '/src/pwa.js', '/src/api.js', '/src/state.js', '/src/ui.js', '/src/const.js', '/src/icons.js',
-  '/src/scrollFx.js', '/src/aiPref.js', '/src/salesDocs.js', '/src/create.js',
+  '/src/scrollFx.js', '/src/aiPref.js', '/src/salesDocs.js', '/src/create.js', '/src/customerImport.js', '/src/xlsx.js',
   '/src/views/login.js', '/src/views/setPassword.js', '/src/views/cockpit.js', '/src/views/crm.js',
   '/src/views/pipeline.js', '/src/views/activity.js', '/src/views/tasks.js', '/src/views/reports.js',
   '/src/views/kpi.js', '/src/views/ai.js', '/src/views/prospect.js', '/src/views/saleskit.js',
