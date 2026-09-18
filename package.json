@@ -7,6 +7,7 @@
   "scripts": {
     "assets": "node local/sync-assets.mjs",
     "build": "node local/sync-assets.mjs --copy",
+    "deploy:personal": "npm run build && wrangler deploy --keep-vars",
     "dev": "npm run assets && wrangler dev --local --port 8787",
     "start": "npm run dev",
     "clean": "rm -rf public .wrangler",

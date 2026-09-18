@@ -1,7 +1,13 @@
-# Cấu hình dùng cho CẢ local (`npm run dev`) LẪN deploy production qua Cloudflare
-# Worker thật: nextrall-netviet-sales-os1
+# Cấu hình dùng cho CẢ local (`npm run dev`) LẪN deploy bản demo cá nhân qua Cloudflare
+# Worker: nexrall-netviet-sales-os → https://nexrall-netviet-sales-os.tonypham090703.workers.dev
+# Mọi ID dưới đây thuộc account Tonypham090703@gmail.com (bf1f00ccb790b51fcb25ed451f903773).
+#
+# Bản chính thức của công ty (nexrall-netviet-sales-os1, account Trungductwice@gmail.com) nằm ở repo
+# github.com/trungducnguyen4/nexrall-netviet-sales-os1, dùng wrangler.toml RIÊNG với ID của account đó
+# và được Workers Builds tự deploy khi push. Khi chép code sang repo công ty: chép mọi file TRỪ wrangler.toml.
 
-name = "nextrall-netviet-sales-os1"
+name = "nexrall-netviet-sales-os"
+account_id = "bf1f00ccb790b51fcb25ed451f903773"
 main = "local/entry.js"
 compatibility_date = "2026-09-01"
 
