@@ -320,6 +320,62 @@ const MIGRATIONS = [
   // 79: bộ nhớ bản dịch EN cho dữ liệu người dùng nhập (POST /api/i18n/translate) — khoá là CHÍNH đoạn
   // chữ tiếng Việt gốc (tối đa 500 ký tự), để mỗi đoạn chỉ gọi AI dịch một lần cho toàn hệ thống.
   `CREATE TABLE IF NOT EXISTS nv_translations (src TEXT PRIMARY KEY, en TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+
+  // 80-82: vòng đời nhân sự. Tạm dừng công việc = active=0 kèm lý do (có thể cho làm lại); nghỉ việc
+  // = xoá MỀM (deleted_at) — không xoá cứng vì id nhân sự còn nằm trong deal/hoa hồng/hợp đồng/nhật
+  // ký, xoá cứng sẽ làm mất lịch sử doanh thu & hoa hồng.
+  `ALTER TABLE nv_users ADD COLUMN status_reason TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN status_changed_at INTEGER`,
+  `ALTER TABLE nv_users ADD COLUMN deleted_at INTEGER`,
+
+  // 83: giới tính trong hồ sơ nhân sự tự khai ('nam' | 'nu' | 'khac').
+  `ALTER TABLE nv_users ADD COLUMN gender TEXT`,
+
+  // 84: HUONGNT (Tổng Giám Đốc) ngang cấp HAUNV (Phó TGĐ) theo xác nhận của người vận hành — cùng là
+  // Admin toàn quyền, kể cả quản lý tài khoản nhân sự. Thay cho phân quyền "Admin nghiệp vụ" ở migration 33.
+  `UPDATE nv_users SET role='admin', can_manage_accounts=1 WHERE id='HUONGNT'`,
+
+  // 85-87: hồ sơ nhân sự tự khai — ngày cấp / nơi cấp CCCD và trình độ học vấn.
+  `ALTER TABLE nv_users ADD COLUMN id_issue_date TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN id_issue_place TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN education_level TEXT`,
+  // 88-91: "Chức vụ & kinh nghiệm" — kinh nghiệm sale, chức vụ đã đảm nhiệm (nhân sự tự khai), cùng 2 cột
+  // thành tích / vi phạm nhập tay (đã bỏ ở 92-93, thay bằng tính tự động).
+  `ALTER TABLE nv_users ADD COLUMN sales_experience TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN past_positions TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN achievements TEXT`,
+  `ALTER TABLE nv_users ADD COLUMN violations TEXT`,
+  // 92-93: Thành tích & Vi phạm chuyển sang TÍNH TỰ ĐỘNG từ dữ liệu Sales OS (server/lib/record.js) —
+  // bỏ 2 cột nhập tay ở migration 90-91. Kinh nghiệm sale & chức vụ đã đảm nhiệm nay do nhân sự tự khai.
+  `ALTER TABLE nv_users DROP COLUMN achievements`,
+  `ALTER TABLE nv_users DROP COLUMN violations`,
+
+  // ===== Đợt sắp xếp lại 6 phân hệ (Trang chủ › Kinh doanh › Công việc › Đào tạo › Báo cáo › Hệ thống) =====
+  // 94-96: phân loại công việc. `level` = mức độ người dùng chọn (gap | quan_trong | binh_thuong |
+  // tam_dung | ke_hoach) — "Quá hạn" KHÔNG lưu mà tính từ due_at lúc đọc, để không lệch khi đổi hạn.
+  // `source` = loại việc (duoc_giao | de_xuat | cv_thuong). `links` = mảng JSON các đường dẫn gắn kèm.
+  `ALTER TABLE nv_tasks ADD COLUMN level TEXT`,
+  `ALTER TABLE nv_tasks ADD COLUMN source TEXT`,
+  `ALTER TABLE nv_tasks ADD COLUMN links TEXT NOT NULL DEFAULT '[]'`,
+  // 97: tài liệu đính kèm công việc — file gốc ở R2 (binding DOCS) như nv_documents, bảng chỉ giữ metadata.
+  `CREATE TABLE IF NOT EXISTS nv_task_files (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, owner_id TEXT NOT NULL, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER DEFAULT 0, r2_key TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS ix_task_files_task ON nv_task_files (task_id)`,
+  // 99: thiết lập hệ thống dạng khoá → JSON (logo, phân tầng chức danh, phân quyền, thiết lập AI, ảnh
+  // lộ trình). Khoá mang tiền tố workspace ("0:perm", "1:perm") để tài khoản demo không sửa được
+  // thiết lập của nhân sự chính thức và ngược lại — xem server/lib/settings.js.
+  `CREATE TABLE IF NOT EXISTS nv_settings (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_by TEXT, updated_at INTEGER NOT NULL)`,
+  // 100-102: danh sách "sản phẩm, dịch vụ" (TVC/Video, Gameshow, Xây kênh…) — trước đây chỉ là chữ trên
+  // từng gói nên không tạo được nhóm mới. Nạp sẵn 3 nhóm chuẩn + mọi nhóm đang có trên gói.
+  `CREATE TABLE IF NOT EXISTS nv_product_lines (name TEXT PRIMARY KEY, sort INTEGER DEFAULT 0, created_at INTEGER)`,
+  `INSERT OR IGNORE INTO nv_product_lines (name,sort,created_at) VALUES ('TVC/Video',1,CAST(strftime('%s','now') AS INTEGER)),('Gameshow',2,CAST(strftime('%s','now') AS INTEGER)),('Xây kênh',3,CAST(strftime('%s','now') AS INTEGER))`,
+  `INSERT OR IGNORE INTO nv_product_lines (name,sort,created_at) SELECT DISTINCT line,99,CAST(strftime('%s','now') AS INTEGER) FROM nv_products WHERE line IS NOT NULL AND line<>''`,
+  // 103: mẫu biểu dùng chung (báo giá, hồ sơ năng lực, hợp đồng…) — file ở R2, mỗi loại có 1 mẫu mặc định.
+  `CREATE TABLE IF NOT EXISTS nv_templates (id TEXT PRIMARY KEY, kind TEXT NOT NULL, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER DEFAULT 0, r2_key TEXT NOT NULL, version INTEGER DEFAULT 1, is_default INTEGER DEFAULT 0, uploaded_by TEXT, created_at INTEGER NOT NULL)`,
+  // 104-106: bài kiểm tra sau mỗi video đào tạo — máy chủ chấm điểm (đáp án không gửi xuống trình
+  // duyệt). Đạt ≥ 80% mới ghi hoàn thành và mở bài tiếp theo.
+  `ALTER TABLE nv_training_progress ADD COLUMN best_score INTEGER`,
+  `ALTER TABLE nv_training_progress ADD COLUMN last_score INTEGER`,
+  `ALTER TABLE nv_training_progress ADD COLUMN watched_at INTEGER`,
 ];
 
 /** Chế độ vận hành: 'demo' phải khai báo rõ ràng, mọi giá trị khác (kể cả thiếu) → 'production'

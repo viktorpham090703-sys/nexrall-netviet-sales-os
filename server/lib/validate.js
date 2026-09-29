@@ -59,6 +59,20 @@ export function vPassword(v, label = 'Mật khẩu', { required = false } = {}) 
   return s;
 }
 
+/** Mật khẩu do CHÍNH nhân sự tự đặt — khớp danh sách điều kiện hiện ở màn Cài đặt / Đặt mật khẩu
+ * (src/ui.js PW_RULES). Mật khẩu tạm Admin đặt vẫn dùng vPassword vì người nhận buộc phải đổi. */
+export function vStrongPassword(v, label = 'Mật khẩu mới') {
+  const s = v == null ? '' : String(v);
+  if (!s) bad(`Vui lòng nhập ${label.toLowerCase()}`);
+  if (s.length < 8 || s.length > 20) bad(`${label} phải dài từ 8 đến 20 ký tự`);
+  if (/\s/.test(s)) bad(`${label} không được chứa khoảng trắng`);
+  if (!/[a-z]/.test(s)) bad(`${label} cần ít nhất 1 chữ thường`);
+  if (!/[A-Z]/.test(s)) bad(`${label} cần ít nhất 1 chữ in hoa`);
+  if (!/[0-9]/.test(s)) bad(`${label} cần ít nhất 1 chữ số`);
+  if (!/[^A-Za-z0-9\s]/.test(s)) bad(`${label} cần ít nhất 1 ký tự đặc biệt (! @ # $ %…)`);
+  return s;
+}
+
 const RE_PHONE = /^[0-9+()\s.-]{8,20}$/;
 /** Số điện thoại VN: chỉ chấp nhận chữ số và ký tự phân cách thông dụng. */
 export function vPhone(v, label = 'Số điện thoại') {
@@ -67,6 +81,14 @@ export function vPhone(v, label = 'Số điện thoại') {
   if (!RE_PHONE.test(s)) bad(`${label} chỉ được chứa chữ số (8–20 ký tự)`);
   const digits = s.replace(/\D/g, '');
   if (digits.length < 8) bad(`${label} quá ngắn`);
+  return s;
+}
+
+/** Mã nhân viên = id đăng nhập: chữ không dấu, số, . _ - ; lưu dạng IN HOA. */
+export function vEmployeeCode(v, label = 'Mã nhân viên') {
+  const s = v == null ? '' : String(v).trim().toUpperCase();
+  if (!s) bad(`Vui lòng nhập ${label.toLowerCase()}`);
+  if (!/^[A-Z0-9._-]{2,30}$/.test(s)) bad(`${label} chỉ gồm chữ không dấu, số, dấu . _ - (2–30 ký tự)`);
   return s;
 }
 

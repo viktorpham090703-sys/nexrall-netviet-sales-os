@@ -147,6 +147,43 @@ function openOverlay(html) {
   return { root, close: me.close };
 }
 
+/** Điều kiện mật khẩu tự đặt — khớp vStrongPassword ở server/lib/validate.js. */
+export const PW_RULES = [
+  ['len', 'Từ 8 đến 20 ký tự', s => s.length >= 8 && s.length <= 20],
+  ['upper', 'Có ít nhất 1 chữ in hoa', s => /[A-Z]/.test(s)],
+  ['lower', 'Có ít nhất 1 chữ thường', s => /[a-z]/.test(s)],
+  ['digit', 'Có ít nhất 1 chữ số', s => /[0-9]/.test(s)],
+  ['special', 'Có ít nhất 1 ký tự đặc biệt (! @ # $ %)', s => /[^A-Za-z0-9\s]/.test(s)],
+  ['space', 'Không chứa khoảng trắng', s => s.length > 0 && !/\s/.test(s)],
+];
+export const pwRulesHtml = () => `<div class="pw-rules" data-pw-rules>${PW_RULES.map(([k, label]) =>
+  `<div class="pw-rule" data-rule="${k}">${icon('circle', 13)}<span>${esc(t(label))}</span></div>`).join('')}</div>`;
+/** Tô xanh từng điều kiện khi gõ; trả về hàm kiểm tra "đạt hết chưa". */
+export function bindPwRules(input, box) {
+  const update = () => PW_RULES.forEach(([k, , test]) => {
+    const row = box.querySelector(`[data-rule="${k}"]`);
+    const ok = test(input.value);
+    if (row.classList.contains('ok') === ok) return;
+    row.classList.toggle('ok', ok);
+    row.firstElementChild.outerHTML = icon(ok ? 'circleCheck' : 'circle', 13);
+  });
+  input.addEventListener('input', update);
+  update();
+  return () => PW_RULES.every(([, , test]) => test(input.value));
+}
+/** Nút con mắt trong mọi .pw-wrap bên trong `root`. */
+export function bindPwToggles(root) {
+  root.querySelectorAll('[data-toggle-pw]').forEach(toggle => {
+    const pwInput = toggle.previousElementSibling;
+    toggle.onclick = () => {
+      const show = pwInput.type === 'password';
+      pwInput.type = show ? 'text' : 'password';
+      toggle.innerHTML = show ? icon('eyeOff', 16) : icon('eye', 16);
+      toggle.setAttribute('aria-label', show ? t('Ẩn mật khẩu') : t('Hiện mật khẩu'));
+    };
+  });
+}
+
 /** Đóng lớp phủ đang mở (nếu có) mà không rời trang — app.js gọi khi đổi route. */
 export function closeOverlay() { if (active) active.close(); }
 
@@ -198,6 +235,9 @@ export function modal({ title, titleIcon = '', fields = [], html = '', submitTex
       }).join('')}</select>`;
     } else if (f.type === 'textarea') {
       input = `<textarea name="${f.name}" rows="${f.rows || 3}" placeholder="${esc(t(f.placeholder || ''))}">${esc(v)}</textarea>`;
+    } else if (f.type === 'password') {
+      input = `<div class="pw-wrap"><input name="${f.name}" type="password" value="${esc(v)}" placeholder="${esc(t(f.placeholder || ''))}">
+        <button type="button" class="pw-toggle" data-toggle-pw aria-label="${esc(t('Hiện mật khẩu'))}">${icon('eye', 16)}</button></div>`;
     } else {
       input = `<input name="${f.name}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(t(f.placeholder || ''))}">`;
     }
@@ -215,6 +255,7 @@ export function modal({ title, titleIcon = '', fields = [], html = '', submitTex
 
   root.querySelector('[data-cancel]').onclick = () => close();
   const form = root.querySelector('[data-form]');
+  bindPwToggles(form);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const values = Object.fromEntries(new FormData(form).entries());

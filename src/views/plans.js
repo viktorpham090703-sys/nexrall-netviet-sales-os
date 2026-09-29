@@ -27,7 +27,14 @@ let tab = 'plans';
 const MANUAL_KINDS = ['nghiem_thu', 'thanh_ly'];
 /** Ai duyệt bước nào — ghi rõ ngay trên từng bước vì hai nhóm bước có số vòng duyệt khác nhau,
  * để người dùng không phải đoán vì sao bước 1-2 đi qua nhiều người hơn bước 3-4. */
-const DOC_APPROVERS = () => ({ bao_gia: tr('TPKD (V1) → Giám đốc (V2)'), hop_dong: tr('TPKD (V1) → HCNS (V2)') });
+/* Báo giá: dưới ngưỡng duyệt (Hệ thống › Phân quyền) TPKD duyệt là xong; từ ngưỡng trở lên thêm vòng Giám đốc. */
+const DOC_APPROVERS = () => {
+  const thr = Number(state.settings.perm?.threshold) || 20000000;
+  return {
+    bao_gia: tf(() => `TPKD (V1) → Giám đốc (V2) nếu từ ${Math.round(thr / 1e6)} triệu`, () => `Sales Mgr (R1) → Director (R2) if ≥ ${Math.round(thr / 1e6)}M VND`),
+    hop_dong: tr('TPKD (V1) → HCNS (V2)'),
+  };
+};
 
 /** Chứng từ thuộc bước `kind` của phương án đang mở. */
 const docsFor = (d, kind) => (kind === 'bao_gia' ? d.quotes : d.contracts) || [];

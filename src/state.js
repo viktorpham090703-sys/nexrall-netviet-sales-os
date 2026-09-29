@@ -5,6 +5,8 @@ export const state = {
   me: null,
   users: [],
   config: {},
+  // Thiết lập hệ thống từ /bootstrap: brand (logo), ai, perm (tính năng & thao tác của chính mình).
+  settings: {},
   unread: 0,
   mode: 'production',
   initialized: true,
@@ -16,6 +18,7 @@ export async function boot() {
   state.users = d.users || [];
   state.me = d.me || null;
   state.config = d.config || {};
+  state.settings = d.settings || {};
   state.unread = d.unread || 0;
   state.mode = d.mode || 'production';
   state.initialized = d.initialized !== false;

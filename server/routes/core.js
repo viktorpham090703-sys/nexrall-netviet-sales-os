@@ -2,9 +2,12 @@ import { json, match, need, uid, now, DAY, readBody, audit, notify, isLead, star
 import { getConfig, computeKpi, slaLimit, businessDaysElapsed } from '../lib/kpi.js';
 import { createSession, destroySession, readToken, verifyPassword, hashPassword, DUMMY_PASSWORD_HASH } from '../lib/auth.js';
 import { appMode } from '../lib/db.js';
-import { vPassword, vText, vPhone, vDateStr, vEmail } from '../lib/validate.js';
+import { computeRecord } from '../lib/record.js';
+import { vPassword, vStrongPassword, vText, vPhone, vDateStr, vEmail } from '../lib/validate.js';
 import { clientIp, loginRateLimited, recordLoginFailure, clearLoginAttempts } from '../lib/ratelimit.js';
 import { autoSubmitOutstandingReports } from './work.js';
+import { getSetting } from '../lib/settings.js';
+import { effFeat, effOps, levelOf, FEATURES } from '../lib/perm.js';
 
 /** Trần dung lượng ảnh đại diện sau khi client đã thu nhỏ — 320px vuông JPEG chỉ tầm 20-40KB,
  * 512KB là biên rộng rãi cho ảnh PNG/WEBP nhiều chi tiết mà vẫn không làm nặng /api/bootstrap. */
@@ -40,7 +43,17 @@ export async function coreRoutes(ctx) {
     const me = ctx.me
       ? { ...ctx.me, avatar: (await env.DB.prepare('SELECT avatar FROM nv_users WHERE id=?').bind(ctx.me.id).first('avatar')) || null }
       : null;
-    return json({ users, me, config: cfg, unread, mode, initialized });
+    // Thiết lập hệ thống cần ngay lúc vẽ khung app: logo (cả màn đăng nhập), tính năng được cấp để
+    // dựng menu, thiết lập AI trợ lý. Chưa đăng nhập chỉ nhận logo.
+    const bucket2 = ctx.me ? wsBucket(ctx.me) : (mode === 'demo' ? 1 : 0);
+    const brand = await getSetting(env, bucket2, 'brand');
+    let settings = { brand };
+    if (ctx.me) {
+      const [perm, ai] = await Promise.all([getSetting(env, bucket2, 'perm'), getSetting(env, bucket2, 'ai')]);
+      const lv = levelOf(ctx.me);
+      settings = { brand, ai, perm: { level: lv, feat: effFeat(perm, ctx.me), ops: Object.fromEntries(FEATURES.map(([f]) => [f, effOps(perm, lv, f)])), threshold: perm.threshold } };
+    }
+    return json({ users, me, config: cfg, unread, mode, initialized, settings });
   }
 
   /* --- Đăng nhập: xác thực mật khẩu rồi đổi lấy session token --- */
@@ -58,7 +71,7 @@ export async function coreRoutes(ctx) {
     // email + 5 lần nữa bằng mã nhân viên). Không tìm thấy tài khoản → khoá theo chính định danh
     // đã gõ (không có id nào khác để quy về).
     const u = await env.DB.prepare(
-      'SELECT id,name,email,role,title,created_at,password_hash,must_change_password,can_manage_accounts FROM nv_users WHERE (id=? OR lower(email)=lower(?)) AND active=1')
+      'SELECT id,name,email,role,title,created_at,password_hash,must_change_password,can_manage_accounts FROM nv_users WHERE (UPPER(id)=UPPER(?) OR lower(email)=lower(?)) AND active=1')
       .bind(identifier, identifier).first();
     const rlKey = u ? u.id : identifier.toLowerCase();
 
@@ -86,11 +99,27 @@ export async function coreRoutes(ctx) {
     return json({ me: u, token: s.token, expiresAt: s.expiresAt });
   }
 
-  /* --- Tự đổi mật khẩu khi đang đăng nhập (dùng cho cờ must_change_password buộc đổi lần đầu) --- */
+  /* --- Tự đổi mật khẩu khi đang đăng nhập. Đổi thường (Cài đặt → Bảo mật) phải nhập đúng mật khẩu
+     hiện tại — phiên bị bỏ quên trên máy dùng chung không đổi được mật khẩu để chiếm tài khoản. Luồng
+     buộc đổi lần đầu (must_change_password) thì miễn, vì người dùng vừa đăng nhập bằng mật khẩu tạm. --- */
   if ((p = match(ctx, 'POST', '/api/account/password'))) {
     need(ctx);
     const b = await readBody(ctx.request);
-    const password = vPassword(b.password, 'Mật khẩu mới', { required: true });
+    const password = vStrongPassword(b.password);
+    if (!ctx.me.must_change_password) {
+      const ip = clientIp(ctx.request);
+      const rlKey = 'pwchange:' + ctx.me.id;
+      if ((await loginRateLimited(env, rlKey, ip)).blocked) {
+        return json({ error: 'Bạn đã nhập sai mật khẩu hiện tại quá nhiều lần. Vui lòng thử lại sau ít phút.' }, 429);
+      }
+      const row = await env.DB.prepare('SELECT password_hash FROM nv_users WHERE id=?').bind(ctx.me.id).first();
+      if (!b.currentPassword || !row?.password_hash || !(await verifyPassword(String(b.currentPassword), row.password_hash))) {
+        await recordLoginFailure(env, rlKey, ip);
+        return json({ error: 'Mật khẩu hiện tại không đúng.' }, 400);
+      }
+      await clearLoginAttempts(env, rlKey, ip);
+      if (String(b.currentPassword) === password) return json({ error: 'Mật khẩu mới phải khác mật khẩu hiện tại.' }, 400);
+    }
     const hash = await hashPassword(password);
     await env.DB.prepare('UPDATE nv_users SET password_hash=?, must_change_password=0 WHERE id=?').bind(hash, ctx.me.id).run();
     // Huỷ mọi phiên khác — phòng trường hợp mật khẩu tạm đã bị lộ trước khi được đổi.
@@ -99,11 +128,18 @@ export async function coreRoutes(ctx) {
     return json({ ok: true });
   }
 
+  /* --- Thành tích & Vi phạm của CHÍNH mình — tính trực tiếp từ dữ liệu Sales OS (server/lib/record.js). --- */
+  if ((p = match(ctx, 'GET', '/api/account/record'))) {
+    need(ctx);
+    const u = await env.DB.prepare('SELECT id,role,is_demo FROM nv_users WHERE id=?').bind(ctx.me.id).first();
+    return json(await computeRecord(env, u));
+  }
+
   /* --- Hồ sơ nhân sự tự khai: xem thông tin cá nhân của CHÍNH mình --- */
   if ((p = match(ctx, 'GET', '/api/account/profile'))) {
     need(ctx);
     const u = await env.DB.prepare(
-      'SELECT id,name,email,role,title,phone,birth_date,id_number,id_expiry,address,school,emergency_contact,avatar FROM nv_users WHERE id=?')
+      'SELECT id,name,email,role,title,phone,gender,birth_date,id_number,id_issue_date,id_issue_place,id_expiry,address,school,education_level,emergency_contact,sales_experience,past_positions,avatar FROM nv_users WHERE id=?')
       .bind(ctx.me.id).first();
     return json({ profile: u });
   }
@@ -128,9 +164,15 @@ export async function coreRoutes(ctx) {
     const address = vText(b.address, 'Địa chỉ liên hệ', { max: 300 });
     const school = vText(b.school, 'Trường học', { max: 200 });
     const emergency_contact = vText(b.emergency_contact, 'Liên hệ khẩn cấp', { max: 200 });
+    const gender = ['nam', 'nu', 'khac'].includes(b.gender) ? b.gender : null;
+    const id_issue_date = vDateStr(b.id_issue_date, 'Ngày cấp CCCD');
+    const id_issue_place = vText(b.id_issue_place, 'Nơi cấp CCCD', { max: 200 });
+    const education_level = vText(b.education_level, 'Trình độ học vấn', { max: 60 });
+    const sales_experience = vText(b.sales_experience, 'Kinh nghiệm sale', { max: 2000 });
+    const past_positions = vText(b.past_positions, 'Chức vụ đã đảm nhiệm', { max: 2000 });
     await env.DB.prepare(
-      `UPDATE nv_users SET name=?, email=?, phone=?, birth_date=?, id_number=?, id_expiry=?, address=?, school=?, emergency_contact=? WHERE id=?`)
-      .bind(name, email, phone, birth_date, id_number, id_expiry, address, school, emergency_contact, ctx.me.id).run();
+      `UPDATE nv_users SET name=?, email=?, phone=?, gender=?, birth_date=?, id_number=?, id_issue_date=?, id_issue_place=?, id_expiry=?, address=?, school=?, education_level=?, emergency_contact=?, sales_experience=?, past_positions=? WHERE id=?`)
+      .bind(name, email, phone, gender, birth_date, id_number, id_issue_date, id_issue_place, id_expiry, address, school, education_level, emergency_contact, sales_experience, past_positions, ctx.me.id).run();
     await audit(env, ctx.me.id, 'profile_updated', 'user', ctx.me.id, {});
     return json({ ok: true });
   }
@@ -176,13 +218,8 @@ export async function coreRoutes(ctx) {
     const t = now(), sod = startOfDay(t);
     const cfg = await getConfig(env, me.id);
     const D = env.DB;
-    // follow-up = hoạt động chăm sóc trên deal/khách ĐÃ có (email/zalo/other gắn deal), tách khỏi gọi & gặp
-    const todayAct = await D.prepare(`SELECT COUNT(*) n,
-        SUM(CASE WHEN type="call" THEN 1 ELSE 0 END) c,
-        SUM(CASE WHEN type IN ("meeting","demo") THEN 1 ELSE 0 END) m,
-        SUM(CASE WHEN type IN ("email","zalo") OR (type="other" AND deal_id IS NOT NULL) THEN 1 ELSE 0 END) f
-      FROM nv_activities WHERE user_id=? AND happened_at>=?`).bind(me.id, sod).first();
-    const todayDC = Number(await D.prepare('SELECT COUNT(*) n FROM nv_daily_contacts WHERE user_id=? AND created_at>=?').bind(me.id, sod).first('n')) || 0;
+    const quota = await todayQuota(env, me.id, cfg, sod);
+    const todayDC = quota.contacts.done;
     const { results: tasks } = await D.prepare("SELECT t.*, u.name assigner_name FROM nv_tasks t LEFT JOIN nv_users u ON u.id=t.assigner_id WHERE t.user_id=? AND t.status!='done' ORDER BY CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.due_at").bind(me.id).all();
     const { results: deals } = await D.prepare("SELECT d.*, c.name customer_name FROM nv_deals d LEFT JOIN nv_customers c ON c.id=d.customer_id WHERE d.owner_id=? AND d.status='open' ORDER BY d.last_activity_at ASC").bind(me.id).all();
     const risky = deals.filter(d => (t - (d.last_activity_at || 0)) > slaLimit(cfg, d.stage) * DAY)
@@ -202,13 +239,8 @@ export async function coreRoutes(ctx) {
 
     return json({
       greeting: greet(), today: todayKey(),
-      quota: {
-        contacts: { done: todayDC, target: cfg.quota_daily_contacts || 8 },
-        calls: { done: Number(todayAct.c) || 0, target: cfg.quota_calls || 25 },
-        meetings: { done: Number(todayAct.m) || 0, target: cfg.quota_meetings || 2 },
-        followups: { done: Number(todayAct.f) || 0, target: cfg.quota_followups || 10 },
-      },
-      activitiesToday: Number(todayAct.n) || 0,
+      quota: { contacts: quota.contacts, calls: quota.calls, meetings: quota.meetings, followups: quota.followups },
+      activitiesToday: quota.activities,
       tasks: tasks.slice(0, 6), taskCount: tasks.length,
       risky: risky.slice(0, 5), riskyCount: risky.length,
       pipeline, openDeals: deals.length,
@@ -221,8 +253,15 @@ export async function coreRoutes(ctx) {
   /* --- Thông báo --- */
   if ((p = match(ctx, 'GET', '/api/notifications'))) {
     need(ctx);
-    const { results } = await env.DB.prepare('SELECT * FROM nv_notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 50').bind(ctx.me.id).all();
-    return json({ items: results || [] });
+    // ?limit (≤200) & ?before=<created_at> để trang Thông báo tải tiếp các thông báo cũ hơn.
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    const before = Number(url.searchParams.get('before')) || 0;
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM nv_notifications WHERE user_id=?${before ? ' AND created_at<?' : ''} ORDER BY created_at DESC LIMIT ?`)
+      .bind(...(before ? [ctx.me.id, before, limit + 1] : [ctx.me.id, limit + 1])).all();
+    const unread = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_notifications WHERE user_id=? AND read=0').bind(ctx.me.id).first('n')) || 0;
+    const rows = results || [];
+    return json({ items: rows.slice(0, limit), more: rows.length > limit, unread });
   }
   if ((p = match(ctx, 'POST', '/api/notifications/read'))) {
     need(ctx);
@@ -237,7 +276,7 @@ export async function coreRoutes(ctx) {
     // Chỉ hiện log của nhân sự CÙNG workspace, cộng với log hệ thống không gắn user (vd cron_run) —
     // Admin demo không được thấy nhật ký hoạt động thật của nhân sự chính thức, và ngược lại.
     // Trả kèm u.role để phân biệt ngay trong danh sách hành động của Admin khác/TP/Sales — phục vụ
-    // TGĐ (HAUNV) giám sát chéo cấp dưới, kể cả Admin khác, mà không cần tra thêm ở mục Người dùng.
+    // Ban TGĐ (HUONGNT, HAUNV) giám sát chéo cấp dưới, kể cả Admin khác, mà không cần tra thêm ở mục Người dùng.
     const ws = wsScope(ctx, 'a.user_id');
     const { results } = await env.DB.prepare(
       `SELECT a.*, u.name user_name, u.role user_role FROM nv_audit_logs a LEFT JOIN nv_users u ON u.id=a.user_id
@@ -264,7 +303,8 @@ export async function coreRoutes(ctx) {
     }
     const t = now();
     const since = t - 12 * 3600;
-    const out = { sla: 0, escalation: 0, tasks: 0, reports: 0, autoReports: { day: 0, week: 0, month: 0 }, tenders: 0, pip: 0, quoteSla: 0, contractSla: 0 };
+    const out = { sla: 0, escalation: 0, tasks: 0, reports: 0, autoReports: { day: 0, week: 0, month: 0 }, tenders: 0, pip: 0, quoteSla: 0, contractSla: 0,
+      kpiProgress: 0, dueSoon: 0, meetings: 0, dealClose: 0, urgentApprovals: 0, approvalDigest: 0, salesAlert: 0, revenueAlert: 0 };
 
     // Hạn nộp thủ công là 17h; tới 18h Cron tự tổng hợp và nộp thay những tài khoản còn thiếu.
     // Chạy trước khối nhắc việc để tài khoản vừa được tự nộp không nhận thêm cảnh báo "trễ hạn".
@@ -282,7 +322,7 @@ export async function coreRoutes(ctx) {
     };
 
     const cfg = await getConfig(env);
-    const { results: managers } = await env.DB.prepare("SELECT id,is_demo FROM nv_users WHERE role IN ('manager','admin') AND active=1").all();
+    const { results: managers } = await env.DB.prepare("SELECT id,is_demo,role FROM nv_users WHERE role IN ('manager','admin') AND active=1").all();
     // Leo thang chỉ tới quản lý CÙNG workspace (demo/chính thức) với chủ deal/PIP — deal mẫu demo
     // không được làm phiền quản lý thật, và ngược lại.
     const managersFor = (ownerIsDemo) => (managers || []).filter(m => !!m.is_demo === !!ownerIsDemo);
@@ -396,6 +436,136 @@ export async function coreRoutes(ctx) {
       }
     }
 
+    /* ================= 8–15: CẢNH BÁO THEO VAI TRÒ =================
+     * Nhân viên: tiến độ KPI ngày, việc sắp đến hạn, lịch làm việc với khách, deal sắp đến ngày chốt.
+     * Ban GĐ / Trưởng phòng: cần duyệt gấp, việc giao cho đội sắp đến hạn, cảnh báo chỉ số sale,
+     * doanh thu tháng chậm tiến độ. Các mốc giờ tính theo giờ VN; Cron chạy 30 phút/lần nên mỗi mốc
+     * rơi vào 2 lượt chạy — push() chống trùng theo tiêu đề trong 12 giờ nên chỉ gửi đúng 1 lần. */
+    const vn = new Date((t + 7 * 3600) * 1000);
+    const workday = vn.getUTCDay() !== 0;
+    const sod = startOfDay(t);
+    const fmtDay = (ts) => { const d = new Date((ts + 7 * 3600) * 1000); return `${fmtHM(ts)} ${d.getUTCDate()}/${d.getUTCMonth() + 1}`; };
+    const { results: people } = await env.DB.prepare("SELECT id,name,role,is_demo FROM nv_users WHERE active=1").all();
+    const salesIn = (ws) => (people || []).filter(u => u.role === 'sales' && !!u.is_demo === !!ws);
+    const quotaCache = new Map();
+    const quotaOf = async (u) => {
+      if (!quotaCache.has(u.id)) quotaCache.set(u.id, await todayQuota(env, u.id, await getConfig(env, u.id), sod));
+      return quotaCache.get(u.id);
+    };
+    const isCustomerWork = (task) => !!(task.customer_id || task.deal_id);
+
+    /* 8. NHÂN VIÊN — tiến độ KPI ngày lúc 11h và 15h (ngày làm việc) */
+    if (workday && (hourVN === 11 || hourVN === 15)) {
+      for (const u of (people || []).filter(x => x.role === 'sales')) {
+        const q = await quotaOf(u);
+        const body = `Đạt ${q.pct}% định mức ngày — Liên hệ mới ${q.contacts.done}/${q.contacts.target} · Cuộc gọi ${q.calls.done}/${q.calls.target} · Gặp/Demo ${q.meetings.done}/${q.meetings.target} · Follow-up ${q.followups.done}/${q.followups.target}.`
+          + (q.pct < 100 ? (hourVN === 15 ? ' Còn vài giờ để về đích, tăng tốc nhé!' : ' Giữ nhịp để đạt định mức trước cuối ngày.') : ' Đã đủ định mức — tuyệt vời!');
+        if (await push(u.id, { type: 'kpi', title: `📊 Tiến độ KPI hôm nay – mốc ${hourVN}h`, body, link: '#/cockpit', level: q.pct >= 80 ? 'info' : q.pct >= 50 ? 'warn' : 'danger' })) out.kpiProgress++;
+      }
+    }
+
+    /* 9. Việc SẮP đến hạn (mọi vai trò): còn ≤ 24 giờ → nhắc; còn ≤ 2 giờ → khẩn, báo cả người giao việc.
+     * Việc gắn khách hàng/deal là "lịch làm việc với khách" — nhắc riêng ở mục 10, không nhắc 2 lần. */
+    for (const task of tasks || []) {
+      if (!task.due_at || task.due_at < t) continue;
+      const left = task.due_at - t;
+      if (left <= 2 * 3600) {
+        if (!isCustomerWork(task) && await push(task.user_id, { type: 'task', title: '⏰ Còn dưới 2 giờ: ' + task.title, body: `Hạn ${fmtDay(task.due_at)} — hoàn thành hoặc cập nhật tiến độ ngay.`, link: '#/tasks', level: 'danger' })) out.dueSoon++;
+        if (task.assigner_id && task.assigner_id !== task.user_id
+          && await push(task.assigner_id, { type: 'task', title: '⏳ Việc đã giao sắp đến hạn: ' + task.title, body: `${task.user_name} chưa hoàn thành — hạn ${fmtDay(task.due_at)}.`, link: '#/console', level: 'warn' })) out.dueSoon++;
+      } else if (left <= DAY && !isCustomerWork(task)) {
+        if (await push(task.user_id, { type: 'task', title: '⏳ Việc sắp đến hạn: ' + task.title, body: `Hạn ${fmtDay(task.due_at)}.`, link: '#/tasks', level: 'warn' })) out.dueSoon++;
+      }
+    }
+
+    /* 10. NHÂN VIÊN — lịch làm việc với khách (việc gắn khách hàng/deal có hạn): 8h sáng tóm tắt lịch
+     * trong ngày; trước giờ hẹn ≤ 2 giờ nhắc từng lịch. */
+    const { results: custTasks } = await env.DB.prepare(
+      `SELECT t.id,t.user_id,t.title,t.due_at,c.name customer_name FROM nv_tasks t LEFT JOIN nv_customers c ON c.id=t.customer_id
+       WHERE t.status!='done' AND (t.customer_id IS NOT NULL OR t.deal_id IS NOT NULL) AND t.due_at>=? AND t.due_at<? ORDER BY t.due_at`).bind(t, sod + DAY).all();
+    const label = (x) => x.customer_name ? `${x.title} (${x.customer_name})` : x.title;
+    if (hourVN === 8) {
+      const byUser = new Map();
+      for (const x of custTasks || []) byUser.set(x.user_id, [...(byUser.get(x.user_id) || []), x]);
+      for (const [uid, list] of byUser) {
+        if (await push(uid, { type: 'meeting', title: '📅 Lịch làm việc với khách hôm nay', body: `${list.length} lịch: ` + list.slice(0, 4).map(x => `${fmtHM(x.due_at)} ${label(x)}`).join(' · ') + (list.length > 4 ? ` · +${list.length - 4} lịch khác` : ''), link: '#/tasks', level: 'info' })) out.meetings++;
+      }
+    }
+    for (const x of custTasks || []) {
+      if (x.due_at - t <= 2 * 3600 && await push(x.user_id, { type: 'meeting', title: '📅 Sắp đến lịch làm việc với khách: ' + x.title, body: `Lúc ${fmtHM(x.due_at)}${x.customer_name ? ' với ' + x.customer_name : ''} — chuẩn bị tài liệu và xác nhận lại với khách.`, link: '#/tasks', level: 'warn' })) out.meetings++;
+    }
+
+    /* 11. Deal dự kiến chốt trong 3 ngày tới → nhắc chủ deal (mốc 9h) */
+    if (hourVN === 9) {
+      for (const d of deals || []) {
+        if (d.expected_close_at && d.expected_close_at >= sod && d.expected_close_at < t + 3 * DAY
+          && await push(d.owner_id, { type: 'deal', title: '🎯 Deal sắp đến ngày dự kiến chốt: ' + d.title, body: `Dự kiến chốt ${fmtDay(d.expected_close_at)} · giá trị ${fmtMoney(d.value)}. Chốt lịch gặp và xử lý vướng mắc cuối.`, link: '#/pipeline', level: 'warn' })) out.dealClose++;
+      }
+    }
+
+    /* 12. BAN GĐ / TP — CẦN DUYỆT GẤP: hạng mục phương án chờ duyệt ≥ 4 giờ, nhắc đúng vai trò duyệt */
+    const { results: pendingItems } = await env.DB.prepare(
+      `SELECT i.*, bp.title plan_title, u.name owner_name, u.is_demo owner_is_demo FROM nv_plan_items i
+       JOIN nv_business_plans bp ON bp.id=i.plan_id JOIN nv_users u ON u.id=bp.owner_id WHERE i.status='pending'`).all();
+    const KIND = { bao_gia: 'Báo giá', hop_dong: 'Hợp đồng', nghiem_thu: 'Nghiệm thu', thanh_ly: 'Thanh lý' };
+    for (const it of pendingItems || []) {
+      const waited = t - (it.submitted_at || it.updated_at || it.created_at);
+      if (waited < 4 * 3600) continue;
+      for (const a of managersFor(it.owner_is_demo).filter(m => m.role === it.approver_role)) {
+        if (await push(a.id, { type: 'approval', title: '🔴 Cần duyệt gấp: ' + it.plan_title, body: `${KIND[it.kind] || it.kind} do ${it.owner_name} trình đã chờ ${Math.floor(waited / 3600)} giờ.`, link: '#/plans/' + it.plan_id, level: 'danger' })) out.urgentApprovals++;
+      }
+    }
+
+    /* 13. BAN GĐ / TP — tóm tắt việc đang chờ mình duyệt lúc 9h và 14h */
+    if (workday && (hourVN === 9 || hourVN === 14)) {
+      for (const m of managers || []) {
+        const ws = m.is_demo ? 1 : 0;
+        const qs = m.role === 'manager' ? 'pending_v1' : 'pending_v2';
+        const nQ = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_quotes q JOIN nv_users u ON u.id=q.owner_id WHERE q.status=? AND u.is_demo=?').bind(qs, ws).first('n')) || 0;
+        const nC = m.role === 'manager' ? Number(await env.DB.prepare("SELECT COUNT(*) n FROM nv_contracts c JOIN nv_users u ON u.id=c.owner_id WHERE c.status='pending_v1' AND u.is_demo=?").bind(ws).first('n')) || 0 : 0;
+        const nP = (pendingItems || []).filter(it => it.approver_role === m.role && !!it.owner_is_demo === !!m.is_demo).length;
+        const total = nQ + nC + nP;
+        if (!total) continue;
+        const parts = [nQ && `${nQ} báo giá`, nC && `${nC} hợp đồng`, nP && `${nP} hạng mục phương án`].filter(Boolean).join(' · ');
+        if (await push(m.id, { type: 'approval', title: `🧾 Việc đang chờ bạn duyệt – mốc ${hourVN}h`, body: `${total} mục: ${parts}. Duyệt sớm để không chặn tiến độ của đội.`, link: '#/plans', level: total >= 5 ? 'danger' : 'warn' })) out.approvalDigest++;
+      }
+    }
+
+    /* 14. BAN GĐ / TP — cảnh báo chỉ số sale lúc 16h ngày làm việc: sales dưới 50% định mức ngày */
+    if (workday && hourVN === 16) {
+      for (const ws of [0, 1]) {
+        const team = salesIn(ws);
+        if (!team.length) continue;
+        const low = [];
+        for (const u of team) { const q = await quotaOf(u); if (q.pct < 50) low.push(`${u.name} ${q.pct}%`); }
+        if (!low.length) continue;
+        for (const m of managersFor(ws)) {
+          if (await push(m.id, { type: 'sales_alert', title: '📉 Cảnh báo chỉ số sale hôm nay', body: `${low.length}/${team.length} sales dưới 50% định mức ngày: ${low.join(', ')}.`, link: '#/console', level: low.length * 2 >= team.length ? 'danger' : 'warn' })) out.salesAlert++;
+        }
+      }
+    }
+
+    /* 15. BAN GĐ / TP — doanh thu tháng chậm tiến độ (9h thứ Hai và ngày 25): đã chốt < 70% mức lẽ
+     * ra phải đạt nếu chia đều mục tiêu tháng theo ngày */
+    const dom = vn.getUTCDate();
+    if (hourVN === 9 && dom >= 5 && (vn.getUTCDay() === 1 || dom === 25)) {
+      const monthStart = Math.floor(Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), 1) / 1000) - 7 * 3600;
+      const daysInMonth = new Date(Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth() + 1, 0)).getUTCDate();
+      for (const ws of [0, 1]) {
+        const team = salesIn(ws);
+        if (!team.length) continue;
+        let target = 0;
+        for (const u of team) target += Number((await getConfig(env, u.id)).target_revenue) || 0;
+        if (!target) continue;
+        const won = Number(await env.DB.prepare("SELECT SUM(d.value) v FROM nv_deals d JOIN nv_users u ON u.id=d.owner_id WHERE d.status='won' AND d.won_at>=? AND u.is_demo=?").bind(monthStart, ws).first('v')) || 0;
+        const expected = target * dom / daysInMonth;
+        if (won >= expected * 0.7) continue;
+        for (const m of managersFor(ws)) {
+          if (await push(m.id, { type: 'sales_alert', title: `📉 Doanh thu tháng chậm tiến độ (ngày ${dom})`, body: `Đã chốt ${fmtMoney(won)} / mục tiêu ${fmtMoney(target)} (${Math.round(won / target * 100)}%) — lẽ ra ~${Math.round(dom / daysInMonth * 100)}% sau ${dom}/${daysInMonth} ngày.`, link: '#/reports', level: 'danger' })) out.revenueAlert++;
+        }
+      }
+    }
+
     await audit(env, null, 'cron_run', 'system', null, out);
     // notify/email rỗng: thông báo đã được ghi thẳng vào nv_notifications ở trên (in-app),
     // không nhờ nền tảng gửi push/email hộ.
@@ -404,6 +574,31 @@ export async function coreRoutes(ctx) {
 
   return null;
 }
+
+/** Định mức NGÀY của một nhân sự (liên hệ mới, cuộc gọi, gặp/demo, follow-up) — dùng chung cho
+ * Cockpit và thông báo tiến độ KPI của Cron để hai nơi luôn ra cùng một con số. */
+async function todayQuota(env, userId, cfg, sod) {
+  // follow-up = hoạt động chăm sóc trên deal/khách ĐÃ có (email/zalo/other gắn deal), tách khỏi gọi & gặp
+  const a = await env.DB.prepare(`SELECT COUNT(*) n,
+      SUM(CASE WHEN type="call" THEN 1 ELSE 0 END) c,
+      SUM(CASE WHEN type IN ("meeting","demo") THEN 1 ELSE 0 END) m,
+      SUM(CASE WHEN type IN ("email","zalo") OR (type="other" AND deal_id IS NOT NULL) THEN 1 ELSE 0 END) f
+    FROM nv_activities WHERE user_id=? AND happened_at>=?`).bind(userId, sod).first();
+  const dc = Number(await env.DB.prepare('SELECT COUNT(*) n FROM nv_daily_contacts WHERE user_id=? AND created_at>=?').bind(userId, sod).first('n')) || 0;
+  const q = {
+    contacts: { done: dc, target: cfg.quota_daily_contacts || 8 },
+    calls: { done: Number(a.c) || 0, target: cfg.quota_calls || 25 },
+    meetings: { done: Number(a.m) || 0, target: cfg.quota_meetings || 2 },
+    followups: { done: Number(a.f) || 0, target: cfg.quota_followups || 10 },
+  };
+  const parts = [q.contacts, q.calls, q.meetings, q.followups];
+  q.pct = Math.round(parts.reduce((s, x) => s + Math.min(1, x.done / (x.target || 1)), 0) / parts.length * 100);
+  q.activities = Number(a.n) || 0;
+  return q;
+}
+
+const fmtHM = (ts) => { const d = new Date((ts + 7 * 3600) * 1000); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+const fmtMoney = (v) => (Math.round((v || 0) / 1e6)).toLocaleString('vi-VN') + ' tr';
 
 function greet() {
   const h = (new Date().getUTCHours() + 7) % 24;

@@ -1,5 +1,5 @@
 import { get, post } from '../api.js';
-import { esc, toast } from '../ui.js';
+import { esc, toast, pwRulesHtml, bindPwRules, bindPwToggles } from '../ui.js';
 import { state } from '../state.js';
 import { icon } from '../icons.js';
 import { BRAND_LOGO } from '../const.js';
@@ -19,7 +19,7 @@ export async function render(el, { id } = {}) {
 
   el.innerHTML = `<div class="login-wrap">
     <div class="login-card">
-      <img class="login-brand" src="${BRAND_LOGO}" alt="NetViet Sales OS">
+      <img class="login-brand" src="${esc(state.settings.brand?.logo || BRAND_LOGO)}" alt="NetViet Sales OS">
       <div data-body class="mt"><p class="sm mut">${tr('Đang kiểm tra…')}</p></div>
     </div>
   </div>`;
@@ -61,10 +61,17 @@ export async function render(el, { id } = {}) {
 function pwForm() {
   return `<form data-setpw-form class="mt">
       <label class="f"><span>${tr('MẬT KHẨU MỚI')}</span>
-        <input name="password" type="password" placeholder="••••••••" autocomplete="new-password" required>
+        <div class="pw-wrap">
+          <input name="password" type="password" placeholder="••••••••" autocomplete="new-password" required>
+          <button type="button" class="pw-toggle" data-toggle-pw aria-label="${tr('Hiện mật khẩu')}">${icon('eye', 16)}</button>
+        </div>
       </label>
+      ${pwRulesHtml()}
       <label class="f"><span>${tr('XÁC NHẬN MẬT KHẨU')}</span>
-        <input name="password2" type="password" placeholder="••••••••" autocomplete="new-password" required>
+        <div class="pw-wrap">
+          <input name="password2" type="password" placeholder="••••••••" autocomplete="new-password" required>
+          <button type="button" class="pw-toggle" data-toggle-pw aria-label="${tr('Hiện mật khẩu')}">${icon('eye', 16)}</button>
+        </div>
       </label>
       <button type="submit" class="btn primary block login-submit mt">${tr('Đặt mật khẩu')}</button>
     </form>`;
@@ -74,10 +81,13 @@ function pwForm() {
 function bindForm(body, onSuccess) {
   const form = body.querySelector('[data-setpw-form]');
   const submitBtn = form.querySelector('.login-submit');
+  bindPwToggles(form);
+  const rulesOk = bindPwRules(form.password, form.querySelector('[data-pw-rules]'));
   form.onsubmit = async (e) => {
     e.preventDefault();
     const password = form.password.value;
     const password2 = form.password2.value;
+    if (!rulesOk()) { toast('Mật khẩu mới chưa đạt đủ các điều kiện bên dưới ô nhập', 'err'); return; }
     if (password !== password2) { toast('Mật khẩu xác nhận không khớp', 'err'); return; }
     submitBtn.disabled = true;
     submitBtn.textContent = tr('Đang lưu…');

@@ -35,7 +35,7 @@ export async function render(el) {
             ${t.completed_at ? chip(fmtDate(t.completed_at), 'grey') : ''}</div></div>
         <div class="right">
           <a class="btn sm blue" href="${esc(t.url)}" target="_blank" rel="noopener" data-watch="${esc(t.id)}">${tr('Xem')}</a>
-          ${t.prog_status !== 'completed' ? `<div class="mt"><button class="btn sm" data-done="${esc(t.id)}">${tr('Hoàn thành')}</button></div>` : ''}
+          ${t.prog_status !== 'completed' ? `<div class="mt"><a class="btn sm" href="#/lo-trinh/${esc(t.id)}">${tr('Làm bài kiểm tra')}</a></div>` : ''}
           ${isLead() ? `<div class="mt"><button class="btn sm" data-assign="${esc(t.id)}">${tr('Giao')}</button></div>` : ''}
         </div></div>`).join('')}</div>`;
     }).join('')}
@@ -49,10 +49,6 @@ export async function render(el) {
   const bind = (d) => {
     el.querySelectorAll('[data-watch]').forEach(b => b.onclick = async () => {
       try { await post('/trainings/progress', { trainingId: b.dataset.watch, status: 'in_progress', progress: 40 }); } catch (e) { /* noop */ }
-    });
-    el.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => {
-      try { await post('/trainings/progress', { trainingId: b.dataset.done, status: 'completed' }); toast('Đã đánh dấu hoàn thành 🎓', 'ok'); render(el); }
-      catch (e) { toast(e.message, 'err'); }
     });
     el.querySelectorAll('[data-assign]').forEach(b => b.onclick = () => modal({
       title: 'Giao khoá học bắt buộc',

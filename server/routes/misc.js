@@ -1,11 +1,40 @@
-import { json, match, need, needAccountManage, uid, now, readBody, isLead, audit, notify, num, str, wsScope, wsBucket, sameWorkspaceUser, requireSameWorkspaceUser, LEAD_ROLES } from '../lib/util.js';
+import { json, match, need, needAccountManage, uid, now, readBody, isLead, audit, notify, num, str, wsScope, wsBucket, sameWorkspaceUser, requireSameWorkspaceUser, LEAD_ROLES, HttpError, scope } from '../lib/util.js';
 import { askAI, AI_TASKS, providerStatus, pickProvider, testProvider, translateToEnglish } from '../lib/ai.js';
 import { getConfig } from '../lib/kpi.js';
-import { vEmail, vPhone, vText, vPassword } from '../lib/validate.js';
+import { vEmail, vPhone, vText, vPassword, vStrongPassword, vEmployeeCode } from '../lib/validate.js';
 import { hashPassword, newSetupToken, hashSetupToken } from '../lib/auth.js';
+import { computeRecord } from '../lib/record.js';
 import { vapidConfigError, sendPushToUser, ensurePushSchema } from '../lib/push.js';
+import { mySetting } from '../lib/settings.js';
 
 const SETUP_TOKEN_TTL = 48 * 3600; // 48 giờ — đủ để nhân sự nhận link qua Zalo/Slack rồi đặt mật khẩu
+
+/** Những gì chuyển sang người nhận bàn giao khi nhân sự nghỉ việc — khớp đúng các câu UPDATE ở /offboard. */
+const HANDOVER_COUNTS = {
+  customers: 'SELECT COUNT(*) n FROM nv_customers WHERE owner_id=?',
+  leads: 'SELECT COUNT(*) n FROM nv_leads WHERE owner_id=?',
+  deals: "SELECT COUNT(*) n FROM nv_deals WHERE owner_id=? AND status='open'",
+  tasks: "SELECT COUNT(*) n FROM nv_tasks WHERE user_id=? AND status!='done'",
+  partners: 'SELECT COUNT(*) n FROM nv_partners WHERE sale_phu_trach_id=?',
+  tenders: "SELECT COUNT(*) n FROM nv_tender_leads WHERE assigned_to=? AND status='new'",
+};
+
+/** Đăng xuất ngay mọi thiết bị, thu hồi khoá API chạy dưới tên người này và link đặt mật khẩu chưa dùng. */
+async function cutAccess(env, userId) {
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM nv_sessions WHERE user_id=?').bind(userId),
+    env.DB.prepare('UPDATE nv_api_keys SET active=0,revoked_at=? WHERE acts_as=? AND active=1').bind(now(), userId),
+    env.DB.prepare('DELETE FROM nv_password_setup_tokens WHERE user_id=? AND used_at IS NULL').bind(userId),
+  ]);
+}
+
+/** Không để workspace mất người cuối cùng có quyền quản lý tài khoản (không ai mở lại được). */
+async function ensureAnotherAccountManager(env, ctx, userId) {
+  const n = Number(await env.DB.prepare(
+    "SELECT COUNT(*) n FROM nv_users WHERE role='admin' AND can_manage_accounts=1 AND active=1 AND deleted_at IS NULL AND is_demo=? AND id!=?")
+    .bind(wsBucket(ctx.me), userId).first('n')) || 0;
+  if (!n) throw new HttpError(400, 'Không thể dừng tài khoản quản trị cuối cùng còn quyền quản lý tài khoản.');
+}
 
 export async function miscRoutes(ctx) {
   const { env, url } = ctx;
@@ -39,9 +68,13 @@ export async function miscRoutes(ctx) {
     const b = await readBody(ctx.request);
     if (!b.trainingId) return json({ error: 'Thiếu bài học' }, 400);
     const t = now();
-    const status = ['assigned', 'in_progress', 'completed'].includes(b.status) ? b.status : 'in_progress';
+    // Hoàn thành bài giảng chỉ qua bài kiểm tra (POST /api/trainings/:id/quiz, đạt ≥ 80%) — không cho tự đánh dấu.
+    if (b.status === 'completed') return json({ error: 'Bài giảng được ghi hoàn thành khi bạn làm bài kiểm tra đạt từ 80% ở mục Lộ trình đào tạo.' }, 409);
+    const status = b.status === 'assigned' ? 'assigned' : 'in_progress';
     const prog = status === 'completed' ? 100 : num(b.progress, 30);
-    const ex = await env.DB.prepare('SELECT id FROM nv_training_progress WHERE user_id=? AND training_id=?').bind(ctx.me.id, String(b.trainingId)).first();
+    const ex = await env.DB.prepare('SELECT id,status FROM nv_training_progress WHERE user_id=? AND training_id=?').bind(ctx.me.id, String(b.trainingId)).first();
+    // Bấm xem lại video của bài đã đạt không được kéo bài đó về "đang học".
+    if (ex && ex.status === 'completed') return json({ ok: true });
     if (ex) await env.DB.prepare('UPDATE nv_training_progress SET status=?,progress=?,completed_at=?,updated_at=? WHERE id=?')
       .bind(status, prog, status === 'completed' ? t : null, t, ex.id).run();
     else await env.DB.prepare('INSERT INTO nv_training_progress (id,user_id,training_id,status,progress,assigned_by,completed_at,updated_at) VALUES (?,?,?,?,?,?,?,?)')
@@ -98,15 +131,26 @@ export async function miscRoutes(ctx) {
     const b = await readBody(ctx.request);
     const prompt = str(b.prompt, 1500) || '';
     if (!prompt && !b.kind) return json({ error: 'Vui lòng nhập nội dung' }, 400);
-    const { results: products } = await env.DB.prepare('SELECT id,name,line,unit,price,commission_rate,max_discount,description FROM nv_products WHERE active=1').all();
+    // Thiết lập AI trợ lý của công ty (Hệ thống › Thiết lập AI trợ lý).
+    const aiCfg = await mySetting(ctx, 'ai');
+    if (!aiCfg.on && ctx.me.role !== 'admin') return json({ error: 'AI trợ lý đang được Ban Giám đốc tạm tắt.' }, 403);
+    const { results: products } = aiCfg.readKit
+      ? await env.DB.prepare('SELECT id,name,line,unit,price,commission_rate,max_discount,description FROM nv_products WHERE active=1').all()
+      : { results: [] };
     let customerName = null;
-    if (b.customerId) customerName = (await env.DB.prepare('SELECT name FROM nv_customers WHERE id=?').bind(String(b.customerId)).first())?.name || null;
+    if (b.customerId && aiCfg.readCrm) {
+      // Chỉ đọc tên khách trong đúng phạm vi dữ liệu của người hỏi (nhân viên chỉ thấy khách của mình).
+      const s = scope(ctx, 'owner_id');
+      customerName = (await env.DB.prepare('SELECT name FROM nv_customers WHERE id=?' + s.sql).bind(String(b.customerId), ...s.args).first())?.name || null;
+    }
+    const provider = b.provider && b.provider !== 'auto' ? b.provider : aiCfg.provider;
     const res = await askAI(env, {
-      kind: b.kind, prompt, provider: b.provider, lang: ctx.request.headers.get('X-Lang'),
+      kind: b.kind, prompt, provider, lang: ctx.request.headers.get('X-Lang'),
       context: { products: products || [], userName: ctx.me.name, customerName, extra: str(b.extra, 800) || null },
     });
+    // Tắt "Lưu lịch sử hỏi đáp" vẫn ghi 1 dòng (để KPI "Dùng AI hỗ trợ" đếm đúng số lần dùng) nhưng bỏ nội dung.
     await env.DB.prepare('INSERT INTO nv_ai_interactions (id,user_id,kind,prompt,response,created_at) VALUES (?,?,?,?,?,?)')
-      .bind(uid('ai'), ctx.me.id, res.kind + (res.mock ? '' : '·' + res.provider), prompt.slice(0, 500), res.text.slice(0, 4000), now()).run();
+      .bind(uid('ai'), ctx.me.id, res.kind + (res.mock ? '' : '·' + res.provider), aiCfg.history ? prompt.slice(0, 500) : '', aiCfg.history ? res.text.slice(0, 4000) : '', now()).run();
     return json({ ...res, providers: providerStatus(env) });
   }
 
@@ -317,7 +361,7 @@ export async function miscRoutes(ctx) {
     need(ctx, LEAD_ROLES);
     // Chỉ liệt kê nhân sự CÙNG workspace (demo/chính thức) với người xem — tài khoản demo (mật
     // khẩu công khai trên màn đăng nhập) không được thấy tên/thông tin nhân sự chính thức thật.
-    const { results } = await env.DB.prepare('SELECT id,name,email,role,title,phone,active,created_at FROM nv_users WHERE is_demo=? ORDER BY role, name').bind(wsBucket(ctx.me)).all();
+    const { results } = await env.DB.prepare('SELECT id,name,email,role,title,phone,active,created_at,status_reason,status_changed_at,deleted_at FROM nv_users WHERE is_demo=? ORDER BY role, name').bind(wsBucket(ctx.me)).all();
     return json({ items: results || [] });
   }
 
@@ -325,6 +369,7 @@ export async function miscRoutes(ctx) {
     needAccountManage(ctx);
     const b = await readBody(ctx.request);
     const uName = vText(b.name, 'Tên nhân sự', { max: 80, required: true, min: 2 });
+    const id = vEmployeeCode(b.code);
     const uEmail = vEmail(b.email);
     // Mật khẩu: cho phép bỏ trống — Admin dùng liên kết thiết lập mật khẩu (setup-link) thay vì
     // tự gõ mật khẩu cho nhân sự, để không phải biết mật khẩu thật của họ.
@@ -333,12 +378,14 @@ export async function miscRoutes(ctx) {
       const dup = await env.DB.prepare('SELECT id FROM nv_users WHERE LOWER(email)=?').bind(uEmail.toLowerCase()).first();
       if (dup) return json({ error: `Email ${uEmail} đã được dùng cho tài khoản khác.` }, 409);
     }
-    const id = uid('u');
+    const dupId = await env.DB.prepare('SELECT id FROM nv_users WHERE UPPER(id)=?').bind(id).first();
+    if (dupId) return json({ error: `Mã nhân viên ${id} đã được dùng cho tài khoản khác.` }, 409);
     const passwordHash = uPassword ? await hashPassword(uPassword) : null;
     // Tài khoản mới kế thừa workspace của người tạo — Admin demo tạo thì vẫn là demo, Admin
     // chính thức tạo thì là chính thức. Không để lẫn 2 workspace ngay từ lúc tạo tài khoản.
-    await env.DB.prepare('INSERT INTO nv_users (id,name,email,role,title,phone,active,created_at,password_hash,is_demo) VALUES (?,?,?,?,?,?,1,?,?,?)')
-      .bind(id, uName, uEmail, ['sales', 'manager', 'admin', 'hr'].includes(b.role) ? b.role : 'sales', str(b.title, 80), vPhone(b.phone), now(), passwordHash, wsBucket(ctx.me)).run();
+    // Admin đặt sẵn mật khẩu → Admin biết mật khẩu đó, nên buộc nhân sự đổi ở lần đăng nhập đầu.
+    await env.DB.prepare('INSERT INTO nv_users (id,name,email,role,title,phone,active,created_at,password_hash,is_demo,must_change_password) VALUES (?,?,?,?,?,?,1,?,?,?,?)')
+      .bind(id, uName, uEmail, ['sales', 'manager', 'admin', 'hr'].includes(b.role) ? b.role : 'sales', str(b.title, 80), vPhone(b.phone), now(), passwordHash, wsBucket(ctx.me), passwordHash ? 1 : 0).run();
     await audit(env, ctx.me.id, 'create', 'user', id, { name: b.name });
     return json({ id });
   }
@@ -355,14 +402,96 @@ export async function miscRoutes(ctx) {
     // chính thức thật (và ngược lại), kể cả khi biết đúng mã nhân viên.
     const u = await requireSameWorkspaceUser(env, ctx, p.id);
     if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
+    if (u.deleted_at) return json({ error: 'Nhân sự đã nghỉ việc — hãy khôi phục trước khi chỉnh sửa.' }, 409);
     // Mật khẩu: bỏ trống = giữ nguyên, có nhập mới = đặt lại
     const newPassword = vPassword(b.password, 'Mật khẩu', { required: false });
     const passwordHash = newPassword ? await hashPassword(newPassword) : u.password_hash;
     const role = ['sales', 'manager', 'admin', 'hr'].includes(b.role) ? b.role : u.role;
     const title = b.title != null ? str(b.title, 80) : u.title;
-    await env.DB.prepare('UPDATE nv_users SET active=?,password_hash=?,role=?,title=? WHERE id=?')
-      .bind(b.active != null ? (b.active ? 1 : 0) : u.active, passwordHash, role, title, p.id).run();
-    await audit(env, ctx.me.id, 'update', 'user', p.id, { passwordReset: !!newPassword });
+    const active = b.active != null ? (b.active ? 1 : 0) : u.active;
+    const statusChanged = active !== Number(u.active);
+    if (statusChanged && !active) {
+      if (p.id === ctx.me.id) return json({ error: 'Bạn không thể tự tạm dừng tài khoản của chính mình.' }, 400);
+      await ensureAnotherAccountManager(env, ctx, p.id);
+    }
+    const reason = statusChanged ? (active ? null : vText(b.reason, 'Lý do tạm dừng', { max: 300, required: true })) : u.status_reason;
+    await env.DB.prepare('UPDATE nv_users SET active=?,password_hash=?,role=?,title=?,status_reason=?,status_changed_at=? WHERE id=?')
+      .bind(active, passwordHash, role, title, reason, statusChanged ? now() : u.status_changed_at, p.id).run();
+    if (statusChanged && !active) await cutAccess(env, p.id);
+    await audit(env, ctx.me.id, statusChanged ? (active ? 'resume_user' : 'suspend_user') : 'update', 'user', p.id,
+      { passwordReset: !!newPassword, ...(statusChanged && !active ? { reason } : {}) });
+    return json({ ok: true });
+  }
+
+  /* --- Nghỉ việc: đếm những gì nhân sự đang giữ để Admin chọn người nhận bàn giao --- */
+  if ((p = match(ctx, 'GET', '/api/users/:id/holdings'))) {
+    needAccountManage(ctx);
+    const u = await requireSameWorkspaceUser(env, ctx, p.id);
+    if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
+    const counts = {};
+    for (const [k, sql] of Object.entries(HANDOVER_COUNTS)) {
+      counts[k] = Number(await env.DB.prepare(sql).bind(p.id).first('n')) || 0;
+    }
+    return json({ counts });
+  }
+
+  /* --- Nghỉ việc = xoá MỀM: chuyển khách/lead/deal đang mở/việc chưa xong/partner sang người nhận
+     bàn giao, cắt mọi quyền truy cập, ẩn khỏi danh sách. Deal đã chốt, hoa hồng, hợp đồng, báo giá
+     và nhật ký giữ nguyên tên người cũ để lịch sử doanh thu & hoa hồng không bị sai lệch. --- */
+  if ((p = match(ctx, 'POST', '/api/users/:id/offboard'))) {
+    needAccountManage(ctx);
+    const b = await readBody(ctx.request);
+    const u = await requireSameWorkspaceUser(env, ctx, p.id);
+    if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
+    if (u.deleted_at) return json({ error: 'Nhân sự này đã được đánh dấu nghỉ việc.' }, 409);
+    if (p.id === ctx.me.id) return json({ error: 'Bạn không thể tự xoá tài khoản của chính mình.' }, 400);
+    await ensureAnotherAccountManager(env, ctx, p.id);
+    const reason = vText(b.reason, 'Lý do nghỉ việc', { max: 300, required: true });
+
+    let held = 0;
+    for (const sql of Object.values(HANDOVER_COUNTS)) held += Number(await env.DB.prepare(sql).bind(p.id).first('n')) || 0;
+    let to = null;
+    if (b.transferTo) {
+      to = await requireSameWorkspaceUser(env, ctx, String(b.transferTo));
+      if (!to || !to.active || to.deleted_at || to.id === p.id) return json({ error: 'Người nhận bàn giao không hợp lệ.' }, 400);
+    } else if (held > 0) {
+      return json({ error: 'Nhân sự này còn khách hàng/deal/công việc đang giữ — vui lòng chọn người nhận bàn giao.' }, 400);
+    }
+
+    const t = now();
+    const stmts = [env.DB.prepare('UPDATE nv_users SET active=0,deleted_at=?,status_reason=?,status_changed_at=? WHERE id=?').bind(t, reason, t, p.id)];
+    if (to) {
+      stmts.push(
+        env.DB.prepare('UPDATE nv_customers SET owner_id=?,updated_at=? WHERE owner_id=?').bind(to.id, t, p.id),
+        env.DB.prepare('UPDATE nv_leads SET owner_id=? WHERE owner_id=?').bind(to.id, p.id),
+        env.DB.prepare("UPDATE nv_deals SET owner_id=?,updated_at=? WHERE owner_id=? AND status='open'").bind(to.id, t, p.id),
+        env.DB.prepare("UPDATE nv_tasks SET user_id=? WHERE user_id=? AND status!='done'").bind(to.id, p.id),
+        env.DB.prepare('UPDATE nv_partners SET sale_phu_trach_id=?,updated_at=? WHERE sale_phu_trach_id=?').bind(to.id, t, p.id),
+        env.DB.prepare("UPDATE nv_tender_leads SET assigned_to=? WHERE assigned_to=? AND status='new'").bind(to.id, p.id),
+      );
+    }
+    await env.DB.batch(stmts);
+    await cutAccess(env, p.id);
+    await env.DB.prepare('DELETE FROM nv_push_subscriptions WHERE user_id=?').bind(p.id).run();
+    if (to && held > 0) {
+      await notify(env, to.id, {
+        type: 'handover', title: `Nhận bàn giao từ ${u.name}`,
+        body: `${u.name} đã nghỉ việc. Khách hàng, deal đang mở và công việc chưa xong đã được chuyển sang bạn.`, link: '#/crm', level: 'warn',
+      });
+    }
+    await audit(env, ctx.me.id, 'offboard_user', 'user', p.id, { reason, transferTo: to ? to.id : null, held });
+    return json({ ok: true });
+  }
+
+  /* --- Khôi phục nhân sự đã nghỉ việc về trạng thái Tạm dừng (Admin tự bấm cho làm lại sau).
+     Những gì đã bàn giao KHÔNG tự chuyển ngược lại. --- */
+  if ((p = match(ctx, 'POST', '/api/users/:id/restore'))) {
+    needAccountManage(ctx);
+    const u = await requireSameWorkspaceUser(env, ctx, p.id);
+    if (!u || !u.deleted_at) return json({ error: 'Không tìm thấy nhân sự đã nghỉ việc' }, 404);
+    await env.DB.prepare('UPDATE nv_users SET deleted_at=NULL,status_reason=?,status_changed_at=? WHERE id=?')
+      .bind('Khôi phục sau khi nghỉ việc', now(), p.id).run();
+    await audit(env, ctx.me.id, 'restore_user', 'user', p.id, {});
     return json({ ok: true });
   }
 
@@ -373,9 +502,17 @@ export async function miscRoutes(ctx) {
     const u = await requireSameWorkspaceUser(env, ctx, p.id);
     if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
     const profile = await env.DB.prepare(
-      'SELECT id,name,email,role,title,phone,birth_date,id_number,id_expiry,address,school,emergency_contact FROM nv_users WHERE id=?')
+      'SELECT id,name,email,role,title,phone,gender,birth_date,id_number,id_issue_date,id_issue_place,id_expiry,address,school,education_level,emergency_contact,sales_experience,past_positions FROM nv_users WHERE id=?')
       .bind(p.id).first();
     return json({ profile });
+  }
+
+  /* --- Admin xem Thành tích & Vi phạm của nhân sự — tính trực tiếp từ dữ liệu Sales OS, chỉ đọc. --- */
+  if ((p = match(ctx, 'GET', '/api/users/:id/record'))) {
+    needAccountManage(ctx);
+    const u = await requireSameWorkspaceUser(env, ctx, p.id);
+    if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
+    return json(await computeRecord(env, u));
   }
 
   /* ---- Liên kết thiết lập mật khẩu (dùng 1 lần) ----
@@ -387,6 +524,7 @@ export async function miscRoutes(ctx) {
     // nếu không, Admin demo (mật khẩu công khai) có thể tự cấp mật khẩu mới để CHIẾM tài khoản thật.
     const u = await requireSameWorkspaceUser(env, ctx, p.id);
     if (!u) return json({ error: 'Không tìm thấy người dùng' }, 404);
+    if (u.deleted_at) return json({ error: 'Nhân sự đã nghỉ việc — không cấp liên kết đặt mật khẩu.' }, 409);
     const b = await readBody(ctx.request);
     const purpose = b.purpose === 'reset' ? 'reset' : 'invite';
     const token = newSetupToken();
@@ -414,7 +552,7 @@ export async function miscRoutes(ctx) {
       'SELECT user_id, purpose, expires_at, used_at FROM nv_password_setup_tokens WHERE token_hash=?').bind(tokenHash).first();
     if (!row || row.used_at || Number(row.expires_at) < now()) return setupTokenErr();
     const b = await readBody(ctx.request);
-    const password = vPassword(b.password, 'Mật khẩu', { required: true });
+    const password = vStrongPassword(b.password, 'Mật khẩu');
     const passwordHash = await hashPassword(password);
     const t = now();
     await env.DB.prepare('UPDATE nv_users SET password_hash=? WHERE id=?').bind(passwordHash, row.user_id).run();

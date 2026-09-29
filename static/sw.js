@@ -17,7 +17,7 @@
  * lựa chọn bắt buộc: cache-first sẽ khiến người dùng chạy code cũ sau mỗi lần deploy.
  */
 
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = `nv-static-${VERSION}`;
 
 /* Vỏ app: đủ để mở được giao diện khi mất mạng. Không có dữ liệu người dùng nào ở đây —
@@ -41,7 +41,9 @@ const SHELL = [
   '/src/views/pipeline.js', '/src/views/activity.js', '/src/views/tasks.js', '/src/views/reports.js',
   '/src/views/kpi.js', '/src/views/ai.js', '/src/views/prospect.js', '/src/views/saleskit.js',
   '/src/views/console.js', '/src/views/training.js', '/src/views/admin.js', '/src/views/more.js',
-  '/src/views/profile.js', '/src/views/plans.js',
+  '/src/views/profile.js', '/src/views/plans.js', '/src/views/notifications.js',
+  '/src/views/lotrinh.js', '/src/views/cautruc.js', '/src/views/phanquyen.js', '/src/views/aisetup.js',
+  '/src/i18n.js', '/src/autoTranslate.js', '/src/sound.js', '/src/viet.js', '/src/perm.js', '/src/charts.js', '/src/dash.js',
 ];
 
 /* Điều hướng: mạng quá chậm (sóng yếu) thì sau chừng này ms lấy vỏ đã cache thay vì màn trắng chờ

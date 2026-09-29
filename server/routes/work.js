@@ -149,6 +149,16 @@ function canViewReports(me, target) {
   return (REPORT_VISIBLE_ROLES[me.role] || []).includes(target.role);
 }
 
+/* Mức độ công việc người dùng chọn được. "Quá hạn" không nằm đây — tính từ hạn lúc hiển thị. */
+const TASK_LEVELS = ['gap', 'quan_trong', 'binh_thuong', 'tam_dung', 'ke_hoach'];
+/* Mức độ → cột priority cũ, để sắp xếp, cảnh báo và báo cáo đang dựa trên priority vẫn đúng. */
+const LEVEL_PRIORITY = { gap: 'high', quan_trong: 'medium', binh_thuong: 'low', ke_hoach: 'low', tam_dung: null };
+/** Chỉ giữ đường dẫn http(s) hợp lệ, tối đa 20 cái — không lưu javascript:/data: để tránh XSS khi bấm. */
+function cleanLinks(v) {
+  return (Array.isArray(v) ? v : []).map(x => String(x || '').trim()).filter(x => /^https?:\/\/\S+$/i.test(x) && x.length <= 500).slice(0, 20);
+}
+function parseLinks(v) { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+
 export async function workRoutes(ctx) {
   const { env, url } = ctx;
   let p;
@@ -157,12 +167,14 @@ export async function workRoutes(ctx) {
   if ((p = match(ctx, 'GET', '/api/tasks'))) {
     need(ctx);
     const s = scope(ctx, 't.user_id');
-    const { results } = await env.DB.prepare(`SELECT t.*, u.name user_name, a.name assigner_name, d.title deal_title
+    const { results } = await env.DB.prepare(`SELECT t.*, u.name user_name, a.name assigner_name, d.title deal_title,
+        (SELECT COUNT(*) FROM nv_task_files f WHERE f.task_id=t.id) file_count
       FROM nv_tasks t LEFT JOIN nv_users u ON u.id=t.user_id LEFT JOIN nv_users a ON a.id=t.assigner_id LEFT JOIN nv_deals d ON d.id=t.deal_id
       WHERE 1=1${s.sql} ORDER BY CASE t.status WHEN 'done' THEN 2 ELSE 1 END, CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.due_at`).bind(...s.args).all();
     const t = now();
     const items = (results || []).map(x => ({
       ...x,
+      links: parseLinks(x.links),
       overdue: x.status !== 'done' && x.due_at && x.due_at < t,
       acceptOverdue: !!x.assigner_id && !x.accepted_at && x.status !== 'done' && (t - x.created_at) > (x.accept_sla_min || 120) * 60,
     }));
@@ -183,13 +195,21 @@ export async function workRoutes(ctx) {
     // vCount trả 0 cho cả "không nhập" lẫn "nhập 0" — dùng `!= null` để phân biệt "0 phút" (nhận
     // ngay) khỏi "không nhập" (dùng SLA mặc định), tránh `|| default` âm thầm ghi đè giá trị 0 hợp lệ.
     const acceptSla = b.acceptSlaMin != null ? vCount(b.acceptSlaMin, 'SLA nhận việc', { max: 10080 }) : (cfg.task_accept_sla_min || 120);
-    await env.DB.prepare('INSERT INTO nv_tasks (id,user_id,assigner_id,title,detail,type,priority,status,deal_id,customer_id,due_at,accept_sla_min,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    const level = TASK_LEVELS.includes(b.level) ? b.level : null;
+    // Việc giao cho người khác luôn là "Được giao"; việc tự tạo là "CV thường" hoặc "Đề xuất".
+    const source = isAssignment ? 'duoc_giao' : b.source === 'de_xuat' ? 'de_xuat' : 'cv_thuong';
+    const priority = level && LEVEL_PRIORITY[level] ? LEVEL_PRIORITY[level] : ['high', 'medium', 'low'].includes(b.priority) ? b.priority : 'medium';
+    await env.DB.prepare('INSERT INTO nv_tasks (id,user_id,assigner_id,title,detail,type,priority,status,deal_id,customer_id,due_at,accept_sla_min,created_at,level,source,links) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .bind(id, assignTo, isAssignment ? ctx.me.id : null, taskTitle, str(b.detail, 800), isAssignment ? 'assignment' : 'task',
-        ['high', 'medium', 'low'].includes(b.priority) ? b.priority : 'medium', 'todo', str(b.dealId, 40), str(b.customerId, 40),
-        vFutureTs(b.dueAt, t + DAY, 'Hạn xử lý'), acceptSla, t).run();
+        priority, 'todo', str(b.dealId, 40), str(b.customerId, 40),
+        vFutureTs(b.dueAt, t + DAY, 'Hạn xử lý'), acceptSla, t, level, source, JSON.stringify(cleanLinks(b.links))).run();
     if (isAssignment) {
       await notify(env, assignTo, { type: 'assignment', title: '📌 Bạn được giao việc mới', body: taskTitle, link: '#/tasks', level: 'warn' });
       await audit(env, ctx.me.id, 'assign_task', 'task', id, { to: assignTo });
+    } else if (source === 'de_xuat' && !isLead(ctx.me)) {
+      // Việc ĐỀ XUẤT: nhân viên tự đề xuất việc cần làm — báo cấp quản lý cùng workspace để nắm.
+      const { results: mgrs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='manager' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
+      for (const m of mgrs || []) await notify(env, m.id, { type: 'assignment', title: `💡 ${ctx.me.name} đề xuất công việc`, body: taskTitle, link: '#/tasks', level: 'info' });
     }
     return json({ id });
   }
@@ -213,11 +233,18 @@ export async function workRoutes(ctx) {
     }
     const status = ['todo', 'in_progress', 'done'].includes(b.status) ? b.status : task.status;
     const accepted = b.accept ? (task.accepted_at || t) : task.accepted_at;
-    await env.DB.prepare('UPDATE nv_tasks SET status=?,accepted_at=?,done_at=?,detail=?,priority=?,due_at=? WHERE id=?')
+    // Phân loại (mức độ / loại việc) và đường dẫn đính kèm — chỉ ghi khi có trong body.
+    const level = b.level !== undefined ? (TASK_LEVELS.includes(b.level) ? b.level : null) : task.level;
+    // Loại "Được giao" gắn với việc có người giao — không đổi qua lại bằng tay.
+    const source = task.assigner_id ? 'duoc_giao' : ['cv_thuong', 'de_xuat'].includes(b.source) ? b.source : task.source;
+    const links = b.links !== undefined ? JSON.stringify(cleanLinks(b.links)) : task.links;
+    const priority = b.level !== undefined && level && LEVEL_PRIORITY[level] ? LEVEL_PRIORITY[level]
+      : ['high', 'medium', 'low'].includes(b.priority) ? b.priority : task.priority;
+    await env.DB.prepare('UPDATE nv_tasks SET status=?,accepted_at=?,done_at=?,detail=?,priority=?,due_at=?,level=?,source=?,links=? WHERE id=?')
       .bind(status, accepted, status === 'done' ? (task.done_at || t) : null,
         b.detail != null ? str(b.detail, 800) : task.detail,
-        ['high', 'medium', 'low'].includes(b.priority) ? b.priority : task.priority,
-        b.dueAt != null ? num(b.dueAt, task.due_at) : task.due_at, p.id).run();
+        priority,
+        b.dueAt != null ? num(b.dueAt, task.due_at) : task.due_at, level, source, links, p.id).run();
     // Việc được giao: mọi thay đổi báo cho BÊN KIA (người giao ↔ người nhận), không tự báo cho chính
     // người thao tác. Việc tự tạo (không có assigner_id) không phát thông báo. Mỗi lần PATCH gửi tối đa
     // 1 thông báo, ưu tiên: hoàn thành > nhận việc > đổi trạng thái > sửa nội dung.
@@ -227,7 +254,8 @@ export async function workRoutes(ctx) {
       const link = byAssignee ? '#/console' : '#/tasks';
       const changed = [];
       if (b.detail != null && str(b.detail, 800) !== task.detail) changed.push('mô tả');
-      if (['high', 'medium', 'low'].includes(b.priority) && b.priority !== task.priority) changed.push('ưu tiên');
+      if (priority !== task.priority || level !== task.level) changed.push('mức độ');
+      if (links !== task.links) changed.push('tài liệu đính kèm');
       if (b.dueAt != null && num(b.dueAt, task.due_at) !== task.due_at) changed.push('hạn');
       let msg = null;
       if (status === 'done' && task.status !== 'done') {
@@ -252,7 +280,12 @@ export async function workRoutes(ctx) {
     const task = await env.DB.prepare('SELECT * FROM nv_tasks WHERE id=?' + s.sql).bind(p.id, ...s.args).first();
     if (!task) return json({ error: 'Không tìm thấy công việc' }, 404);
     if (task.assigner_id && !isLead(ctx.me)) return json({ error: 'Việc do cấp trên giao — bạn không thể xoá. Hãy nêu lý do hoàn trả.' }, 403);
-    await env.DB.prepare('DELETE FROM nv_tasks WHERE id=?').bind(p.id).run();
+    const { results: files } = await env.DB.prepare('SELECT r2_key FROM nv_task_files WHERE task_id=?').bind(p.id).all();
+    for (const f of files || []) { try { await env.DOCS.delete(f.r2_key); } catch (e) { /* file đã mất — vẫn xoá việc */ } }
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM nv_task_files WHERE task_id=?').bind(p.id),
+      env.DB.prepare('DELETE FROM nv_tasks WHERE id=?').bind(p.id),
+    ]);
     if (task.assigner_id && task.user_id !== ctx.me.id) {
       await notify(env, task.user_id, { type: 'assignment', title: '🗑️ Việc được giao đã bị huỷ', body: task.title, link: '#/tasks', level: 'warn' });
     }
@@ -505,7 +538,7 @@ export async function workRoutes(ctx) {
       const r = await env.DB.prepare("SELECT id,name,role,title FROM nv_users WHERE active=1 AND is_demo=? AND id!=? ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, name").bind(bucket, ctx.me.id).all();
       monitorUsers = r.results || [];
     } else if (ctx.me.role === 'admin') {
-      // Admin nghiệp vụ (không toàn quyền, vd HUONGNT/DUCHT): đội sales như cũ + các Trưởng
+      // Admin nghiệp vụ (không toàn quyền, vd DUCHT): đội sales như cũ + các Trưởng
       // phòng, để theo dõi thêm hoạt động của cấp quản lý (vd DUCNH).
       const r = await env.DB.prepare("SELECT id,name,role,title FROM nv_users WHERE active=1 AND is_demo=? AND role IN ('sales','manager') ORDER BY CASE role WHEN 'manager' THEN 0 ELSE 1 END, name").bind(bucket).all();
       monitorUsers = r.results || [];

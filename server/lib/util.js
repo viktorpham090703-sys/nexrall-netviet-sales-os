@@ -146,18 +146,30 @@ export async function audit(env, userId, action, entity, entityId, meta) {
   } catch (e) { console.error('audit', e); }
 }
 
+/* Nhãn LOẠI thông báo hiện trên màn hình khoá. Push chỉ nói "loại việc gì, gấp cỡ nào" — không kèm tên
+ * khách/deal/số tiền, vì màn hình khoá ai đứng cạnh cũng đọc được; chi tiết chỉ hiện khi mở app. */
+const PUSH_LABEL = {
+  product: 'Đề xuất thêm sản phẩm / dịch vụ', approval: 'Có việc cần bạn duyệt', sla: 'Cảnh báo SLA deal', task: 'Công việc sắp / đã quá hạn',
+  assignment: 'Công việc được giao', report: 'Nhắc nộp báo cáo', tender: 'Hạn nộp hồ sơ thầu',
+  pip: 'Mốc PIP', kpi: 'Tiến độ KPI hôm nay', meeting: 'Lịch làm việc với khách', deal: 'Deal cần chú ý',
+  sales_alert: 'Cảnh báo chỉ số sale', plan: 'Phương án kinh doanh', customer: 'Khách hàng',
+  handover: 'Nhận bàn giao công việc', training: 'Đào tạo',
+};
+
 export async function notify(env, userId, { type, title, body, link, level }) {
+  const id = uid('nt');
   await env.DB.prepare('INSERT INTO nv_notifications (id,user_id,type,title,body,link,level,read,created_at) VALUES (?,?,?,?,?,?,?,0,?)')
-    .bind(uid('nt'), userId, type || 'info', title, body || null, link || null, level || 'info', now()).run();
-  // This is the single notification fan-out point used by Admin, Sales and HCNS flows.
-  // The push copy stays generic because it can be displayed on an unlocked/locked device screen;
-  // full business context is available only after the recipient opens the in-app notification.
+    .bind(id, userId, type || 'info', title, body || null, link || null, level || 'info', now()).run();
+  // Điểm phát thông báo DUY NHẤT cho mọi luồng (Admin, Sales, HCNS, Cron) → mọi thông báo đều đẩy tới
+  // điện thoại & máy tính đã bật. Chạm vào thông báo mở đúng mục đó ở trang Thông báo (đánh dấu đã đọc
+  // rồi chuyển tới màn liên quan).
   try {
+    const urgent = level === 'danger';
     await sendPushToUser(env, userId, {
-      title: 'NetViet Sales OS',
-      body: 'Bạn có một thông báo mới cần xử lý.',
-      link,
-      tag: `salesos-${type || 'info'}`,
+      title: `${urgent ? '🔴 ' : level === 'warn' ? '⚠️ ' : ''}${PUSH_LABEL[type] || 'Thông báo mới'}`,
+      body: urgent ? 'Cần xử lý ngay — mở NetViet Sales OS để xem chi tiết.' : 'Mở NetViet Sales OS để xem chi tiết.',
+      link: '#/thong-bao/' + id,
+      tag: `salesos-${id}`,
     });
   } catch (e) { /* Push must never block the corresponding business action. */ }
 }

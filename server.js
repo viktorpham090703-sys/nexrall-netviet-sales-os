@@ -9,13 +9,17 @@ import { documentRoutes } from './server/routes/documents.js';
 import { planRoutes } from './server/routes/plans.js';
 import { gatewayRoutes, apiKeyRoutes } from './server/routes/gateway.js';
 import { resolveActor } from './server/lib/auth.js';
+import { enforcePermissions } from './server/lib/perm.js';
+import { systemRoutes } from './server/routes/system.js';
 
-const ROUTERS = [coreRoutes, crmRoutes, dealRoutes, workRoutes, miscRoutes, documentRoutes, planRoutes, apiKeyRoutes];
+const ROUTERS = [coreRoutes, crmRoutes, dealRoutes, workRoutes, miscRoutes, documentRoutes, planRoutes, systemRoutes, apiKeyRoutes];
 export const SCHEMA_NS = 'nv_'; // bảng của app dùng tiền tố nv_ (tách khỏi schema cũ)
 
 /** Chạy lần lượt các router cho tới khi có router trả Response. Tách hàm để cổng API (/api/v1/*)
  * dùng lại được ĐÚNG bộ router này sau khi đã viết lại đường dẫn và danh tính. */
 async function runRouters(ctx) {
+  // Phân quyền theo tính năng / thao tác (Hệ thống › Phân quyền) — chỉ thu hẹp, không mở rộng quyền.
+  await enforcePermissions(ctx);
   for (const r of ROUTERS) {
     const res = await r(ctx);
     if (res) return res;

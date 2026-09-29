@@ -85,3 +85,44 @@ export const get = (p) => api(p);
 export const post = (p, body) => api(p, { method: 'POST', body });
 export const patch = (p, body) => api(p, { method: 'PATCH', body });
 export const del = (p) => api(p, { method: 'DELETE' });
+export const put = (p, body) => api(p, { method: 'PUT', body });
+
+/**
+ * Tải một tệp từ API về máy. Không dùng thẳng <a href="/api/...">: thẻ <a> không gửi được header
+ * Authorization nên máy chủ sẽ coi là chưa đăng nhập. Tải bằng fetch có token rồi lưu qua blob.
+ */
+export async function downloadFile(path, filename) {
+  const headers = {};
+  const tok = sessionToken();
+  if (tok) headers.Authorization = 'Bearer ' + tok;
+  const res = await fetch('/api' + path, { headers });
+  if (!res.ok) {
+    let msg = 'Không tải được tệp';
+    try { msg = (await res.json()).error || msg; } catch (e) { /* không phải JSON */ }
+    throw new Error(msg);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url; a.download = filename || 'tai-lieu';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/** Đọc File thành chuỗi base64 (không kèm tiền tố data:) để gửi qua API JSON. */
+export function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).replace(/^data:[^;]*;base64,/, ''));
+    r.onerror = () => reject(new Error('Không đọc được tệp'));
+    r.readAsDataURL(file);
+  });
+}
+
+/* Một số hệ điều hành không điền File.type cho tệp Office — suy từ đuôi tệp. */
+const EXT_MIME = {
+  pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', txt: 'text/plain', csv: 'text/csv', zip: 'application/zip',
+};
+export const mimeOf = (file) => file.type || EXT_MIME[(file.name.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';

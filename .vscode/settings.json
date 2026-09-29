@@ -9,6 +9,6 @@
     ".wrangler": true,
     "node_modules": true
   },
-  "javascript.preferences.importModuleSpecifierEnding": "js",
+  "js/ts.preferences.importModuleSpecifierEnding": "js",
   "files.eol": "\n"
 }

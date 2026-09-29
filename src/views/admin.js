@@ -1,12 +1,17 @@
 import { get, post, patch, del } from '../api.js';
 import { state, isAdmin, canManageAccounts, salesUsers, applyUserRole } from '../state.js';
 import { esc, mount, chip, toast, modal, stat, bindTabs, confirmDialog, fmtDT, refreshShellRole } from '../ui.js';
-import { roleLabel } from '../const.js';
+import { roleLabel, LEADERSHIP_IDS } from '../const.js';
 import { providers, testProvider, getProvider, setProvider, providerIconName } from '../aiPref.js';
 import { icon } from '../icons.js';
 import { t as tr, tf, personName } from '../i18n.js';
+import { recordSection } from './profile.js';
 
 let tab = 'users';
+
+/** "Chức vụ & kinh nghiệm" — nhân sự tự khai ở trang Hồ sơ; Quản trị chỉ xem. */
+const EXP_FIELDS = [['sales_experience', 'Kinh nghiệm sale'], ['past_positions', 'Chức vụ đã đảm nhiệm']];
+const ROLE_OPTIONS = [{ v: 'sales', n: 'Sales' }, { v: 'manager', n: 'Trưởng phòng' }, { v: 'admin', n: 'Admin/BGĐ' }, { v: 'hr', n: 'Hành chính nhân sự' }];
 
 const CFG_LABELS = {
   quota_daily_contacts: 'Định mức liên hệ mới/ngày',
@@ -35,9 +40,13 @@ export async function render(el) {
       get('/users'), get('/config'), providers(true),
       canManageAccounts() ? get('/api-keys').catch(() => ({ items: [], allowlist: [] })) : Promise.resolve({ items: [], allowlist: [] }),
     ]);
-    // HAUNV là TGĐ kiêm Admin toàn quyền — luôn ghim lên đầu danh sách người dùng.
-    const users = (u.items || []).slice().sort((a, b) => (a.id === 'HAUNV' ? -1 : b.id === 'HAUNV' ? 1 : 0));
-    return { users, cfg: c, ai, keys: keys.items || [], allowlist: keys.allowlist || [] };
+    // Ban TGĐ (HUONGNT, HAUNV — ngang cấp) luôn ghim lên đầu danh sách người dùng.
+    const rank = (x) => { const i = LEADERSHIP_IDS.indexOf(x.id); return i < 0 ? LEADERSHIP_IDS.length : i; };
+    const users = (u.items || []).slice().sort((a, b) => rank(a) - rank(b));
+    return {
+      users, staff: users.filter(x => !x.deleted_at), left: users.filter(x => x.deleted_at),
+      cfg: c, ai, keys: keys.items || [], allowlist: keys.allowlist || [],
+    };
   };
 
   const draw = (d) => `<div class="page-head">
@@ -45,7 +54,7 @@ export async function render(el) {
   </div>
 
   <div class="grid g3 mb">
-    ${stat('Người dùng', d.users.length, d.users.filter(u => u.role === 'sales').length + ' sales', 'blue')}
+    ${stat('Người dùng', d.staff.length, d.staff.filter(u => u.role === 'sales').length + ' sales', 'blue')}
     ${stat('Cấu hình', d.cfg.rows.length, tr('Global + theo từng sales'), 'amber')}
   </div>
 
@@ -73,18 +82,36 @@ export async function render(el) {
 
   ${tab === 'users' ? `${canManageAccounts() ? `<button class="btn block mb" data-adduser>+ ${tr('Thêm người dùng')}</button>` : ''}
     ${isAdmin() && !canManageAccounts() ? `<div class="card mb"><div class="sm mut">${icon('lock', 14)} ${tr('Tài khoản Admin của bạn chỉ xem, không được thêm/khoá tài khoản hay đổi mật khẩu nhân sự khác.')}</div></div>` : ''}
-    <div class="card">${d.users.map(u => `<div class="item">
+    <div class="card">${d.staff.map(u => {
+      const self = state.me && state.me.id === u.id;
+      return `<div class="item">
       <div class="dot-i">${icon(u.role === 'admin' ? 'shieldCheck' : u.role === 'manager' ? 'award' : 'user')}</div>
-      <div class="grow"><div class="t">${esc(personName(u.name))}</div>
-        <div class="d">${esc(roleLabel(u))} · ${esc(u.email || '')}</div></div>
-      <div class="right">${chip(u.active ? 'Hoạt động' : 'Khoá', u.active ? 'green' : 'red')}
-        ${canManageAccounts() ? `<div class="mt row" style="gap:6px">
-          <button class="btn sm" data-viewprofile="${esc(u.id)}">${tr('Xem hồ sơ')}</button>
-          <button class="btn sm" data-editrole="${esc(u.id)}">${tr('Vai trò & chức danh')}</button>
-          <button class="btn sm" data-togglestatus="${esc(u.id)}" data-active="${u.active ? '1' : ''}" data-name="${esc(u.name)}">${u.active ? tr('Khoá') : tr('Kích hoạt')}</button>
+      <div class="grow"><div class="t">${esc(personName(u.name))} <span class="xs mut">· ${esc(u.id)}</span></div>
+        <div class="d">${esc(roleLabel(u))} · ${esc(u.email || '')}</div>
+        ${!u.active && u.status_reason ? `<div class="d xs" style="color:var(--danger)">${icon('lock', 12)} ${tr('Lý do tạm dừng')}: ${esc(u.status_reason)}${u.status_changed_at ? ' · ' + fmtDT(u.status_changed_at) : ''}</div>` : ''}</div>
+      <div class="right">${chip(u.active ? 'Hoạt động' : 'Tạm dừng', u.active ? 'green' : 'amber')}
+        ${canManageAccounts() ? `<div class="mt row" style="gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn sm" data-viewprofile="${esc(u.id)}">${tr('Hồ sơ')}</button>
+          ${self ? '' : `<button class="btn sm" data-togglestatus="${esc(u.id)}" data-active="${u.active ? '1' : ''}" data-name="${esc(u.name)}">${u.active ? tr('Tạm dừng công việc') : tr('Cho làm việc lại')}</button>`}
           <button class="btn sm" data-resetlink="${esc(u.id)}" data-name="${esc(u.name)}">${tr('Tạo liên kết đặt lại mật khẩu')}</button>
+          ${self ? '' : `<button class="btn sm danger-o" data-offboard="${esc(u.id)}">${icon('trash2', 13)} ${tr('Xoá (nghỉ việc)')}</button>`}
         </div>` : ''}</div>
-    </div>`).join('')}</div>` : ''}
+    </div>`;
+    }).join('')}</div>
+    ${canManageAccounts() && d.left.length ? `<details class="card mt">
+      <summary class="b sm" style="cursor:pointer">${tr('Đã nghỉ việc')} (${d.left.length})</summary>
+      ${d.left.map(u => `<div class="item">
+        <div class="dot-i">${icon('user')}</div>
+        <div class="grow"><div class="t">${esc(personName(u.name))} <span class="xs mut">· ${esc(u.id)}</span></div>
+          <div class="d">${esc(roleLabel(u))} · ${tr('Nghỉ từ')} ${fmtDT(u.deleted_at)}</div>
+          ${u.status_reason ? `<div class="d xs">${tr('Lý do')}: ${esc(u.status_reason)}</div>` : ''}</div>
+        <div class="right">${chip('Đã nghỉ việc', 'grey')}
+          <div class="mt row" style="gap:6px;justify-content:flex-end">
+            <button class="btn sm" data-viewprofile="${esc(u.id)}">${tr('Xem hồ sơ')}</button>
+            <button class="btn sm" data-restore="${esc(u.id)}" data-name="${esc(u.name)}">${tr('Khôi phục')}</button>
+          </div></div>
+      </div>`).join('')}
+    </details>` : ''}` : ''}
 
   ${tab === 'config' ? `<button class="btn block mb" data-addcfg>+ ${tr('Đặt ngưỡng (global hoặc theo sales)')}</button>
     <div class="card scroll-x"><table class="tbl">
@@ -120,10 +147,12 @@ export async function render(el) {
     const au = el.querySelector('[data-adduser]');
     if (au) au.onclick = () => modal({
       title: 'Thêm người dùng',
-      fields: [{ name: 'name', label: 'Họ tên', required: true }, { name: 'email', label: 'Email' },
-      { name: 'role', label: 'Vai trò', type: 'select', options: [{ v: 'sales', n: 'Sales' }, { v: 'manager', n: 'Trưởng phòng' }, { v: 'admin', n: 'Admin/BGĐ' }, { v: 'hr', n: 'Hành chính nhân sự' }] },
+      fields: [{ name: 'name', label: 'Họ tên', required: true },
+      { name: 'code', label: 'Mã nhân viên', required: true, placeholder: 'VD: THUYDT', hint: 'Dùng để đăng nhập thay cho email. Chỉ gồm chữ không dấu, số, dấu . _ -' },
+      { name: 'email', label: 'Email' },
+      { name: 'role', label: 'Vai trò', type: 'select', options: ROLE_OPTIONS },
       { name: 'title', label: 'Chức danh' },
-      { name: 'password', label: 'Mật khẩu đăng nhập', type: 'password', hint: 'Bỏ trống để tạo liên kết thiết lập mật khẩu — nhân sự tự đặt mật khẩu, bạn sẽ không biết mật khẩu của họ (khuyến nghị).' }],
+      { name: 'password', label: 'Mật khẩu đăng nhập', type: 'password', hint: 'Nếu nhập, nhân sự sẽ phải đổi sang mật khẩu mới ở lần đăng nhập đầu tiên. Bỏ trống để tạo liên kết thiết lập mật khẩu — nhân sự tự đặt mật khẩu, bạn sẽ không biết mật khẩu của họ (khuyến nghị).' }],
       onSubmit: async (v) => {
         const noPassword = !v.password;
         if (noPassword) delete v.password;
@@ -138,64 +167,119 @@ export async function render(el) {
       },
     });
     el.querySelectorAll('[data-viewprofile]').forEach(b => b.onclick = async () => {
+      const u = d.users.find(x => x.id === b.dataset.viewprofile);
+      const editable = !u.deleted_at;
       try {
-        const { profile: pr } = await get('/users/' + b.dataset.viewprofile + '/profile');
+        const [{ profile: pr }, rec] = await Promise.all([get('/users/' + u.id + '/profile'), get('/users/' + u.id + '/record').catch(() => null)]);
         modal({
           title: tf(() => 'Hồ sơ nhân sự — ' + pr.name, () => 'Profile — ' + personName(pr.name)),
           titleIcon: 'user',
           wide: true,
-          html: `<div class="grid g3">
+          html: `<div class="hr-profile"><div class="grid g4">
             ${profileRow(tr('Mã nhân viên'), esc(pr.id))}
             ${profileRow(tr('Họ và tên'), esc(pr.name))}
             ${profileRow('Email', esc(pr.email || '—'))}
             ${profileRow(tr('Số điện thoại'), esc(pr.phone || '—'))}
+            ${profileRow(tr('Giới tính'), tr({ nam: 'Nam', nu: 'Nữ', khac: 'Khác' }[pr.gender] || '—'))}
             ${profileRow(tr('Ngày sinh'), fmtDateStr(pr.birth_date))}
             ${profileRow(tr('Số CCCD'), esc(pr.id_number || '—'))}
+            ${profileRow(tr('Ngày cấp'), fmtDateStr(pr.id_issue_date))}
+            ${profileRow(tr('Nơi cấp'), esc(pr.id_issue_place || '—'))}
             ${profileRow(tr('Hạn CCCD'), fmtDateStr(pr.id_expiry))}
             ${profileRow(tr('Địa chỉ liên hệ'), esc(pr.address || '—'))}
+            ${profileRow(tr('Trình độ học vấn'), esc(pr.education_level ? tr(pr.education_level) : '—'))}
             ${profileRow(tr('Trường học'), esc(pr.school || '—'))}
           </div>
           <div class="mt">${profileRow(tr('Liên hệ khẩn cấp'), esc(pr.emergency_contact || '—'))}</div>
-          <div class="sm mut mt">${icon('lock', 13)} ${tr('Hồ sơ do chính nhân sự tự khai và tự sửa — Admin chỉ xem, không sửa được ở đây.')}</div>`,
-          submitText: 'Đóng',
-          onSubmit: () => {},
+          <div class="sm mut mt">${icon('lock', 13)} ${tr('Hồ sơ do chính nhân sự tự khai và tự sửa — Admin chỉ xem, không sửa được ở đây.')}</div>
+          ${editable ? `<div class="b sm mt" style="border-top:1px solid var(--line);padding-top:12px">${icon('award', 14)} ${tr('Vai trò & chức danh')}</div>
+          <div class="grid g2 mt">
+            <label class="f"><span>${tr('Vai trò')}</span><select name="role">${ROLE_OPTIONS.map(o =>
+              `<option value="${o.v}" ${o.v === u.role ? 'selected' : ''}>${esc(tr(o.n))}</option>`).join('')}</select></label>
+            <label class="f"><span>${tr('Chức danh / Chức vụ')}</span><input name="title" value="${esc(u.title || '')}"></label>
+          </div>
+          ` : `<div class="sm mt">${tr('Vai trò')}: <b>${esc(roleLabel(u))}</b></div>`}
+          <div class="b sm mt" style="border-top:1px solid var(--line);padding-top:12px">${icon('briefcase', 14)} ${tr('Chức vụ & kinh nghiệm')}
+            <span class="xs mut" style="font-weight:400">— ${tr('nhân sự tự khai')}</span></div>
+          <div class="grid g2 mt">${EXP_FIELDS.map(([k, label]) => profileRow(tr(label), `<span style="white-space:pre-wrap">${esc(pr[k] || '—')}</span>`)).join('')}</div>
+          ${rec ? `<div class="b sm mt" style="border-top:1px solid var(--line);padding-top:12px">${icon('medal', 14)} ${tr('Thành tích & Vi phạm')}
+            <span class="xs mut" style="font-weight:400">— ${tr('tự động từ dữ liệu Sales OS')}</span></div>
+          <div class="mt">${recordSection(rec, { compact: true })}</div>` : ''}</div>`,
+          submitText: editable ? 'Lưu' : 'Đóng',
+          onSubmit: async (v) => {
+            if (!editable || (v.role === u.role && v.title.trim() === (u.title || ''))) return;
+            await patch('/users/' + u.id, { role: v.role, title: v.title });
+            // Đồng bộ ngay vào state trong bộ nhớ: chức danh mới là nhãn hiển thị (roleLabel) nên
+            // sidebar/các bộ chọn phải đổi theo mà không cần tải lại trang — kể cả khi Admin đang
+            // tự đổi chức danh của chính mình.
+            applyUserRole(u.id, v);
+            if (state.me && state.me.id === u.id) refreshShellRole(roleLabel(state.me));
+            toast('Đã cập nhật vai trò & chức danh', 'ok');
+            render(el);
+          },
         });
       } catch (e) { toast(e.message, 'err'); }
     });
-    el.querySelectorAll('[data-editrole]').forEach(b => b.onclick = () => {
-      const u = d.users.find(x => x.id === b.dataset.editrole);
+    el.querySelectorAll('[data-togglestatus]').forEach(b => b.onclick = () => {
+      const id = b.dataset.togglestatus;
+      if (!b.dataset.active) {
+        confirmDialog(
+          'Cho làm việc lại',
+          tf(() => `${b.dataset.name} sẽ đăng nhập và làm việc lại bình thường. Tiếp tục?`,
+            () => `${personName(b.dataset.name)} will be able to sign in and work again. Continue?`),
+          async () => {
+            await patch('/users/' + id, { active: true });
+            toast('Đã cho nhân sự làm việc lại', 'ok');
+            render(el);
+          },
+        );
+        return;
+      }
       modal({
-        title: tf(() => 'Vai trò & chức danh — ' + u.name, () => 'Role & title — ' + personName(u.name)),
-        fields: [
-          { name: 'role', label: 'Vai trò', type: 'select', value: u.role, options: [{ v: 'sales', n: 'Sales' }, { v: 'manager', n: 'Trưởng phòng' }, { v: 'admin', n: 'Admin/BGĐ' }, { v: 'hr', n: 'Hành chính nhân sự' }] },
-          { name: 'title', label: 'Chức danh', value: u.title || '' },
-        ],
-        submitText: 'Lưu',
+        title: tf(() => 'Tạm dừng công việc — ' + b.dataset.name, () => 'Suspend — ' + personName(b.dataset.name)),
+        html: `<div class="note mb">${tr('Nhân sự bị đăng xuất ngay và không đăng nhập được cho tới khi được cho làm việc lại. Khách hàng, deal và công việc vẫn giữ nguyên tên người này.')}</div>`,
+        fields: [{ name: 'reason', label: 'Lý do tạm dừng', type: 'textarea', required: true, rows: 3, placeholder: 'VD: Không đạt KPI 2 tháng liên tiếp, đang xem xét' }],
+        submitText: 'Tạm dừng',
         onSubmit: async (v) => {
-          await patch('/users/' + u.id, v);
-          // Đồng bộ ngay vào state trong bộ nhớ: chức danh mới là nhãn hiển thị (roleLabel) nên
-          // sidebar/các bộ chọn phải đổi theo mà không cần tải lại trang — kể cả khi Admin đang
-          // tự đổi chức danh của chính mình.
-          applyUserRole(u.id, v);
-          if (state.me && state.me.id === u.id) refreshShellRole(roleLabel(state.me));
-          toast('Đã cập nhật vai trò & chức danh', 'ok');
+          if (!v.reason.trim()) { toast('Vui lòng nhập lý do tạm dừng', 'err'); return false; }
+          await patch('/users/' + id, { active: false, reason: v.reason });
+          toast('Đã tạm dừng công việc của nhân sự', 'ok');
           render(el);
         },
       });
     });
-    el.querySelectorAll('[data-togglestatus]').forEach(b => b.onclick = () => {
-      const activating = !b.dataset.active;
-      confirmDialog(
-        activating ? 'Kích hoạt tài khoản' : 'Khoá tài khoản',
-        tf(() => `Bạn có chắc muốn ${activating ? 'kích hoạt' : 'khoá'} tài khoản của ${b.dataset.name}?`,
-          () => `Are you sure you want to ${activating ? 'activate' : 'lock'} ${personName(b.dataset.name)}'s account?`),
-        async () => {
-          await patch('/users/' + b.dataset.togglestatus, { active: activating });
-          toast(activating ? 'Đã kích hoạt tài khoản' : 'Đã khoá tài khoản', 'ok');
+    el.querySelectorAll('[data-offboard]').forEach(b => b.onclick = async () => {
+      const u = d.users.find(x => x.id === b.dataset.offboard);
+      let counts;
+      try { ({ counts } = await get('/users/' + u.id + '/holdings')); } catch (e) { toast(e.message, 'err'); return; }
+      const labels = { customers: 'khách hàng', leads: 'lead', deals: 'deal đang mở', tasks: 'công việc chưa xong', partners: 'partner', tenders: 'gói thầu' };
+      const held = Object.entries(counts).filter(([, n]) => n > 0);
+      const heirs = d.staff.filter(x => x.active && x.id !== u.id);
+      modal({
+        title: tf(() => 'Xoá nhân sự nghỉ việc — ' + u.name, () => 'Remove departed staff — ' + personName(u.name)),
+        html: `<div class="note red mb">${tr('Tài khoản bị đăng xuất, thu hồi khoá API và ẩn khỏi danh sách. Deal đã chốt, hoa hồng, hợp đồng và nhật ký vẫn giữ tên người này để không sai lịch sử. Có thể khôi phục ở mục "Đã nghỉ việc".')}</div>
+          ${held.length ? `<div class="sm mb"><b>${tr('Đang giữ')}:</b> ${held.map(([k, n]) => `${n} ${tr(labels[k])}`).join(' · ')}</div>` : `<div class="sm mut mb">${tr('Không còn khách hàng, deal hay công việc nào cần bàn giao.')}</div>`}`,
+        fields: [
+          { name: 'reason', label: 'Lý do nghỉ việc', type: 'textarea', required: true, rows: 2, placeholder: 'VD: Nghỉ việc theo nguyện vọng từ 30/09/2026' },
+          ...(held.length ? [{ name: 'transferTo', label: 'Bàn giao cho', type: 'select', required: true,
+            options: [{ v: '', n: '— Chọn người nhận bàn giao —' }, ...heirs.map(x => ({ v: x.id, n: personName(x.name) + ' — ' + roleLabel(x) }))] }] : []),
+        ],
+        submitText: 'Xoá nhân sự',
+        onSubmit: async (v) => {
+          if (!v.reason.trim()) { toast('Vui lòng nhập lý do nghỉ việc', 'err'); return false; }
+          if (held.length && !v.transferTo) { toast('Vui lòng chọn người nhận bàn giao', 'err'); return false; }
+          await post('/users/' + u.id + '/offboard', v);
+          toast('Đã xoá nhân sự khỏi danh sách', 'ok');
           render(el);
         },
-      );
+      });
     });
+    el.querySelectorAll('[data-restore]').forEach(b => b.onclick = () => confirmDialog(
+      'Khôi phục nhân sự',
+      tf(() => `${b.dataset.name} sẽ quay lại danh sách ở trạng thái Tạm dừng. Bấm "Cho làm việc lại" khi muốn mở đăng nhập. Những gì đã bàn giao không tự chuyển ngược lại.`,
+        () => `${personName(b.dataset.name)} returns to the list as Suspended. Use "Resume work" to allow sign-in. Handed-over items are not moved back.`),
+      async () => { await post('/users/' + b.dataset.restore + '/restore', {}); toast('Đã khôi phục nhân sự', 'ok'); render(el); },
+    ));
     el.querySelectorAll('[data-resetlink]').forEach(b => b.onclick = () => createSetupLink(b.dataset.resetlink, 'reset', b.dataset.name));
     const ak = el.querySelector('[data-addkey]');
     if (ak) ak.onclick = () => newKeyModal(d, () => render(el));
@@ -239,7 +323,7 @@ const fmtDateStr = (s) => {
   const [y, m, d] = String(s).split('-').map(Number);
   return y && m && d ? `${d}/${m}/${y}` : '—';
 };
-const profileRow = (label, value) => `<div><div class="xs mut">${esc(label)}</div><div class="b" style="margin-top:2px">${value}</div></div>`;
+const profileRow = (label, value) => `<div class="hr-row"><div class="l">${esc(label)}</div><div class="v">${value}</div></div>`;
 
 function cfgModal(key, userId, value, after) {
   modal({

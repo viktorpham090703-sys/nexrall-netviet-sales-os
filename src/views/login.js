@@ -1,5 +1,5 @@
 import { state, login } from '../state.js';
-import { toast } from '../ui.js';
+import { toast, esc } from '../ui.js';
 import { icon } from '../icons.js';
 import { BRAND_LOGO } from '../const.js';
 import { t as tr, getLang, setLang } from '../i18n.js';
@@ -17,7 +17,7 @@ export async function render(el) {
         <span class="xs mut">·</span>
         <button type="button" class="seg-lang" data-lang="en" style="${getLang() === 'en' ? 'opacity:1;font-weight:700' : 'opacity:.55'}">English</button>
       </div>
-      <img class="login-brand" src="${BRAND_LOGO}" alt="NetViet Sales OS">
+      <img class="login-brand" src="${esc(state.settings.brand?.logo || BRAND_LOGO)}" alt="NetViet Sales OS">
       <p class="login-sub">${tr('Quản trị kinh doanh — TVC/Video AI · Booking Gameshow · Xây kênh triệu view')}</p>
 
       ${notInitialized ? `

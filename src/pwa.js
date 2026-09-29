@@ -38,6 +38,19 @@ window.nvPWA = {
     return r && r.outcome;
   },
   pushSupported: () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window,
+  /** Đang mở trong khung trình duyệt nhúng (khung xem trước của VS Code, trình duyệt trong Zalo/Facebook/
+   * Instagram…) — các khung này luôn chặn quyền thông báo, bấm "Kích hoạt" không bao giờ hiện hộp hỏi
+   * quyền. Trả về tên khung để hướng dẫn mở bằng Chrome/Safari/Edge; null = trình duyệt bình thường. */
+  embeddedBrowser: () => {
+    const ua = navigator.userAgent || '';
+    if (/\bCode\/[\d.]+|Electron\//.test(ua)) return 'khung xem trước của VS Code';
+    if (/Zalo/i.test(ua)) return 'trình duyệt trong Zalo';
+    if (/FBAN|FBAV|FB_IAB|Messenger/i.test(ua)) return 'trình duyệt trong Facebook/Messenger';
+    if (/Instagram/i.test(ua)) return 'trình duyệt trong Instagram';
+    if (/\bLine\//i.test(ua)) return 'trình duyệt trong LINE';
+    try { if (window.top !== window.self) return 'khung nhúng (iframe)'; } catch (e) { return 'khung nhúng (iframe)'; }
+    return null;
+  },
   /** Vì sao máy này chưa bật được thông báo đẩy (null = hỗ trợ). iPhone/iPad chỉ có Web Push trong bản
    * đã cài lên Màn hình chính (iOS/iPadOS 16.4+) — Safari thường không có PushManager. */
   pushUnsupportedReason: () => {

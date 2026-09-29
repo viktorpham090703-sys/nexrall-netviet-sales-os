@@ -7,9 +7,21 @@ import { icon, dot } from '../icons.js';
 // và nhiều view khác — trùng tên với hàm dịch t() của i18n.js sẽ gây lỗi "t is not a function".
 // Lời chào, câu nhắc, thông báo do server sinh sẵn bằng tiếng Việt: src/autoTranslate.js dịch sau khi vẽ.
 import { t as tr, personName } from '../i18n.js';
+import { personalCharts } from '../dash.js';
 
 export async function render(el) {
-  const load = () => get('/cockpit');
+  // Biểu đồ KPI tới ngày, doanh thu lũy kế, hoạt động 14 ngày, cơ hội theo giai đoạn — chỉ số liệu
+  // của CHÍNH người xem (TP/Admin xem màn này là trang chủ cá nhân, không phải của cả đội).
+  const load = async () => {
+    const [c, k, dl, ac] = await Promise.all([
+      get('/cockpit'), get('/kpi').catch(() => null),
+      get('/deals').catch(() => ({ items: [] })), get('/activities?days=14').catch(() => ({ items: [] })),
+    ]);
+    c._kpi = k && k.kpi;
+    c._deals = (dl.items || []).filter(x => x.owner_id === state.me.id);
+    c._acts = (ac.items || []).filter(x => x.user_id === state.me.id);
+    return c;
+  };
   const draw = (d) => `
     <div class="page-head">
       <div class="grow">
@@ -18,6 +30,8 @@ export async function render(el) {
       </div>
       <button class="btn amber sm glow-pulse" data-quick>+ ${tr('Liên hệ mới')}</button>
     </div>
+
+    ${personalCharts({ metrics: d._kpi && d._kpi.metrics, deals: d._deals, acts: d._acts })}
 
     <div class="card fade-in">
       <div class="row" style="gap:14px">
@@ -37,7 +51,7 @@ export async function render(el) {
       ${stat('Việc hôm nay', counterSpan(d.taskCount), d.reportSubmitted ? tr('Đã nộp EOD') : tr('Chưa nộp EOD'), 'blue')}
     </div>
 
-    <div class="sec-title">${tr('Nhắc thông minh')}</div>
+    <div class="sec-title">${tr('Cảnh báo quan trọng')}</div>
     <div class="card fade-in">${d.reminders.map(r => `<div class="item">
       <div class="dot-i">${icon(r.level === 'danger' ? 'siren' : r.level === 'warn' ? 'triangleAlert' : r.level === 'ok' ? 'circleCheck' : 'info')}</div>
       <div class="grow"><div class="t">${esc(r.text)}</div></div>
@@ -61,7 +75,7 @@ export async function render(el) {
         <div class="mt"><a class="btn sm" href="#/pipeline">${tr('Mở')}</a></div></div>
       </div>`).join('') : empty('circleCheck', 'Không có deal nào vượt SLA.')}</div>
 
-    <div class="sec-title">${tr('Thông báo gần đây')}</div>
+    <div class="sec-title">${tr('Thông báo cá nhân')}</div>
     <div class="card fade-in">${d.notifications.length ? d.notifications.map(n => `<div class="item">
         <div class="dot-i">${dot(n.level === 'danger' ? '#DC2626' : n.level === 'warn' ? '#F59E0B' : '#2563EB')}</div>
         <div class="grow"><div class="t">${esc(n.title)}</div><div class="d">${esc(n.body || '')} · ${rel(n.created_at)}</div></div>

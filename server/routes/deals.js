@@ -1,6 +1,7 @@
 import { json, match, need, uid, now, DAY, readBody, scope, audit, notify, num, str, monthKey, resolveAssignableOwner, wsBucket, LEAD_ROLES } from '../lib/util.js';
 import { getConfig, slaLimit } from '../lib/kpi.js';
 import { vMoney, vPercent, vText, vFutureTs, vCount, MAX_QTY, vEnum } from '../lib/validate.js';
+import { approvalThreshold } from '../lib/settings.js';
 
 /* 14 bước theo quy trình vận hành PKD (spec làm cơ sở CRM, mục 7) — thay cho pipeline 7 bước cũ.
  * Khớp thứ tự với src/const.js STAGES (client) — 2 mảng trùng lặp có chủ đích, xem chú thích ở đó. */
@@ -284,6 +285,72 @@ export async function dealRoutes(ctx) {
     return json({ ok: true });
   }
 
+  /* ================= Sản phẩm, dịch vụ (Admin / BGĐ) =================
+   * "Sản phẩm, dịch vụ" là nhóm lớn (TVC/Video, Gameshow, Xây kênh…) — cột `line` trên từng gói. Trước
+   * đây chỉ là chữ trên gói nên không tạo được nhóm mới; bảng nv_product_lines giữ danh sách + thứ tự.
+   * Đổi tên thì đổi luôn trên mọi gói. Xoá chỉ khi đã chuyển hết gói sang nhóm khác. */
+  if (url.pathname.startsWith('/api/product-lines')) {
+    if ((p = match(ctx, 'GET', '/api/product-lines'))) {
+      need(ctx);
+      const { results } = await env.DB.prepare(`SELECT l.name, l.sort, (SELECT COUNT(*) FROM nv_products p WHERE p.line=l.name) total,
+        (SELECT COUNT(*) FROM nv_products p WHERE p.line=l.name AND p.active=1) active FROM nv_product_lines l ORDER BY l.sort, l.name`).all();
+      return json({ items: results || [] });
+    }
+    if ((p = match(ctx, 'POST', '/api/product-lines'))) {
+      need(ctx, ['admin']);
+      const b = await readBody(ctx.request);
+      const name = vText(b.name, 'Tên sản phẩm, dịch vụ', { max: 40, required: true });
+      if (await env.DB.prepare('SELECT 1 FROM nv_product_lines WHERE lower(name)=lower(?)').bind(name).first()) return json({ error: 'Sản phẩm, dịch vụ này đã có' }, 409);
+      const mx = await env.DB.prepare('SELECT COALESCE(MAX(sort),0) m FROM nv_product_lines').first();
+      await env.DB.prepare('INSERT INTO nv_product_lines (name,sort,created_at) VALUES (?,?,?)').bind(name, (mx?.m || 0) + 1, now()).run();
+      await audit(env, ctx.me.id, 'create', 'product_line', name, { name });
+      return json({ ok: true });
+    }
+    if ((p = match(ctx, 'PATCH', '/api/product-lines'))) {
+      need(ctx, ['admin']);
+      const b = await readBody(ctx.request);
+      const from = str(b.from, 40), to = vText(b.to, 'Tên mới', { max: 40, required: true });
+      if (!(await env.DB.prepare('SELECT 1 FROM nv_product_lines WHERE name=?').bind(from).first())) return json({ error: 'Không tìm thấy sản phẩm, dịch vụ' }, 404);
+      if (from !== to && await env.DB.prepare('SELECT 1 FROM nv_product_lines WHERE lower(name)=lower(?)').bind(to).first()) return json({ error: 'Đã có sản phẩm, dịch vụ tên này' }, 409);
+      await env.DB.batch([
+        env.DB.prepare('UPDATE nv_product_lines SET name=? WHERE name=?').bind(to, from),
+        env.DB.prepare('UPDATE nv_products SET line=? WHERE line=?').bind(to, from),
+      ]);
+      await audit(env, ctx.me.id, 'rename', 'product_line', to, { from, to });
+      return json({ ok: true });
+    }
+    if ((p = match(ctx, 'DELETE', '/api/product-lines'))) {
+      need(ctx, ['admin']);
+      const name = str(url.searchParams.get('name'), 40), moveTo = str(url.searchParams.get('moveTo'), 40);
+      const n = await env.DB.prepare('SELECT COUNT(*) c FROM nv_products WHERE line=?').bind(name).first();
+      if (n?.c && !moveTo) return json({ error: `"${name}" còn ${n.c} gói dịch vụ — chọn nơi chuyển gói sang trước khi xoá` }, 409);
+      const st = [env.DB.prepare('DELETE FROM nv_product_lines WHERE name=?').bind(name)];
+      if (n?.c) st.unshift(env.DB.prepare('UPDATE nv_products SET line=? WHERE line=?').bind(moveTo, name));
+      await env.DB.batch(st);
+      await audit(env, ctx.me.id, 'delete', 'product_line', name, { name, moved: n?.c || 0, moveTo: moveTo || null });
+      return json({ ok: true });
+    }
+  }
+
+  /* Đề xuất thêm/sửa sản phẩm — TP & Sales không sửa bảng giá, nhưng gửi được đề xuất tới BGĐ
+   * (thông báo + đẩy về điện thoại Admin). BGĐ bấm thông báo là mở thẳng màn Quản lý danh mục. */
+  if ((p = match(ctx, 'POST', '/api/products/propose'))) {
+    need(ctx);
+    const b = await readBody(ctx.request);
+    const name = vText(b.name, 'Tên sản phẩm / dịch vụ', { max: 160, required: true });
+    const note = [str(b.line, 40), b.price ? 'giá dự kiến ' + Number(b.price).toLocaleString('vi-VN') + 'đ' : '', str(b.reason, 400)].filter(Boolean).join(' · ');
+    const { results: admins } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
+    for (const a of admins || []) await notify(env, a.id, { type: 'product', title: `${ctx.me.name} đề xuất thêm dịch vụ: ${name}`, body: note, link: '#/saleskit', level: 'info' });
+    await audit(env, ctx.me.id, 'propose', 'product', null, { name, line: b.line, price: b.price, reason: b.reason });
+    return json({ ok: true, sent: (admins || []).length });
+  }
+
+  /* Số báo giá đã dùng từng gói — gói đã vào báo giá chỉ được ngừng bán, không xoá hẳn. */
+  if ((p = match(ctx, 'GET', '/api/products/usage'))) {
+    need(ctx, ['admin']);
+    return json({ usage: await productUsage(env) });
+  }
+
   /* ================= Bảng gói dịch vụ ================= */
   if ((p = match(ctx, 'GET', '/api/products'))) {
     need(ctx);
@@ -311,6 +378,7 @@ export async function dealRoutes(ctx) {
       .bind(id, vText(b.name, 'Tên gói', { max: 160, required: true }), str(b.line, 40), str(b.unit, 20) || 'gói',
         vMoney(b.price, 'Giá gói'), b.commissionRate != null ? vPercent(b.commissionRate, 'Tỉ lệ hoa hồng', { max: 50 }) : 5,
         b.maxDiscount != null ? vPercent(b.maxDiscount, 'Chiết khấu tối đa', { max: 100 }) : 10, str(b.description, 500)).run();
+    if (b.line) { await env.DB.prepare('INSERT OR IGNORE INTO nv_product_lines (name,sort,created_at) VALUES (?,99,?)').bind(str(b.line, 40), now()).run(); }
     await audit(env, ctx.me.id, 'create', 'product', id, { name: b.name, price: b.price });
     return json({ id });
   }
@@ -329,7 +397,10 @@ export async function dealRoutes(ctx) {
     const sets = [], args = [];
     const put = (col, val) => { sets.push(`${col}=?`); args.push(val); };
     if (b.name != null) put('name', vText(b.name, 'Tên gói', { max: 160, required: true }));
-    if (b.line != null) put('line', str(b.line, 40));
+    if (b.line != null) {
+      put('line', str(b.line, 40));
+      if (b.line) await env.DB.prepare('INSERT OR IGNORE INTO nv_product_lines (name,sort,created_at) VALUES (?,99,?)').bind(str(b.line, 40), now()).run();
+    }
     if (b.unit != null) put('unit', str(b.unit, 20) || 'gói');
     if (b.price != null) put('price', vMoney(b.price, 'Giá gói'));
     if (b.commissionRate != null) put('commission_rate', vPercent(b.commissionRate, 'Tỉ lệ hoa hồng', { max: 50 }));
@@ -353,6 +424,14 @@ export async function dealRoutes(ctx) {
     need(ctx, ['admin']);
     const pr = await env.DB.prepare('SELECT * FROM nv_products WHERE id=?').bind(p.id).first();
     if (!pr) return json({ error: 'Không tìm thấy gói dịch vụ' }, 404);
+    if (url.searchParams.get('hard') === '1') {
+      // xoá hẳn: chỉ cho gói CHƯA từng vào báo giá nào (thường là gói nhập nhầm).
+      const used = (await productUsage(env))[p.id] || 0;
+      if (used) return json({ error: `Gói đã có trong ${used} báo giá nên không xoá hẳn được — hãy ngừng bán để giữ đúng hoa hồng đã ghi nhận` }, 409);
+      await env.DB.prepare('DELETE FROM nv_products WHERE id=?').bind(p.id).run();
+      await audit(env, ctx.me.id, 'delete', 'product', p.id, { name: pr.name, price: pr.price });
+      return json({ ok: true, deleted: true });
+    }
     await env.DB.prepare('UPDATE nv_products SET active=0 WHERE id=?').bind(p.id).run();
     await audit(env, ctx.me.id, 'deactivate', 'product', p.id, { name: pr.name });
     return json({ ok: true });
@@ -392,7 +471,13 @@ export async function dealRoutes(ctx) {
      * Chiết khấu dưới ngưỡng vẫn là 'draft' cho mọi vai trò: đó là luật theo MỨC CHIẾT KHẤU, không
      * liên quan tới chức vụ người lập. */
     const skipped = skippedRounds(ctx.me.role);
-    const status = disc > threshold ? startStatus(ctx.me.role) : (ctx.me.role === 'admin' ? 'approved' : 'draft');
+    /* Ngưỡng duyệt theo GIÁ TRỊ (Hệ thống › Phân quyền › Ngưỡng duyệt): báo giá dưới ngưỡng chỉ cần
+     * Trưởng phòng duyệt (vòng 1) là xong; từ ngưỡng trở lên mới lên Giám đốc chuyên môn = Admin/BGĐ
+     * (vòng 2). Nên TPKD tự lập báo giá dưới ngưỡng thì chính họ là người duyệt cuối → duyệt thẳng. */
+    const approvalLimit = await approvalThreshold(env, ctx.me);
+    const underLimit = total < approvalLimit;
+    let status = disc > threshold ? startStatus(ctx.me.role) : (ctx.me.role === 'admin' ? 'approved' : 'draft');
+    if (status === 'pending_v2' && underLimit) status = 'approved';
     const t = now(), id = uid('qt');
     await env.DB.prepare(`INSERT INTO nv_quotes (id,deal_id,owner_id,customer_id,plan_id,title,items,subtotal,discount_pct,total,commission,status,
         v1_approver_id,v1_decision,v1_note,v1_decided_at,v2_approver_id,v2_decision,v2_note,v2_decided_at,created_at,updated_at)
@@ -438,10 +523,14 @@ export async function dealRoutes(ctx) {
       if (q.status === 'pending_v1') {
         if (!['manager', 'admin'].includes(ctx.me.role)) return json({ error: 'Chỉ Trưởng phòng kinh doanh (hoặc Admin) mới duyệt được vòng 1' }, 403);
         // "Yêu cầu điều chỉnh" quay lại ĐÚNG vòng đang chờ, không lùi thêm — status giữ pending_v1.
-        const nextStatus = decision === 'approved' ? 'pending_v2' : 'pending_v1';
+        // Dưới ngưỡng duyệt: Trưởng phòng là người duyệt cuối — duyệt vòng 1 là báo giá được duyệt luôn.
+        const finalAtV1 = decision === 'approved' && Number(q.total || 0) < await approvalThreshold(env, ctx.me);
+        const nextStatus = decision === 'approved' ? (finalAtV1 ? 'approved' : 'pending_v2') : 'pending_v1';
         await env.DB.prepare('UPDATE nv_quotes SET status=?,v1_approver_id=?,v1_decision=?,v1_note=?,v1_decided_at=?,updated_at=? WHERE id=?')
           .bind(nextStatus, ctx.me.id, decision, note, t, t, p.id).run();
-        if (decision === 'approved') {
+        if (finalAtV1) {
+          await notify(env, q.owner_id, { type: 'approval', title: '✅ Báo giá đã được duyệt', body: q.title + ' (dưới ngưỡng — Trưởng phòng duyệt)', link: '#/plans', level: 'info' });
+        } else if (decision === 'approved') {
           // Admin cũng có thể tự duyệt V1 (vai trò Giám đốc đã sáp nhập vào Admin) — bỏ qua chính
           // người vừa duyệt để không tự báo cho mình chờ duyệt V2.
           const { results: dirs } = await env.DB.prepare("SELECT id FROM nv_users WHERE role='admin' AND active=1 AND is_demo=?").bind(wsBucket(ctx.me)).all();
@@ -686,4 +775,12 @@ export async function dealRoutes(ctx) {
   }
 
   return null;
+}
+
+/** Số báo giá đã dùng từng gói (theo productId trong nv_quotes.items). */
+async function productUsage(env) {
+  const { results } = await env.DB.prepare('SELECT items FROM nv_quotes').all();
+  const u = {};
+  for (const r of results || []) { try { for (const it of JSON.parse(r.items || '[]')) if (it.productId) u[it.productId] = (u[it.productId] || 0) + 1; } catch (e) { /* bỏ qua báo giá lỗi định dạng */ } }
+  return u;
 }

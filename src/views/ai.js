@@ -4,6 +4,7 @@ import { askAI, pickerHTML, bindPicker, providers } from '../aiPref.js';
 import { icon } from '../icons.js';
 import { t as tr, tf } from '../i18n.js';
 import { translateText } from '../autoTranslate.js';
+import { state } from '../state.js';
 
 const msgs = [];
 
@@ -39,6 +40,8 @@ export async function render(el) {
     <input data-input placeholder="${esc(tr('Nhập câu hỏi cho AI…'))}" class="grow">
     <button class="btn primary" data-send>${tr('Gửi')}</button>
   </div>
+  ${(state.settings.ai?.prompts || []).length ? `<div class="row wrap mt" style="gap:6px">${state.settings.ai.prompts.map((q, i) =>
+    `<button type="button" class="btn sm ai-sug" data-sug="${i}">${icon('sparkles', 13)} ${esc(q)}</button>`).join('')}</div>` : ''}
 
   <div class="sec-title">${tr('Lịch sử gần đây')}</div>
   <div class="card">${(d.history || []).length ? d.history.slice(0, 8).map(h => `<div class="item">
@@ -74,6 +77,8 @@ export async function render(el) {
       }
     };
     el.querySelector('[data-send]').onclick = () => send(null);
+    // Câu hỏi gợi ý do Ban Giám đốc đặt ở Hệ thống › Thiết lập AI trợ lý.
+    el.querySelectorAll('[data-sug]').forEach(b => b.onclick = () => { input.value = state.settings.ai.prompts[+b.dataset.sug]; send(null); });
     input.addEventListener('keydown', e => { if (e.key === 'Enter') send(null); });
     el.querySelectorAll('[data-task]').forEach(b => b.onclick = () => {
       const t = d.tasks.find(x => x.key === b.dataset.task);

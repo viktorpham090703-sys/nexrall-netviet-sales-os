@@ -1,10 +1,11 @@
 import { get, post, patch } from '../api.js';
 import { state, salesUsers, isAdmin } from '../state.js';
-import { esc, money, mount, chip, bar, empty, stat, toast, modal, fmtDate, bindTabs } from '../ui.js';
+import { esc, money, mount, chip, bar, empty, stat, toast, modal, fmtDate, bindTabs, rel } from '../ui.js';
 import { stageName, STAGES, TERMINAL_STAGES, QUOTE_STATUS, CONTRACT_STATUS, roleLabel, roleDefaultLabel, PIP_STATUS, gradeTone, APPROVAL_TONE } from '../const.js';
 import { icon } from '../icons.js';
 import { canDecide, canDecideContract, bindApprovalActions } from '../salesDocs.js';
 import { t as tr, tf, personName, jobTitle } from '../i18n.js';
+import { teamCharts, hrCharts } from '../dash.js';
 
 let tab = 'overview';
 /* HCNS chỉ xét duyệt báo giá/hợp đồng/hồ sơ thầu — không có nhiệm vụ quản lý đội sales
@@ -14,9 +15,15 @@ const isHR = () => state.me?.role === 'hr';
 
 export async function render(el) {
   const load = async () => {
-    const [t, p, deals] = await Promise.all([get('/team'), get('/pip'), isHR() ? get('/deals') : Promise.resolve({ items: [] })]);
+    const none = Promise.resolve({ items: [] });
+    // /deals nạp 1 lần dùng cho cả hồ sơ thầu chờ duyệt (HCNS) lẫn biểu đồ doanh thu đội (TP/BGĐ).
+    const [t, p, deals, noti, acts] = await Promise.all([
+      get('/team'), get('/pip'), get('/deals').catch(() => ({ items: [] })),
+      get('/notifications?limit=5').catch(() => ({ items: [] })),
+      isHR() ? none : get('/activities?days=14').catch(() => ({ items: [] })),
+    ]);
     const pendingTenders = (deals.items || []).filter(x => x.process_type === 'dau_thau' && x.stage === 'cho_duyet_ho_so');
-    return { ...t, pips: p.items || [], pendingTenders };
+    return { ...t, pips: p.items || [], pendingTenders, notis: noti.items || [], allDeals: isHR() ? [] : deals.items || [], acts: acts.items || [] };
   };
 
   const draw = (d) => `<div class="page-head">
@@ -34,6 +41,14 @@ export async function render(el) {
       ${stat('Doanh thu đã ký', money(d.totals.won), tr('Luỹ kế toàn đội'), 'blue')}
       ${stat('Cảnh báo', d.alerts.length, d.alerts.filter(a => a.level === 'danger').length + ' ' + tr('nghiêm trọng'), d.alerts.length ? 'amber' : '')}
     `}
+  </div>
+
+  ${isHR() ? hrCharts(d) : teamCharts({ team: d, deals: d.allDeals, acts: d.acts })}
+  <div class="grid g2 mb dm-grid">
+    ${isHR() ? '' : `<div class="card"><div class="row"><b>${icon('siren', 15)} ${tr('Cảnh báo quan trọng')}</b><span class="grow"></span>${chip(d.alerts.filter(a => a.level === 'danger').length + ' ' + tr('nghiêm trọng'), 'red')}</div>
+      ${(d.alerts || []).slice(0, 4).map(a => `<div class="item"><div class="dot-i">${icon(a.level === 'danger' ? 'siren' : 'triangleAlert')}</div><div class="grow"><div class="t">${esc(a.text || a.title || '')}</div></div>${a.link ? `<a class="btn sm" href="${esc(a.link)}">${tr('Xử lý')}</a>` : ''}</div>`).join('') || empty('circleCheck', 'Không có cảnh báo.')}</div>`}
+    <div class="card"><div class="row"><b>${icon('bell', 15)} ${tr('Thông báo cá nhân')}</b><span class="grow"></span><a class="btn sm" href="#/thong-bao">${tr('Xem tất cả')}</a></div>
+      ${d.notis.map(n => `<a class="item" href="#/thong-bao/${esc(n.id)}"><div class="dot-i">${icon(n.level === 'danger' ? 'siren' : n.level === 'warn' ? 'triangleAlert' : 'bell')}</div><div class="grow"><div class="t">${esc(n.title)}</div><div class="d xs">${rel(n.created_at)}</div></div></a>`).join('') || empty('bell', 'Chưa có thông báo.')}</div>
   </div>
 
   ${isHR() ? '' : `<div class="seg mb">
