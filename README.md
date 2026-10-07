@@ -21,9 +21,9 @@ tạm cho cả 5: **`NetViet@2026`** — app **buộc đổi mật khẩu ngay l
 
 | Vai trò | Đăng nhập bằng email |
 |---|---|
-| Admin/BGĐ | `admin@netviet.vn` |
-| Trưởng phòng | `tpkd@netviet.vn` |
-| Sales | `tuan.le@netviet.vn` · `anh.pham@netviet.vn` · `nam.vo@netviet.vn` |
+| Admin/BGĐ | `HAUNV`, `HUONGNT` |
+| Trưởng phòng | `DUCBH` |
+| Sales | `PHUONGVH` · `HUONGLT` |
 
 Cấp/đặt lại mật khẩu cho người khác: Admin vào **Quản trị → Người dùng → Tạo liên kết đặt mật khẩu**
 (link dùng 1 lần, hết hạn theo `SETUP_TOKEN_TTL`), gửi qua kênh nội bộ.
@@ -31,9 +31,9 @@ Cấp/đặt lại mật khẩu cho người khác: Admin vào **Quản trị �
 ## Tài khoản demo (chỉ sinh ra ở CSDL RỖNG với `APP_MODE=demo`)
 | Vai trò | Tài khoản (nhân vật hư cấu) |
 |---|---|
-| Admin/BGĐ | Nguyễn Văn A |
-| Trưởng phòng | Trần Thị B |
-| Sales | Lê Văn C · Phạm Thị D · Hoàng Văn E |
+| Admin/BGĐ | Nguyễn Văn Hậu, Nguyễn Thu Hương |
+| Trưởng phòng | Nguyễn Hải Đức |
+| Sales | Vũ Hà Phương · Lưu Thiên Hương |
 
 Sales → shell mobile (điều hướng dưới). TP/Admin → dashboard web (điều hướng bên).
 
